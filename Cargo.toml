@@ -1,5 +1,5 @@
 [workspace]
-members = ["quictun"]
+members = ["hala-tunnel"]
 resolver = "2"
 
 [workspace.package]
