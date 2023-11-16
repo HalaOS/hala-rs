@@ -1,25 +1,18 @@
 [workspace]
-members = ["hala-kcp"]
+members = ["quictun"]
 resolver = "2"
 
 [workspace.package]
 edition = "2021"
-repository = "https://github.com/HalaOS/hala-graphics"
+repository = "https://github.com/HalaOS/quictun.git"
 version = "0.1.2"
 
 [workspace.dependencies]
 anyhow = "^1"
 bencher = "^0.1.5"
-bytes = "^1.5.0"
 clap = "^4.4"
-core2 = "^0.4.0"
-dotenv = "^0.15"
-glam = {version = "^0.24.2", default-features = false, features = ["libm", "serde"]}
-libm = "^0.2.7"
 log = "^0.4"
 pretty_env_logger = "^0.5"
+quiche = "^0.19.0"
 rand = "^0.8.5"
-serde = {version = "^1.0", default-features = false, features = ["derive", "alloc"]}
-serde_json = "^1.0"
 thiserror = "^1"
-thiserror-no-std = "^2.0.2"
