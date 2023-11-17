@@ -1,7 +1,7 @@
 [package]
-description = "Hala tunnel protocol traits and extension trait"
+description = "Hala stream multiplexer protocol traits and extension trait"
 edition.workspace = true
-name = "hala-tunnel"
+name = "hala-mux"
 repository.workspace = true
 version.workspace = true
 
