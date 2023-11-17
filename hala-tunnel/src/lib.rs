@@ -191,3 +191,59 @@ impl<'a, T: ?Sized + Unpin + HalaTunnel> Future for OpenStream<'a, T> {
 }
 
 impl<P: HalaTunnel + ?Sized> HalaTunnelEx for P {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug)]
+    struct MockHalaTunnel {}
+
+    impl HalaTunnel for MockHalaTunnel {
+        type Stream = MockHalaTunnelStream;
+
+        fn poll_open_stream(&self, _cx: &mut Context<'_>) -> Poll<core2::io::Result<Self::Stream>> {
+            Poll::Ready(Ok(MockHalaTunnelStream {}))
+        }
+
+        fn poll_accept(&self, _cx: &mut Context<'_>) -> Poll<core2::io::Result<Self::Stream>> {
+            Poll::Ready(Ok(MockHalaTunnelStream {}))
+        }
+    }
+
+    #[derive(Debug)]
+    struct MockHalaTunnelStream {}
+
+    impl HalaTunnelStream for MockHalaTunnelStream {
+        fn poll_write(&self, _cx: &mut Context<'_>, buf: &[u8]) -> Poll<core2::io::Result<usize>> {
+            Poll::Ready(Ok(buf.len()))
+        }
+
+        fn poll_read(
+            &self,
+            _cx: &mut Context<'_>,
+            buf: &mut [u8],
+        ) -> Poll<core2::io::Result<usize>> {
+            Poll::Ready(Ok(buf.len()))
+        }
+
+        fn poll_close(&self, _cx: &mut Context<'_>) -> Poll<core2::io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    #[futures_test::test]
+    async fn test_ext_fns() {
+        let tunnel = MockHalaTunnel {};
+
+        tunnel.open_stream().await.unwrap();
+
+        let stream = tunnel.accept().await.unwrap();
+
+        stream.write(b"hello").await.unwrap();
+
+        let mut buf = [0 as u8; 32];
+
+        stream.read(&mut buf).await.unwrap();
+    }
+}

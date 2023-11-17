@@ -10,3 +10,6 @@ version.workspace = true
 core2 = {workspace = true}
 futures = {workspace = true}
 thiserror-no-std = {workspace = true}
+
+[dev-dependencies]
+futures-test = {workspace = true}
