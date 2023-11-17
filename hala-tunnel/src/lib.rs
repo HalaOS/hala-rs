@@ -1,14 +1,21 @@
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
-}
+#![no_std]
+pub extern crate alloc;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// Hala tunnel error varaint
+#[derive(Debug, thiserror_no_std::Error)]
+pub enum HalaTunnelError {}
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
+pub type HalaTunnelResult<T> = Result<T, HalaTunnelError>;
+
+/// Network tunnel context for `HalaOS`.
+pub struct HalaTunnel {}
+
+impl HalaTunnel {
+    /// Create a new stream on `this` opened tunnel.
+    pub async fn new_stream(&mut self) -> HalaTunnelResult<HalaTunnelStream> {
+        todo!()
     }
 }
+
+/// Opened stream object of [`HalaTunnel`]
+pub struct HalaTunnelStream {}
