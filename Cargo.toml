@@ -1,5 +1,5 @@
 [workspace]
-members = ["hala-tunnel"]
+members = ["hala-tunnel", "hala-tunnel-quic"]
 resolver = "2"
 
 [workspace.package]

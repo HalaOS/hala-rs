@@ -21,19 +21,27 @@ pub type HalaTunnelStreamID = usize;
 /// Opened stream object of [`HalaTunnel`]
 pub trait HalaTunnelStream: Debug + Sync + Send {
     /// Attempts to write data to the stream.
-    fn poll_write(&self, cx: &mut Context<'_>, buf: &[u8]) -> Poll<core2::io::Result<usize>>;
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<core2::io::Result<usize>>;
 
     /// Attempt to read from the stream into buf.
-    fn poll_read(&self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<core2::io::Result<usize>>;
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<core2::io::Result<usize>>;
 
     /// Close stream object
-    fn poll_close(&self, cx: &mut Context<'_>) -> Poll<core2::io::Result<()>>;
+    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<core2::io::Result<()>>;
 }
 
 /// An extension trait which adds utility methods to [`HalaTunnelStream`] types.
 pub trait HalaTunnelStreamEx: HalaTunnelStream {
     /// Creates a future which will write bytes from `buf` into the object.
-    fn write<'a>(&'a self, buf: &'a [u8]) -> Write<'_, Self>
+    fn write<'a>(&'a mut self, buf: &'a [u8]) -> Write<'_, Self>
     where
         Self: Unpin,
     {
@@ -41,7 +49,7 @@ pub trait HalaTunnelStreamEx: HalaTunnelStream {
     }
 
     /// Creates a future which will read bytes from object into the `buf`.
-    fn read<'a>(&'a self, buf: &'a mut [u8]) -> Read<'_, Self>
+    fn read<'a>(&'a mut self, buf: &'a mut [u8]) -> Read<'_, Self>
     where
         Self: Unpin,
     {
@@ -49,7 +57,7 @@ pub trait HalaTunnelStreamEx: HalaTunnelStream {
     }
 
     /// Creates a future which will entirely close this [`HalaTunnelStream`].
-    fn close(&self) -> Close<'_, Self>
+    fn close(&mut self) -> Close<'_, Self>
     where
         Self: Unpin,
     {
@@ -61,35 +69,37 @@ impl<P: HalaTunnelStream + ?Sized> HalaTunnelStreamEx for P {}
 
 /// Future for the [`write`](HalaTunnelStreamEx::write) method.
 pub struct Write<'a, S: ?Sized> {
-    stream: &'a S,
+    stream: &'a mut S,
     buf: &'a [u8],
 }
 
 impl<S: ?Sized + Unpin> Unpin for Write<'_, S> {}
 
 impl<'a, S: ?Sized> Write<'a, S> {
-    fn new(stream: &'a S, buf: &'a [u8]) -> Self {
+    fn new(stream: &'a mut S, buf: &'a [u8]) -> Self {
         Self { stream, buf }
     }
 }
 
 impl<'a, S: ?Sized + Unpin + HalaTunnelStream> Future for Write<'a, S> {
     type Output = core2::io::Result<usize>;
-    fn poll(self: core::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        Pin::new(&*self.stream).poll_write(cx, self.buf)
+    fn poll(mut self: core::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let this = &mut *self;
+
+        Pin::new(&mut *this.stream).poll_write(cx, this.buf)
     }
 }
 
 /// Future for the [`read`](HalaTunnelStreamEx::read) method.
 pub struct Read<'a, S: ?Sized> {
-    stream: &'a S,
+    stream: &'a mut S,
     buf: &'a mut [u8],
 }
 
 impl<S: ?Sized + Unpin> Unpin for Read<'_, S> {}
 
 impl<'a, S: ?Sized> Read<'a, S> {
-    fn new(stream: &'a S, buf: &'a mut [u8]) -> Self {
+    fn new(stream: &'a mut S, buf: &'a mut [u8]) -> Self {
         Self { stream, buf }
     }
 }
@@ -97,27 +107,29 @@ impl<'a, S: ?Sized> Read<'a, S> {
 impl<'a, S: ?Sized + Unpin + HalaTunnelStream> Future for Read<'a, S> {
     type Output = core2::io::Result<usize>;
     fn poll(mut self: core::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        Pin::new(&*self.stream).poll_read(cx, self.buf)
+        let this = &mut *self;
+
+        Pin::new(&mut *this.stream).poll_read(cx, this.buf)
     }
 }
 
 /// Future for the [`close`](HalaTunnelStreamEx::close) method.
 pub struct Close<'a, S: ?Sized> {
-    stream: &'a S,
+    stream: &'a mut S,
 }
 
 impl<S: ?Sized + Unpin> Unpin for Close<'_, S> {}
 
 impl<'a, S: ?Sized> Close<'a, S> {
-    fn new(stream: &'a S) -> Self {
+    fn new(stream: &'a mut S) -> Self {
         Self { stream }
     }
 }
 
 impl<'a, S: ?Sized + Unpin + HalaTunnelStream> Future for Close<'a, S> {
     type Output = core2::io::Result<()>;
-    fn poll(self: core::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        Pin::new(&*self.stream).poll_close(cx)
+    fn poll(mut self: core::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        Pin::new(&mut *self.stream).poll_close(cx)
     }
 }
 
@@ -127,22 +139,28 @@ pub trait HalaTunnel: Debug + Sync + Send {
     type Stream: HalaTunnelStream;
 
     /// Create new out stream
-    fn poll_open_stream(&self, cx: &mut Context<'_>) -> Poll<core2::io::Result<Self::Stream>>;
+    fn poll_open_stream(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<core2::io::Result<Self::Stream>>;
 
     /// Accept one incoming stream.
-    fn poll_accept(&self, cx: &mut Context<'_>) -> Poll<core2::io::Result<Self::Stream>>;
+    fn poll_accept_stream(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<core2::io::Result<Self::Stream>>;
 }
 
 /// An extension trait which adds utility methods to [`HalaTunnel`] types.
 pub trait HalaTunnelEx: HalaTunnel {
-    fn open_stream(&self) -> OpenStream<'_, Self>
+    fn open_stream(&mut self) -> OpenStream<'_, Self>
     where
         Self: Unpin,
     {
         OpenStream::new(self)
     }
 
-    fn accept(&self) -> Accept<'_, Self>
+    fn accept_stream(&mut self) -> Accept<'_, Self>
     where
         Self: Unpin,
     {
@@ -152,41 +170,41 @@ pub trait HalaTunnelEx: HalaTunnel {
 
 /// Future for the [`open_stream`](HalaTunnelEx::accept) method.
 pub struct Accept<'a, T: ?Sized> {
-    tunnel: &'a T,
+    tunnel: &'a mut T,
 }
 
 impl<T: ?Sized + Unpin> Unpin for Accept<'_, T> {}
 
 impl<'a, T: ?Sized> Accept<'a, T> {
-    fn new(tunnel: &'a T) -> Self {
+    fn new(tunnel: &'a mut T) -> Self {
         Self { tunnel }
     }
 }
 
 impl<'a, T: ?Sized + Unpin + HalaTunnel> Future for Accept<'a, T> {
     type Output = core2::io::Result<T::Stream>;
-    fn poll(self: core::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        Pin::new(&*self.tunnel).poll_accept(cx)
+    fn poll(mut self: core::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        Pin::new(&mut *self.tunnel).poll_accept_stream(cx)
     }
 }
 
 /// Future for the [`open_stream`](HalaTunnelEx::open_stream) method.
 pub struct OpenStream<'a, T: ?Sized> {
-    tunnel: &'a T,
+    tunnel: &'a mut T,
 }
 
 impl<T: ?Sized + Unpin> Unpin for OpenStream<'_, T> {}
 
 impl<'a, T: ?Sized> OpenStream<'a, T> {
-    fn new(tunnel: &'a T) -> Self {
+    fn new(tunnel: &'a mut T) -> Self {
         Self { tunnel }
     }
 }
 
 impl<'a, T: ?Sized + Unpin + HalaTunnel> Future for OpenStream<'a, T> {
     type Output = core2::io::Result<T::Stream>;
-    fn poll(self: core::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        Pin::new(&*self.tunnel).poll_open_stream(cx)
+    fn poll(mut self: core::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        Pin::new(&mut *self.tunnel).poll_open_stream(cx)
     }
 }
 
@@ -202,11 +220,17 @@ mod tests {
     impl HalaTunnel for MockHalaTunnel {
         type Stream = MockHalaTunnelStream;
 
-        fn poll_open_stream(&self, _cx: &mut Context<'_>) -> Poll<core2::io::Result<Self::Stream>> {
+        fn poll_open_stream(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+        ) -> Poll<core2::io::Result<Self::Stream>> {
             Poll::Ready(Ok(MockHalaTunnelStream {}))
         }
 
-        fn poll_accept(&self, _cx: &mut Context<'_>) -> Poll<core2::io::Result<Self::Stream>> {
+        fn poll_accept_stream(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+        ) -> Poll<core2::io::Result<Self::Stream>> {
             Poll::Ready(Ok(MockHalaTunnelStream {}))
         }
     }
@@ -215,30 +239,34 @@ mod tests {
     struct MockHalaTunnelStream {}
 
     impl HalaTunnelStream for MockHalaTunnelStream {
-        fn poll_write(&self, _cx: &mut Context<'_>, buf: &[u8]) -> Poll<core2::io::Result<usize>> {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<core2::io::Result<usize>> {
             Poll::Ready(Ok(buf.len()))
         }
 
         fn poll_read(
-            &self,
+            self: Pin<&mut Self>,
             _cx: &mut Context<'_>,
             buf: &mut [u8],
         ) -> Poll<core2::io::Result<usize>> {
             Poll::Ready(Ok(buf.len()))
         }
 
-        fn poll_close(&self, _cx: &mut Context<'_>) -> Poll<core2::io::Result<()>> {
+        fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<core2::io::Result<()>> {
             Poll::Ready(Ok(()))
         }
     }
 
     #[futures_test::test]
     async fn test_ext_fns() {
-        let tunnel = MockHalaTunnel {};
+        let mut tunnel = MockHalaTunnel {};
 
         tunnel.open_stream().await.unwrap();
 
-        let stream = tunnel.accept().await.unwrap();
+        let mut stream = tunnel.accept_stream().await.unwrap();
 
         stream.write(b"hello").await.unwrap();
 
