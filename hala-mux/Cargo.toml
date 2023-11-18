@@ -14,3 +14,7 @@ thiserror-no-std = {workspace = true}
 
 [dev-dependencies]
 futures-test = {workspace = true}
+
+[features]
+default = ["std"]
+std = []
