@@ -162,30 +162,33 @@ fn test_stream() {
         }
     }
 
-    assert!(client_conn.is_established());
+    for i in 0..10 {
+        log::debug!("write stream data {}", i);
+        assert!(client_conn.is_established());
 
-    let stream_write_size = client_conn
-        .stream_send(0x120, b"hello world", true)
-        .unwrap();
+        let stream_write_size = client_conn
+            .stream_send(0x120, b"hello world", false)
+            .unwrap();
 
-    let (write_size, _) = client_conn.send(&mut out).unwrap();
+        let (write_size, _) = client_conn.send(&mut out).unwrap();
 
-    let recv_info = RecvInfo {
-        from: send_info.from,
-        to: send_info.to,
-    };
+        let recv_info = RecvInfo {
+            from: send_info.from,
+            to: send_info.to,
+        };
 
-    let read_size = server_conn.recv(&mut out[..write_size], recv_info).unwrap();
+        let read_size = server_conn.recv(&mut out[..write_size], recv_info).unwrap();
 
-    assert_eq!(read_size, write_size);
+        assert_eq!(read_size, write_size);
 
-    assert!(server_conn.stream_readable(0x120));
+        assert!(server_conn.stream_readable(0x120));
 
-    let (stream_read_size, fin) = server_conn.stream_recv(0x120, &mut out).unwrap();
+        let (stream_read_size, fin) = server_conn.stream_recv(0x120, &mut out).unwrap();
 
-    assert_eq!(stream_read_size, stream_write_size);
+        assert_eq!(stream_read_size, stream_write_size);
 
-    assert!(fin);
+        assert!(!fin);
 
-    assert_eq!(&out[..stream_read_size], b"hello world");
+        assert_eq!(&out[..stream_read_size], b"hello world");
+    }
 }
