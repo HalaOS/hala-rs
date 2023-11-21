@@ -1,5 +1,4 @@
-pub struct HalaQuicTunnel {}
+pub use quiche::Config;
 
-impl HalaQuicTunnel {
-    pub fn new() {}
-}
+/// asynchronous quic client
+pub mod client;

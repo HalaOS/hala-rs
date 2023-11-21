@@ -3,6 +3,7 @@
 use std::path::Path;
 
 use quiche::{ConnectionId, Header, RecvInfo, Type, MAX_CONN_ID_LEN};
+use rand::{rngs::OsRng, RngCore};
 
 const MAX_DATAGRAM_SIZE: usize = 1350;
 

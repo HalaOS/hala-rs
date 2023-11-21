@@ -1,0 +1,23 @@
+[package]
+edition.workspace = true
+name = "hala-quic-tunnel"
+repository.workspace = true
+version.workspace = true
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[[bin]]
+name = "qtun-server"
+path = "bin/server/src/main.rs"
+
+[[bin]]
+name = "qtun-client"
+path = "bin/client/src/main.rs"
+
+[dependencies]
+anyhow = {workspace = true}
+bytes = {workspace = true}
+clap = {workspace = true}
+log = {workspace = true}
+mio = {workspace = true}
+pretty_env_logger = {workspace = true}
