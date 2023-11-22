@@ -16,6 +16,10 @@ pub struct Config {
     /// qtun server address default("0.0.0.0:54321"),
     #[arg(short, long)]
     pub forward: Option<String>,
+
+    /// tcp endpoint maximum recv buf.
+    #[arg(short, long, default_value_t = 4096)]
+    pub tcp_recv_buf: usize,
 }
 
 impl Config {

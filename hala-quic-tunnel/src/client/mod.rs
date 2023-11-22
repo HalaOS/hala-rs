@@ -1,19 +1,17 @@
-use std::{collections::HashMap, io::Write};
+mod config;
+
+pub mod quice_client;
+pub mod tcp_server;
+
+use std::{cell::RefCell, rc::Rc};
 
 use bytes::BytesMut;
-use mio::{
-    event::Event,
-    net::{TcpListener, TcpStream},
-    Events, Interest, Poll, Token,
-};
-
-mod config;
-mod quice_client;
-mod tcp_server;
-
 pub use config::Config as TunnelClientConfig;
+use mio::{Events, Poll, Token};
 
-use crate::utils::{interrupted, would_block};
+use crate::utils::interrupted;
+
+use self::tcp_server::TcpServer;
 
 const ACCEPTOR: Token = Token(0);
 
@@ -22,34 +20,25 @@ pub struct TunnelClient {
     config: TunnelClientConfig,
     /// io event poll
     poll: Poll,
-    /// Client tcp incoming listener
-    tcp_listener: TcpListener,
-    /// The next token generator seed, start from 1
-    token_next: usize,
-    /// The collection of incoming tcp streams.
-    tcp_conns: HashMap<Token, TcpStream>,
-    /// Backward data cache buf.
-    backward_bufs: HashMap<Token, BytesMut>,
+    /// Tcp server object.
+    tcp_server: TcpServer,
+    /// The token generator seed.
+    token_next: Rc<RefCell<usize>>,
 }
 
 impl TunnelClient {
     /// Create tunnel client with providing config
     pub fn new(config: TunnelClientConfig) -> anyhow::Result<Self> {
         // Create a poll instance.
-        let poll = Poll::new()?;
+        let mut poll = Poll::new()?;
 
-        let mut tcp_listener = TcpListener::bind(config.get_listen_addr()?)?;
-
-        poll.registry()
-            .register(&mut tcp_listener, ACCEPTOR, Interest::READABLE)?;
+        let tcp_server = TcpServer::new(&mut poll, ACCEPTOR, &config)?;
 
         Ok(Self {
             poll,
             config,
-            tcp_listener,
-            token_next: 0,
-            tcp_conns: Default::default(),
-            backward_bufs: Default::default(),
+            tcp_server,
+            token_next: Default::default(),
         })
     }
 
@@ -73,68 +62,60 @@ impl TunnelClient {
     fn handle_events(&mut self, events: &Events) -> anyhow::Result<()> {
         for event in events.iter() {
             match event.token() {
-                ACCEPTOR => self.handle_accept()?,
-                _ => self.handle_conn_event(event)?,
-            }
-        }
+                ACCEPTOR => {
+                    let token_next = self.token_next.clone();
 
-        Ok(())
-    }
+                    self.tcp_server.poll_accept(&mut self.poll, || {
+                        *token_next.borrow_mut() += 1;
 
-    fn handle_accept(&mut self) -> anyhow::Result<()> {
-        loop {
-            let (mut connection, _) = match self.tcp_listener.accept() {
-                Ok(incoming) => incoming,
-                Err(err) => {
-                    if would_block(&err) {
-                        return Ok(());
+                        Token(*token_next.borrow())
+                    })?;
+                }
+                _ => {
+                    if self.tcp_server.is_raised_by_tcp_conn(event) {
+                        if event.is_readable() {
+                            let mut buf = BytesMut::with_capacity(1024);
+
+                            self.tcp_server
+                                .poll_read(&mut self.poll, event.token(), &mut buf)?;
+                        }
+
+                        if event.is_writable() {
+                            let buf = vec![0 as u8; 20];
+
+                            self.tcp_server.poll_write(
+                                &mut self.poll,
+                                event.token(),
+                                buf.as_ref(),
+                            )?;
+                        }
                     } else {
-                        return Err(err.into());
+                        todo!("handle udp endpoint events")
                     }
                 }
-            };
-
-            log::info!("incoming new tcp connection {:?}", connection);
-
-            let token = self.next_token();
-
-            self.poll.registry().register(
-                &mut connection,
-                token,
-                Interest::READABLE.add(Interest::WRITABLE),
-            )?;
-
-            self.tcp_conns.insert(token, connection);
-        }
-    }
-
-    fn handle_conn_event(&mut self, event: &Event) -> anyhow::Result<()> {
-        let done = if let Some(conn) = self.tcp_conns.get_mut(&event.token()) {
-            if event.is_writable() {
-                if let Some(buf) = self.backward_bufs.remove(&event.token()) {
-                    match conn.write(&buf) {
-                        Ok(n) if n < buf.len() => {}
-                        Ok(_) => {}
-                    }
-                }
-            }
-            true
-        } else {
-            false
-        };
-
-        if done {
-            if let Some(mut connection) = self.tcp_conns.remove(&event.token()) {
-                self.poll.registry().deregister(&mut connection)?;
             }
         }
 
         Ok(())
     }
+}
 
-    fn next_token(&mut self) -> Token {
-        self.token_next += 1;
+#[cfg(test)]
+mod tests {
+    use bytes::BytesMut;
 
-        Token(self.token_next)
+    #[test]
+    fn test_bytes_mut() {
+        let mut buf = BytesMut::zeroed(1024);
+
+        assert_eq!(buf.len(), 1024);
+
+        assert_eq!(buf.capacity(), 1024);
+
+        buf.as_mut()[0] = b'a';
+
+        buf.resize(2048, 0);
+
+        assert_eq!(buf.len(), 2048);
     }
 }
