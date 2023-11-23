@@ -1,0 +1,13 @@
+[tasks.test]
+dependencies = [
+  "single-thread-test",
+  "multi-thread-test",
+]
+
+[tasks.single-thread-test]
+args = ["test", "--no-default-features", "--features", "tester"]
+command = "cargo"
+
+[tasks.multi-thread-test]
+args = ["test", "--features", "tester"]
+command = "cargo"
