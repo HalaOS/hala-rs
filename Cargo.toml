@@ -13,6 +13,7 @@ bencher = "^0.1.5"
 bytes = "^1.5.0"
 clap = {version = "^4.4", features = ["derive"]}
 core2 = "^0.4.0"
+divan = "^0.1"
 futures = "^0.3.29"
 futures-test = "^0.3"
 log = "^0.4"
@@ -20,4 +21,6 @@ mio = {version = "^0.8.9", features = ["os-poll", "net"]}
 pretty_env_logger = "^0.5"
 quiche = "^0.19.0"
 rand = {version = "^0.8", features = ["getrandom"]}
+serde = {version = "^1.0", features = ["derive"]}
+serde_json = {version = "^1.0"}
 thiserror-no-std = "^2.0"

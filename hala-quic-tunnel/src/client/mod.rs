@@ -1,7 +1,6 @@
 mod config;
 
 pub mod quice_client;
-pub mod tcp_server;
 
 use std::{cell::RefCell, rc::Rc};
 
@@ -11,7 +10,7 @@ use mio::{Events, Poll, Token};
 
 use crate::utils::interrupted;
 
-use self::tcp_server::TcpServer;
+use crate::poll::TcpServer;
 
 const ACCEPTOR: Token = Token(0);
 
@@ -32,7 +31,7 @@ impl TunnelClient {
         // Create a poll instance.
         let mut poll = Poll::new()?;
 
-        let tcp_server = TcpServer::new(&mut poll, ACCEPTOR, &config)?;
+        let tcp_server = TcpServer::new(&mut poll, ACCEPTOR, config.tcp_server_config())?;
 
         Ok(Self {
             poll,
