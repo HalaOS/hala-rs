@@ -5,9 +5,9 @@ dependencies = [
 ]
 
 [tasks.single-thread-test]
-args = ["test", "--no-default-features", "--features", "tester"]
+args = ["test", "--no-default-features", "--features", "single-thread"]
 command = "cargo"
 
 [tasks.multi-thread-test]
-args = ["test", "--features", "tester"]
+args = ["test"]
 command = "cargo"

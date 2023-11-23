@@ -138,8 +138,10 @@ impl IoDevice {
 #[cfg(feature = "multi-thread")]
 static IO_DEVICE: std::sync::OnceLock<IoDevice> = std::sync::OnceLock::new();
 
+#[cfg(not(feature = "multi-thread"))]
+static IO_DEVICE: std::sync::OnceLock<IoDevice> = std::sync::OnceLock::new();
+
 /// Get global IoDevice reference ,which only valid in multi-thread model.
-#[cfg(feature = "multi-thread")]
 pub fn global_io_device() -> &'static IoDevice {
     IO_DEVICE.get_or_init(|| {
         let io_device = IoDevice::new().unwrap();

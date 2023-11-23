@@ -2,7 +2,7 @@ use std::{future::Future, io, task::Poll};
 
 use mio::{event, Interest, Token};
 
-use crate::{io_device::IoDevice, thread_model::ThreadModel};
+use crate::{IoDevice, ThreadModel};
 
 #[derive(Debug)]
 pub struct IoObject<T> {
