@@ -1,5 +1,5 @@
 [workspace]
-members = ["hala-mux", "hala-quic", "hala-quic-tunnel"]
+members = ["hala-mux"]
 resolver = "2"
 
 [workspace.package]
@@ -9,7 +9,6 @@ version = "0.1.2"
 
 [workspace.dependencies]
 anyhow = "^1"
-bencher = "^0.1.5"
 bytes = "^1.5.0"
 clap = {version = "^4.4", features = ["derive"]}
 core2 = "^0.4.0"
