@@ -15,7 +15,7 @@ mio = {workspace = true}
 thiserror = {workspace = true}
 
 [dev-dependencies]
-hala-io-test = {workspace = true}
+hala-io-test = {workspace = true, features = ["debug"]}
 pretty_env_logger = {workspace = true}
 
 [features]

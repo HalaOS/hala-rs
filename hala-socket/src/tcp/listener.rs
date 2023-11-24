@@ -1,4 +1,5 @@
 use std::{
+    fmt::Debug,
     io,
     net::{SocketAddr, ToSocketAddrs},
 };
@@ -9,9 +10,14 @@ use hala_reactor::IoObject;
 
 use super::TcpStream;
 
-#[derive(Debug)]
 pub struct TcpListener {
     io: IoObject<mio::net::TcpListener>,
+}
+
+impl Debug for TcpListener {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "TcpListener(Token = {:?})", self.io.token)
+    }
 }
 
 impl TcpListener {

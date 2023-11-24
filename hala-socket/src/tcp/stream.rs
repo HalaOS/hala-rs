@@ -1,4 +1,5 @@
 use std::{
+    fmt::Debug,
     io::{self, Read, Write},
     net::ToSocketAddrs,
     task::Poll,
@@ -8,9 +9,14 @@ use futures::{AsyncRead, AsyncWrite};
 use hala_reactor::{global_io_device, IoObject};
 use mio::Interest;
 
-#[derive(Debug)]
 pub struct TcpStream {
     io: IoObject<mio::net::TcpStream>,
+}
+
+impl Debug for TcpStream {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "TcpStream({:?})", self.io.token)
+    }
 }
 
 impl TcpStream {

@@ -7,9 +7,9 @@ pub use stream::*;
 #[cfg(test)]
 mod tests {
 
-    use std::net::SocketAddr;
+    use std::{net::SocketAddr, str::from_utf8};
 
-    use futures::{AsyncReadExt, AsyncWriteExt};
+    use futures::{task::SpawnExt, AsyncReadExt, AsyncWriteExt};
 
     use super::*;
 
@@ -24,32 +24,50 @@ mod tests {
 
     #[hala_io_test::test]
     async fn test_accept() {
-        let listener = TcpListener::bind("[::]:0").unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
 
         let local_addr = listener.local_addr().unwrap();
 
-        hala_io_test::spawner().spawn_ok(async move {
-            let (mut conn, remote_addr) = listener.accept().await.unwrap();
+        let data = b"hello this world";
 
-            log::trace!("accept one connection from {}", remote_addr);
+        _ = hala_io_test::spawner()
+            .spawn(async move {
+                log::trace!(
+                    "[{:?}] {:?} start accept incoming conn",
+                    std::thread::current().id(),
+                    listener
+                );
 
-            let mut buf = String::new();
+                let (mut conn, remote_addr) = listener.accept().await.unwrap();
 
-            conn.read_to_string(&mut buf).await.unwrap();
+                log::trace!("accept one connection from {}", remote_addr);
 
-            assert_eq!(buf, "hello world");
+                let mut buf = vec![0 as u8; data.len()];
 
-            conn.write_all(buf.as_bytes()).await.unwrap();
-        });
+                conn.read_exact(&mut buf).await.unwrap();
+
+                log::trace!("{:?} recv data {}", conn, from_utf8(&buf).unwrap());
+
+                assert_eq!(buf, data);
+
+                conn.write_all(&buf).await.unwrap();
+
+                log::trace!("{:?} write data {}", conn, buf.len());
+            })
+            .unwrap();
 
         let mut conn = TcpStream::connect(local_addr).await.unwrap();
 
-        conn.write(b"hello world").await.unwrap();
+        let write_size = conn.write(data).await.unwrap();
 
-        let mut buf = String::new();
+        log::trace!("client conn write data {}", write_size);
 
-        conn.read_to_string(&mut buf).await.unwrap();
+        let mut buf = vec![0 as u8; data.len()];
 
-        assert_eq!(buf, "hello world");
+        conn.read_exact(&mut buf).await.unwrap();
+
+        assert_eq!(buf, data);
+
+        conn.write_all(&buf).await.unwrap();
     }
 }

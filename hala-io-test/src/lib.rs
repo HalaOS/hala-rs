@@ -1,6 +1,7 @@
-use std::task::Poll;
+use async_recursion::async_recursion;
+use futures::Future;
 
-use futures::{future::BoxFuture, Future};
+use futures::task::SpawnExt;
 
 static POOL: std::sync::OnceLock<futures::executor::ThreadPool> = std::sync::OnceLock::new();
 
@@ -10,11 +11,7 @@ where
     Fut: Future + Send + 'static,
     Fut::Output: Send,
 {
-    _ = pretty_env_logger::try_init();
-
     let thread_pool = spawner();
-
-    use futures::task::SpawnExt;
 
     let handle = if IoDevice::is_multithread() {
         log::trace!("start multi-thread io test");
@@ -27,9 +24,7 @@ where
 
         let future = test();
 
-        let future = SingleThreadFutureWrapper {
-            future: Box::pin(future),
-        };
+        thread_pool.spawn(run_event_loop()).unwrap();
 
         thread_pool.spawn_with_handle(future).unwrap()
     };
@@ -37,38 +32,22 @@ where
     futures::executor::block_on(handle);
 }
 
-struct SingleThreadFutureWrapper<Output> {
-    future: BoxFuture<'static, Output>,
-}
+#[async_recursion]
+async fn run_event_loop() {
+    global_io_device().poll_once(None).unwrap();
 
-impl<Output> Future for SingleThreadFutureWrapper<Output>
-where
-    Output: Send,
-{
-    type Output = Output;
-
-    fn poll(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<Self::Output> {
-        match self.future.as_mut().poll(cx) {
-            Poll::Pending => {
-                global_io_device().poll_once(None).unwrap();
-                return Poll::Pending;
-            }
-            r => return r,
-        }
-    }
+    spawner().spawn(run_event_loop()).unwrap();
 }
 
 pub fn spawner() -> &'static futures::executor::ThreadPool {
-    let pool_size = if cfg!(feature = "multi-thread") {
-        10
-    } else {
-        1
-    };
-
     POOL.get_or_init(|| {
+        #[cfg(feature = "debug")]
+        pretty_env_logger::init();
+
+        let pool_size = if IoDevice::is_multithread() { 10 } else { 1 };
+
+        log::info!("hala io tester start with {} threads", pool_size);
+
         futures::executor::ThreadPool::builder()
             .pool_size(pool_size)
             .create()

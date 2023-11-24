@@ -1,4 +1,4 @@
-use std::{future::Future, io, task::Poll};
+use std::{fmt::Debug, future::Future, io, task::Poll};
 
 use mio::{event, Interest, Token};
 
@@ -6,9 +6,9 @@ use crate::{IoDevice, ThreadModel};
 
 #[derive(Debug)]
 pub struct IoObject<T> {
-    token: Token,
+    pub token: Token,
     pub inner_object: ThreadModel<T>,
-    io_device: IoDevice,
+    pub io_device: IoDevice,
 }
 
 impl<T> IoObject<T> {
@@ -46,6 +46,7 @@ where
     ) -> Poll<io::Result<R>>
     where
         F: FnMut() -> io::Result<R>,
+        R: Debug,
     {
         loop {
             match f() {
@@ -53,6 +54,8 @@ where
                     let io_dervice = self.io_device.clone();
                     let token = self.token;
                     let interest = interest;
+
+                    log::trace!("IoObject({:?}) ops {:?} WouldBlock", self.token, interest);
 
                     if let Err(err) = io_dervice.poll_register(
                         cx,
@@ -66,9 +69,19 @@ where
                     return Poll::Pending;
                 }
                 Err(err) if err.kind() == io::ErrorKind::Interrupted => {
+                    log::trace!("IoObject({:?}) Interrupted", self.token);
                     continue;
                 }
-                output => return Poll::Ready(output),
+                output => {
+                    log::trace!(
+                        "IoObject({:?}) complete ops {:?},{:?}",
+                        self.token,
+                        interest,
+                        output
+                    );
+
+                    return Poll::Ready(output);
+                }
             }
         }
     }
@@ -84,6 +97,7 @@ impl<'a, R, T, F> Future for PollIo<'a, T, F>
 where
     F: FnMut() -> io::Result<R> + Unpin,
     T: event::Source,
+    R: Debug,
 {
     type Output = io::Result<R>;
 
@@ -98,6 +112,12 @@ where
                     let token = self.object.token;
                     let interest = self.interest;
 
+                    log::trace!(
+                        "IoObject({:?}) ops {:?} WouldBlock",
+                        self.object.token,
+                        self.interest
+                    );
+
                     if let Err(err) = io_dervice.poll_register(
                         cx,
                         &mut *self.object.inner_object.get_mut(),
@@ -110,9 +130,19 @@ where
                     return Poll::Pending;
                 }
                 Err(err) if err.kind() == io::ErrorKind::Interrupted => {
+                    log::trace!("IoObject({:?}) Interrupted", self.object.token);
                     continue;
                 }
-                output => return Poll::Ready(output),
+                output => {
+                    log::trace!(
+                        "IoObject({:?}) complete ops {:?},{:?}",
+                        self.object.token,
+                        self.interest,
+                        output
+                    );
+
+                    return Poll::Ready(output);
+                }
             }
         }
     }

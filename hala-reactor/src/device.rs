@@ -123,13 +123,16 @@ impl IoDevice {
 
     /// Poll io events once.
     pub fn poll_once(&self, poll_timeout: Option<Duration>) -> io::Result<()> {
-        log::trace!("io_device poll_once with timeout {:?}", poll_timeout);
-
         let mut events = Events::with_capacity(1024);
 
-        self.poll.get_mut().poll(&mut events, poll_timeout)?;
+        self.poll.get_mut().poll(
+            &mut events,
+            Some(poll_timeout.unwrap_or(Duration::from_millis(10))),
+        )?;
 
         for event in events.iter() {
+            log::trace!("io_device raised event {:?}", event);
+
             if event.is_readable() {
                 if let Some(waker) = self.read_wakers.get_mut().remove(&event.token()) {
                     waker.wake_by_ref();
