@@ -1,10 +1,15 @@
 mod listener;
 pub use listener::*;
 
+mod stream;
+pub use stream::*;
+
 #[cfg(test)]
 mod tests {
 
     use std::net::SocketAddr;
+
+    use futures::{AsyncReadExt, AsyncWriteExt};
 
     use super::*;
 
@@ -19,10 +24,32 @@ mod tests {
 
     #[hala_io_test::test]
     async fn test_accept() {
-        _ = pretty_env_logger::try_init();
-
         let listener = TcpListener::bind("[::]:0").unwrap();
 
-        // listener.accept().await.unwrap();
+        let local_addr = listener.local_addr().unwrap();
+
+        hala_io_test::spawner().spawn_ok(async move {
+            let (mut conn, remote_addr) = listener.accept().await.unwrap();
+
+            log::trace!("accept one connection from {}", remote_addr);
+
+            let mut buf = String::new();
+
+            conn.read_to_string(&mut buf).await.unwrap();
+
+            assert_eq!(buf, "hello world");
+
+            conn.write_all(buf.as_bytes()).await.unwrap();
+        });
+
+        let mut conn = TcpStream::connect(local_addr).await.unwrap();
+
+        conn.write(b"hello world").await.unwrap();
+
+        let mut buf = String::new();
+
+        conn.read_to_string(&mut buf).await.unwrap();
+
+        assert_eq!(buf, "hello world");
     }
 }

@@ -10,13 +10,21 @@ where
     Fut: Future + Send + 'static,
     Fut::Output: Send,
 {
+    _ = pretty_env_logger::try_init();
+
     let thread_pool = spawner();
 
     use futures::task::SpawnExt;
 
     let handle = if IoDevice::is_multithread() {
+        log::trace!("start multi-thread io test");
+
+        global_io_device().start(None);
+
         thread_pool.spawn_with_handle(test()).unwrap()
     } else {
+        log::trace!("start single thread io test");
+
         let future = test();
 
         let future = SingleThreadFutureWrapper {

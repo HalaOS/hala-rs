@@ -40,7 +40,6 @@ pub type RefMut<'a, T> = std::cell::RefMut<'a, T>;
 impl<T> ThreadModel<T> {
     #[cfg(feature = "multi-thread")]
     pub fn new(value: T) -> Self {
-        log::trace!("multi-thread ThreadModel");
         Self {
             value: Arc::new(Mutex::new(value)),
         }
@@ -48,7 +47,6 @@ impl<T> ThreadModel<T> {
 
     #[cfg(not(feature = "multi-thread"))]
     pub fn new(value: T) -> Self {
-        log::trace!("single-thread ThreadModel");
         Self {
             value: Rc::new(RefCell::new(value)),
         }

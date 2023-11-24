@@ -1,8 +1,13 @@
-use std::{io, net::ToSocketAddrs};
+use std::{
+    io,
+    net::{SocketAddr, ToSocketAddrs},
+};
 
 use mio::Interest;
 
 use hala_reactor::IoObject;
+
+use super::TcpStream;
 
 #[derive(Debug)]
 pub struct TcpListener {
@@ -14,6 +19,8 @@ impl TcpListener {
     pub fn bind<S: ToSocketAddrs>(laddr: S) -> io::Result<Self> {
         let std_listener = std::net::TcpListener::bind(laddr)?;
 
+        std_listener.set_nonblocking(true)?;
+
         let io_device = hala_reactor::global_io_device().clone();
 
         let listener = mio::net::TcpListener::from_std(std_listener);
@@ -24,11 +31,17 @@ impl TcpListener {
     }
 
     /// Accepts a new incoming connection from this listener.
-    pub async fn accept(&self) -> io::Result<()> {
-        self.io
-            .poll_io(Interest::READABLE, || self.io.inner_object.get().accept())
+    pub async fn accept(&self) -> io::Result<(TcpStream, SocketAddr)> {
+        let (stream, addr) = self
+            .io
+            .async_io(Interest::READABLE, || self.io.inner_object.get().accept())
             .await?;
 
-        Ok(())
+        Ok((TcpStream::from_mio(stream), addr))
+    }
+
+    /// Returns the local socket address of this listener.
+    pub fn local_addr(&self) -> io::Result<SocketAddr> {
+        self.io.inner_object.get().local_addr()
     }
 }

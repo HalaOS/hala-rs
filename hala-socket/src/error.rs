@@ -6,6 +6,6 @@ pub enum SocketError {}
 
 impl From<SocketError> for io::Error {
     fn from(value: SocketError) -> Self {
-        core2::io::Error::new(io::ErrorKind::Other, value)
+        std::io::Error::new(io::ErrorKind::Other, value)
     }
 }

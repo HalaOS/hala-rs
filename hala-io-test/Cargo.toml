@@ -10,9 +10,6 @@ version.workspace = true
 [dependencies]
 futures = {workspace = true}
 hala-io-test-derive = {path = "./derive", version = "^0.1"}
-hala-reactor = {workspace = true, default = false, optional = true}
-
-[features]
-default = ["single-thread"]
-multi-thread = ["hala-reactor/multi-thread"]
-single-thread = ["hala-reactor/single-thread"]
+hala-reactor = {workspace = true}
+log = {workspace = true}
+pretty_env_logger = {workspace = true}

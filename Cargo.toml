@@ -25,7 +25,7 @@ serde_json = {version = "^1.0"}
 thiserror = "^1.0.50"
 thiserror-no-std = "^2.0"
 
-hala-io-test = {path = "./hala-io-test", version = "^0.1"}
+hala-io-test = {path = "./hala-io-test", default = false, version = "^0.1"}
 hala-mux = {path = "./hala-mux", version = "^0.1"}
-hala-reactor = {path = "./hala-reactor", version = "^0.1"}
+hala-reactor = {path = "./hala-reactor", default = false, version = "^0.1"}
 hala-socket = {path = "./hala-socket", version = "^0.1"}

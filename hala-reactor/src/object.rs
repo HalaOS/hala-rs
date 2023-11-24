@@ -21,14 +21,55 @@ impl<T> IoObject<T> {
         }
     }
 
-    pub fn poll_io<R, F>(&self, interest: Interest, f: F) -> PollIo<'_, T, F>
+    pub fn async_io<R, F>(&self, interest: Interest, f: F) -> PollIo<'_, T, F>
     where
-        F: Fn() -> io::Result<R>,
+        F: FnMut() -> io::Result<R>,
     {
         PollIo {
             f,
             interest,
             object: self,
+        }
+    }
+}
+
+impl<T> IoObject<T>
+where
+    T: event::Source,
+{
+    /// Invoke one io ops.
+    pub fn poll_io<R, F>(
+        &self,
+        cx: &mut std::task::Context<'_>,
+        interest: Interest,
+        mut f: F,
+    ) -> Poll<io::Result<R>>
+    where
+        F: FnMut() -> io::Result<R>,
+    {
+        loop {
+            match f() {
+                Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                    let io_dervice = self.io_device.clone();
+                    let token = self.token;
+                    let interest = interest;
+
+                    if let Err(err) = io_dervice.poll_register(
+                        cx,
+                        &mut *self.inner_object.get_mut(),
+                        token,
+                        interest,
+                    ) {
+                        return Poll::Ready(Err(err));
+                    }
+
+                    return Poll::Pending;
+                }
+                Err(err) if err.kind() == io::ErrorKind::Interrupted => {
+                    continue;
+                }
+                output => return Poll::Ready(output),
+            }
         }
     }
 }
@@ -41,13 +82,13 @@ pub struct PollIo<'a, T, F> {
 
 impl<'a, R, T, F> Future for PollIo<'a, T, F>
 where
-    F: Fn() -> io::Result<R> + Unpin,
+    F: FnMut() -> io::Result<R> + Unpin,
     T: event::Source,
 {
     type Output = io::Result<R>;
 
     fn poll(
-        self: std::pin::Pin<&mut Self>,
+        mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
         loop {
@@ -65,6 +106,8 @@ where
                     ) {
                         return Poll::Ready(Err(err));
                     }
+
+                    return Poll::Pending;
                 }
                 Err(err) if err.kind() == io::ErrorKind::Interrupted => {
                     continue;

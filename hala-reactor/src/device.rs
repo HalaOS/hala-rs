@@ -56,6 +56,8 @@ impl IoDevice {
 
         *next_token += 1;
 
+        log::trace!("next token {:?}", token);
+
         token
     }
 
@@ -74,7 +76,11 @@ impl IoDevice {
 
         let next_token = self.next_token.fetch_add(1, Ordering::SeqCst);
 
-        Token(next_token)
+        let token = Token(next_token);
+
+        log::trace!("next token {:?}", token);
+
+        token
     }
 
     /// Register readable/writeable event waker.
@@ -117,6 +123,8 @@ impl IoDevice {
 
     /// Poll io events once.
     pub fn poll_once(&self, poll_timeout: Option<Duration>) -> io::Result<()> {
+        log::trace!("io_device poll_once with timeout {:?}", poll_timeout);
+
         let mut events = Events::with_capacity(1024);
 
         self.poll.get_mut().poll(&mut events, poll_timeout)?;
@@ -138,14 +146,17 @@ impl IoDevice {
         Ok(())
     }
 
-    #[cfg(feature = "multi-thread")]
-    /// run [`event_loop`](IoDevice::event_loop) in a separate thread
-    pub fn start(&self, poll_timeout: Option<Duration>) -> std::thread::JoinHandle<()> {
-        let io_device = self.clone();
+    /// run [`event_loop`](IoDevice::event_loop) in a separate thread, if io device supports multithread model
+    #[allow(unused)]
+    pub fn start(&self, poll_timeout: Option<Duration>) {
+        #[cfg(feature = "multi-thread")]
+        {
+            let io_device = self.clone();
 
-        std::thread::spawn(move || {
-            _ = io_device.event_loop(poll_timeout);
-        })
+            std::thread::spawn(move || {
+                _ = io_device.event_loop(poll_timeout);
+            });
+        }
     }
 }
 
