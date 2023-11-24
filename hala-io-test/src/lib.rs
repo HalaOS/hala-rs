@@ -1,4 +1,6 @@
-use futures::Future;
+use std::task::Poll;
+
+use futures::{future::BoxFuture, Future};
 
 static POOL: std::sync::OnceLock<futures::executor::ThreadPool> = std::sync::OnceLock::new();
 
@@ -10,13 +12,45 @@ where
 {
     let thread_pool = spawner();
 
-    let future = test();
-
     use futures::task::SpawnExt;
 
-    let handle = thread_pool.spawn_with_handle(future).unwrap();
+    let handle = if IoDevice::is_multithread() {
+        thread_pool.spawn_with_handle(test()).unwrap()
+    } else {
+        let future = test();
+
+        let future = SingleThreadFutureWrapper {
+            future: Box::pin(future),
+        };
+
+        thread_pool.spawn_with_handle(future).unwrap()
+    };
 
     futures::executor::block_on(handle);
+}
+
+struct SingleThreadFutureWrapper<Output> {
+    future: BoxFuture<'static, Output>,
+}
+
+impl<Output> Future for SingleThreadFutureWrapper<Output>
+where
+    Output: Send,
+{
+    type Output = Output;
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Self::Output> {
+        match self.future.as_mut().poll(cx) {
+            Poll::Pending => {
+                global_io_device().poll_once(None).unwrap();
+                return Poll::Pending;
+            }
+            r => return r,
+        }
+    }
 }
 
 pub fn spawner() -> &'static futures::executor::ThreadPool {
@@ -37,3 +71,4 @@ pub fn spawner() -> &'static futures::executor::ThreadPool {
 pub use futures;
 
 pub use hala_io_test_derive::*;
+use hala_reactor::{global_io_device, IoDevice};

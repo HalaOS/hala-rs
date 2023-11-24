@@ -13,6 +13,6 @@ hala-io-test-derive = {path = "./derive", version = "^0.1"}
 hala-reactor = {workspace = true, default = false, optional = true}
 
 [features]
-default = ["multi-thread"]
+default = ["single-thread"]
 multi-thread = ["hala-reactor/multi-thread"]
-single-thread = ["hala-reactor"]
+single-thread = ["hala-reactor/single-thread"]

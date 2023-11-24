@@ -30,6 +30,12 @@ pub struct IoDevice {
     next_token: Arc<AtomicUsize>,
 }
 
+#[cfg(not(feature = "multi-thread"))]
+unsafe impl Send for IoDevice {}
+
+#[cfg(not(feature = "multi-thread"))]
+unsafe impl Sync for IoDevice {}
+
 impl IoDevice {
     /// Create new io device object.
     pub fn new() -> io::Result<Self> {
@@ -51,6 +57,14 @@ impl IoDevice {
         *next_token += 1;
 
         token
+    }
+
+    /// The runtime checks if the object supports multithreading
+    pub fn is_multithread() -> bool {
+        #[cfg(feature = "multi-thread")]
+        return true;
+        #[cfg(not(feature = "multi-thread"))]
+        return false;
     }
 
     #[doc(hidden)]
@@ -145,8 +159,6 @@ static IO_DEVICE: std::sync::OnceLock<IoDevice> = std::sync::OnceLock::new();
 pub fn global_io_device() -> &'static IoDevice {
     IO_DEVICE.get_or_init(|| {
         let io_device = IoDevice::new().unwrap();
-
-        io_device.start(Some(Duration::from_millis(10)));
 
         io_device
     })

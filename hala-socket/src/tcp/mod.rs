@@ -19,6 +19,8 @@ mod tests {
 
     #[hala_io_test::test]
     async fn test_accept() {
+        _ = pretty_env_logger::try_init();
+
         let listener = TcpListener::bind("[::]:0").unwrap();
 
         // listener.accept().await.unwrap();

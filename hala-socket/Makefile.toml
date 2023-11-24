@@ -9,5 +9,5 @@ args = ["test", "--no-default-features", "--features", "single-thread"]
 command = "cargo"
 
 [tasks.multi-thread-test]
-args = ["test"]
+args = ["test", "--no-default-features", "--features", "multi-thread"]
 command = "cargo"

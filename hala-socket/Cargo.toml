@@ -10,14 +10,16 @@ version.workspace = true
 [dependencies]
 core2 = {workspace = true}
 futures = {workspace = true, optional = true}
-hala-reactor = {workspace = true, default = false, optional = true}
+hala-io-test = {workspace = true, default = false, optional = true}
+hala-reactor = {workspace = true, optional = true}
 mio = {workspace = true}
 thiserror = {workspace = true}
 
 [dev-dependencies]
-hala-io-test = {workspace = true}
+
+pretty_env_logger = {workspace = true}
 
 [features]
 default = ["single-thread"]
-multi-thread = ["hala-reactor/multi-thread"]
-single-thread = ["hala-reactor"]
+multi-thread = ["hala-reactor/multi-thread", "hala-io-test/multi-thread"]
+single-thread = ["hala-reactor/single-thread", "hala-io-test/single-thread"]
