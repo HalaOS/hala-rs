@@ -4,17 +4,17 @@ use std::{
     task::Poll,
 };
 
-use hala_reactor::{each_addr, IoDevice, IoObject, MioDevice, ThreadModelHolder};
+use hala_reactor::*;
 use mio::Interest;
 
 /// A UDP socket.
-pub struct UdpSocket<IO: IoDevice + 'static = MioDevice> {
+pub struct UdpSocket<IO: IoDevice + StaticIoDevice + 'static = MioDeviceMT> {
     io: IoObject<IO, mio::net::UdpSocket>,
 }
 
 impl<IO> UdpSocket<IO>
 where
-    IO: IoDevice + Send + Sync + 'static,
+    IO: IoDevice + StaticIoDevice + Send + Sync + 'static,
 {
     /// This function will create a new UDP socket and attempt to bind it to the addr provided.
     pub async fn bind<S: ToSocketAddrs>(laddr: S) -> io::Result<Self> {
@@ -63,7 +63,7 @@ where
     /// read and the address from whence the data came.
     pub async fn recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
         self.io
-            .async_io(IO::get(), Interest::WRITABLE, move || {
+            .async_io(IO::get(), Interest::READABLE, move || {
                 self.io.holder.get().recv_from(buf)
             })
             .await
@@ -80,23 +80,49 @@ where
     }
 }
 
-async fn test_udp() {
-    let send_buf = b"hello world";
+#[cfg(test)]
+mod tests {
+    use futures::task::SpawnExt;
 
-    let server_udp: UdpSocket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    use super::*;
 
-    let client_udp: UdpSocket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    #[test]
+    fn test_udp_mt() {
+        pretty_env_logger::init();
 
-    client_udp
-        .send_to(send_buf, server_udp.local_addr().unwrap())
-        .await
-        .unwrap();
+        MioDeviceMT::get().start(None);
+        async fn test_udp() {
+            let send_buf = b"hello world";
 
-    let mut buf = [0 as u8; 1024];
+            let server_udp: UdpSocket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
 
-    let (recv_size, remote_addr) = server_udp.recv_from(&mut buf).await.unwrap();
+            let client_udp: UdpSocket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
 
-    assert_eq!(recv_size, send_buf.len());
+            client_udp
+                .send_to(send_buf, server_udp.local_addr().unwrap())
+                .await
+                .unwrap();
 
-    assert_eq!(remote_addr, client_udp.local_addr().unwrap());
+            log::trace!("send to");
+
+            let mut buf = [0 as u8; 1024];
+
+            let (recv_size, remote_addr) = server_udp.recv_from(&mut buf).await.unwrap();
+
+            log::trace!("recv from");
+
+            assert_eq!(recv_size, send_buf.len());
+
+            assert_eq!(remote_addr, client_udp.local_addr().unwrap());
+        }
+
+        let pool = futures::executor::ThreadPool::builder()
+            .pool_size(10)
+            .create()
+            .unwrap();
+
+        let remote = pool.spawn_with_handle(test_udp()).unwrap();
+
+        futures::executor::block_on(remote);
+    }
 }

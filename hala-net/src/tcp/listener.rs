@@ -6,21 +6,21 @@ use std::{
 
 use mio::Interest;
 
-use hala_reactor::{IoDevice, IoObject, MioDevice, ThreadModelHolder};
+use hala_reactor::{IoDevice, IoObject, MioDevice, StaticIoDevice, ThreadModelHolder};
 
 use super::TcpStream;
 
-pub struct TcpListener<IO: IoDevice + 'static = MioDevice> {
+pub struct TcpListener<IO: IoDevice + StaticIoDevice + 'static = MioDevice> {
     io: IoObject<IO, mio::net::TcpListener>,
 }
 
-impl<IO: IoDevice> Debug for TcpListener<IO> {
+impl<IO: IoDevice + StaticIoDevice> Debug for TcpListener<IO> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "TcpListener(Token = {:?})", self.io.token)
     }
 }
 
-impl<IO: IoDevice> TcpListener<IO> {
+impl<IO: IoDevice + StaticIoDevice> TcpListener<IO> {
     /// Create new tcp listener with calling underly bind method.
     pub fn bind<S: ToSocketAddrs>(laddr: S) -> io::Result<Self> {
         let std_listener = std::net::TcpListener::bind(laddr)?;

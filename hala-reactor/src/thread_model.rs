@@ -6,7 +6,7 @@ use std::{
 };
 
 pub trait ThreadModel {
-    type Holder<T>: ThreadModelHolder<T> + From<T>;
+    type Holder<T>: ThreadModelHolder<T> + Clone + From<T>;
 }
 
 pub trait ThreadModelHolder<T> {
@@ -26,6 +26,8 @@ pub trait ThreadModelHolder<T> {
 
     /// Get mutable reference of type `T`
     fn get_mut(&self) -> Self::RefMut<'_, T>;
+
+    fn is_multithread() -> bool;
 }
 
 /// Single thread model
@@ -34,6 +36,14 @@ pub struct STModel;
 pub struct STModelHolder<T> {
     /// protected value.
     value: Rc<RefCell<T>>,
+}
+
+impl<T> Clone for STModelHolder<T> {
+    fn clone(&self) -> Self {
+        Self {
+            value: self.value.clone(),
+        }
+    }
 }
 
 unsafe impl<T> Sync for STModelHolder<T> {}
@@ -63,6 +73,10 @@ impl<T> ThreadModelHolder<T> for STModelHolder<T> {
     fn get_mut(&self) -> std::cell::RefMut<'_, T> {
         self.value.borrow_mut()
     }
+
+    fn is_multithread() -> bool {
+        false
+    }
 }
 
 impl ThreadModel for STModel {
@@ -75,6 +89,14 @@ pub struct MTModel;
 pub struct MTModelHolder<T> {
     /// protected value.
     value: Arc<Mutex<T>>,
+}
+
+impl<T> Clone for MTModelHolder<T> {
+    fn clone(&self) -> Self {
+        Self {
+            value: self.value.clone(),
+        }
+    }
 }
 
 impl<T> From<T> for MTModelHolder<T> {
@@ -100,6 +122,10 @@ impl<T> ThreadModelHolder<T> for MTModelHolder<T> {
 
     fn get_mut(&self) -> std::sync::MutexGuard<'_, T> {
         self.value.lock().unwrap()
+    }
+
+    fn is_multithread() -> bool {
+        true
     }
 }
 

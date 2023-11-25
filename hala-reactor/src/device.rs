@@ -1,21 +1,19 @@
 use std::{
     collections::HashMap,
     io,
-    sync::{atomic::AtomicUsize, Arc},
+    sync::{atomic::AtomicUsize, Arc, Once, OnceLock},
     task::{Context, Poll, Waker},
+    time::Duration,
 };
 
 use futures::Future;
-use mio::{event::Source, Interest, Token};
+use mio::{event::Source, Events, Interest, Token};
 
-use crate::{MTModel, ThreadModel, ThreadModelHolder};
+use crate::{MTModel, STModel, ThreadModel, ThreadModelHolder};
 
 /// Poll reactor device must implement this trait
 pub trait IoDevice {
     type Holder<T>: ThreadModelHolder<T>;
-
-    /// Get `device` instance.
-    fn get() -> &'static Self;
 
     /// Re-register an [`Source`] with the reactor device.
     fn register<S>(&self, source: &mut S, interests: Interest) -> io::Result<Token>
@@ -47,6 +45,14 @@ pub trait IoDevice {
     ) -> Poll<io::Result<R>>
     where
         F: FnMut() -> io::Result<R>;
+
+    fn event_loop(&self, poll_timeout: Option<Duration>) -> io::Result<()>;
+
+    fn poll_once(&self, poll_timeout: Option<Duration>) -> io::Result<()>;
+}
+
+pub trait StaticIoDevice: IoDevice {
+    fn get() -> &'static Self;
 }
 
 /// Extension trait for [`IoDevice`]
@@ -127,7 +133,6 @@ where
 }
 
 /// IoDevice using mio implementation
-#[derive(Clone)]
 pub struct MioDevice<TM: ThreadModel = MTModel> {
     poll: TM::Holder<mio::Poll>,
     /// readable waker collection
@@ -136,6 +141,17 @@ pub struct MioDevice<TM: ThreadModel = MTModel> {
     write_wakers: TM::Holder<HashMap<Token, Waker>>,
     /// token generating seed
     next_token: Arc<AtomicUsize>,
+}
+
+impl<TM: ThreadModel> Clone for MioDevice<TM> {
+    fn clone(&self) -> Self {
+        Self {
+            poll: self.poll.clone(),
+            read_wakers: self.read_wakers.clone(),
+            write_wakers: self.write_wakers.clone(),
+            next_token: self.next_token.clone(),
+        }
+    }
 }
 
 impl<TM: ThreadModel> MioDevice<TM> {
@@ -165,10 +181,6 @@ impl<TM: ThreadModel> MioDevice<TM> {
 
 impl<TM: ThreadModel> IoDevice for MioDevice<TM> {
     type Holder<T> = TM::Holder<T>;
-
-    fn get() -> &'static Self {
-        todo!()
-    }
 
     fn register<S>(&self, source: &mut S, interests: Interest) -> io::Result<Token>
     where
@@ -232,8 +244,11 @@ impl<TM: ThreadModel> IoDevice for MioDevice<TM> {
             match f() {
                 Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
                     if interests.is_readable() {
+                        log::trace!("io = {:?} register readable waker", token);
                         self.read_wakers.get_mut().insert(token, cx.waker().clone());
                     } else if interests.is_writable() {
+                        log::trace!("io = {:?} register writable waker", token);
+
                         self.write_wakers
                             .get_mut()
                             .insert(token, cx.waker().clone());
@@ -247,5 +262,76 @@ impl<TM: ThreadModel> IoDevice for MioDevice<TM> {
                 output => return Poll::Ready(output),
             }
         }
+    }
+
+    /// Run io device event loop forever
+    fn event_loop(&self, poll_timeout: Option<Duration>) -> io::Result<()> {
+        loop {
+            self.poll_once(poll_timeout)?;
+        }
+    }
+
+    /// Poll io events once.
+    fn poll_once(&self, poll_timeout: Option<Duration>) -> io::Result<()> {
+        let mut events = Events::with_capacity(1024);
+
+        self.poll.get_mut().poll(
+            &mut events,
+            Some(poll_timeout.unwrap_or(Duration::from_millis(10))),
+        )?;
+
+        for event in events.iter() {
+            log::trace!("io_device raised event {:?}", event);
+
+            if event.is_readable() {
+                if let Some(waker) = self.read_wakers.get_mut().remove(&event.token()) {
+                    log::trace!("io {:?} readable wake", event.token());
+                    waker.wake_by_ref();
+                }
+            }
+
+            if event.is_writable() {
+                if let Some(waker) = self.write_wakers.get_mut().remove(&event.token()) {
+                    log::trace!("io {:?} writable wake", event.token());
+                    waker.wake_by_ref();
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
+pub type MioDeviceMT = MioDevice<MTModel>;
+
+impl StaticIoDevice for MioDeviceMT {
+    fn get() -> &'static Self {
+        static INSTANCE: OnceLock<MioDeviceMT> = OnceLock::new();
+
+        INSTANCE.get_or_init(|| MioDeviceMT::new().unwrap())
+    }
+}
+
+impl MioDeviceMT {
+    pub fn start(&self, poll_timeout: Option<Duration>) {
+        static INIT: Once = Once::new();
+
+        INIT.call_once(|| {
+            let io_device = self.clone();
+
+            std::thread::spawn(move || {
+                _ = io_device.event_loop(poll_timeout);
+            });
+        });
+    }
+}
+
+pub type MioDeviceST = MioDevice<STModel>;
+
+impl StaticIoDevice for MioDeviceST {
+    fn get() -> &'static Self {
+        static INSTANCE: OnceLock<MioDeviceST> = OnceLock::new();
+
+        INSTANCE.get_or_init(|| MioDeviceST::new().unwrap())
     }
 }
