@@ -46,6 +46,16 @@ pub trait IoDevice {
     where
         F: FnMut() -> io::Result<R>;
 
+    fn poll_select<'a, R, F>(
+        &'a self,
+        cx: &mut Context<'_>,
+        tokens: &'a [Token],
+        interests: Interest,
+        f: F,
+    ) -> Poll<io::Result<R>>
+    where
+        F: FnMut() -> io::Result<R>;
+
     fn event_loop(&self, poll_timeout: Option<Duration>) -> io::Result<()>;
 
     fn poll_once(&self, poll_timeout: Option<Duration>) -> io::Result<()>;
@@ -71,7 +81,7 @@ pub trait IoDeviceExt: IoDevice {
     }
 
     /// Select one ready io object and execute method `f`
-    fn select<'a, F>(
+    fn async_select<'a, F>(
         &'a self,
         tokens: &'a [Token],
         interests: Interest,
@@ -123,12 +133,13 @@ pub struct SelectIo<'a, IO, F> {
 impl<'a, IO, F, R> Future for SelectIo<'a, IO, F>
 where
     IO: IoDevice,
-    F: FnMut(&mut Context<'_>) -> io::Result<R> + Unpin,
+    F: FnMut() -> io::Result<R> + Unpin,
 {
     type Output = io::Result<R>;
 
-    fn poll(self: std::pin::Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
-        todo!()
+    fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        self.io
+            .poll_select(cx, self.tokens, self.interests, &mut self.f)
     }
 }
 
@@ -299,6 +310,34 @@ impl<TM: ThreadModel> IoDevice for MioDevice<TM> {
         }
 
         Ok(())
+    }
+
+    fn poll_select<'a, R, F>(
+        &'a self,
+        cx: &mut Context<'_>,
+        tokens: &'a [Token],
+        interests: Interest,
+        mut f: F,
+    ) -> Poll<io::Result<R>>
+    where
+        F: FnMut() -> io::Result<R>,
+    {
+        for token in tokens {
+            if interests.is_readable() && self.read_wakers.get().contains_key(token) {
+                continue;
+            }
+
+            if interests.is_writable() && self.write_wakers.get().contains_key(token) {
+                continue;
+            }
+
+            match self.poll_io(cx, *token, interests, &mut f) {
+                Poll::Pending => continue,
+                poll => return poll,
+            }
+        }
+
+        return Poll::Pending;
     }
 }
 
