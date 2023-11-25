@@ -1,5 +1,5 @@
 [workspace]
-members = ["hala-mux", "hala-socket", "hala-reactor", "hala-io-test"]
+members = ["hala-mux", "hala-reactor"]
 resolver = "2"
 
 [workspace.package]
@@ -26,7 +26,5 @@ serde_json = {version = "^1.0"}
 thiserror = "^1.0.50"
 thiserror-no-std = "^2.0"
 
-hala-io-test = {path = "./hala-io-test", default = false, version = "^0.1"}
 hala-mux = {path = "./hala-mux", version = "^0.1"}
 hala-reactor = {path = "./hala-reactor", default = false, version = "^0.1"}
-hala-socket = {path = "./hala-socket", version = "^0.1"}
