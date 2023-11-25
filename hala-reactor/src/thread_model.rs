@@ -19,6 +19,8 @@ pub trait ThreadModelHolder<T> {
     where
         Self: 'a,
         V: 'a;
+
+    fn new(value: T) -> Self;
     /// Get immutable reference of type `T`
     fn get(&self) -> Self::Ref<'_, T>;
 
@@ -37,15 +39,6 @@ pub struct STModelHolder<T> {
 unsafe impl<T> Sync for STModelHolder<T> {}
 unsafe impl<T> Send for STModelHolder<T> {}
 
-impl<T> STModelHolder<T> {
-    /// Create new `STModel`
-    pub fn new(value: T) -> Self {
-        Self {
-            value: Rc::new(RefCell::new(value)),
-        }
-    }
-}
-
 impl<T> From<T> for STModelHolder<T> {
     fn from(value: T) -> Self {
         STModelHolder::new(value)
@@ -56,6 +49,12 @@ impl<T> ThreadModelHolder<T> for STModelHolder<T> {
     type Ref<'a,V> = std::cell::Ref<'a,V> where Self:'a,V: 'a;
 
     type RefMut<'a,V> = std::cell::RefMut<'a,V> where Self:'a,V: 'a;
+
+    fn new(value: T) -> Self {
+        Self {
+            value: Rc::new(RefCell::new(value)),
+        }
+    }
 
     fn get(&self) -> std::cell::Ref<'_, T> {
         self.value.borrow()
@@ -78,15 +77,6 @@ pub struct MTModelHolder<T> {
     value: Arc<Mutex<T>>,
 }
 
-impl<T> MTModelHolder<T> {
-    /// Create new `STModel`
-    pub fn new(value: T) -> Self {
-        Self {
-            value: Arc::new(Mutex::new(value)),
-        }
-    }
-}
-
 impl<T> From<T> for MTModelHolder<T> {
     fn from(value: T) -> Self {
         MTModelHolder::new(value)
@@ -97,6 +87,12 @@ impl<T> ThreadModelHolder<T> for MTModelHolder<T> {
     type Ref<'a,V> = std::sync::MutexGuard<'a,V> where Self:'a,V: 'a;
 
     type RefMut<'a,V> = std::sync::MutexGuard<'a,V> where Self:'a,V: 'a;
+
+    fn new(value: T) -> Self {
+        Self {
+            value: Arc::new(Mutex::new(value)),
+        }
+    }
 
     fn get(&self) -> std::sync::MutexGuard<'_, T> {
         self.value.lock().unwrap()

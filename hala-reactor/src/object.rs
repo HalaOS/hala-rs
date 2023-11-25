@@ -1,50 +1,68 @@
 use std::{
     io,
     marker::PhantomData,
-    ops::{Deref, DerefMut},
+    task::{Context, Poll},
 };
 
 use mio::{event::Source, Interest, Token};
 
-use crate::IoDevice;
+use crate::{AsyncIo, IoDevice, IoDeviceExt, ThreadModelHolder};
 
 /// The [`Source`] wrapper object.
 #[derive(Clone)]
-pub struct IoObject<IO: IoDevice, S: Source> {
-    token: Token,
-    inner: S,
+pub struct IoObject<IO: IoDevice + 'static, S: Source> {
+    pub token: Token,
+    pub holder: IO::Holder<S>,
     _marked: PhantomData<IO>,
 }
 
-impl<IO: IoDevice, S: Source> IoObject<IO, S> {
+impl<IO, S> IoObject<IO, S>
+where
+    IO: IoDevice + 'static,
+    S: Source,
+{
     /// Create new [`IoObject`] by providing `S`
     pub fn new(mut inner: S, interests: Interest) -> io::Result<Self> {
         let token = IO::get().register(&mut inner, interests)?;
 
         Ok(Self {
             token,
-            inner,
+            holder: IO::Holder::new(inner),
             _marked: Default::default(),
         })
     }
-}
 
-impl<IO: IoDevice, S: Source> Deref for IoObject<IO, S> {
-    type Target = S;
+    /// invoke one poll io
+    #[inline]
+    pub fn poll_io<R, F>(
+        &self,
+        device: &IO,
+        cx: &mut Context<'_>,
+        interests: Interest,
+        f: F,
+    ) -> Poll<io::Result<R>>
+    where
+        F: FnMut() -> io::Result<R>,
+    {
+        device.poll_io(cx, self.token, interests, f)
+    }
 
-    fn deref(&self) -> &Self::Target {
-        &self.inner
+    #[inline]
+    pub fn async_io<'a, F>(&self, device: &'a IO, interests: Interest, f: F) -> AsyncIo<'a, IO, F>
+    where
+        Self: Sized,
+    {
+        device.async_io(self.token, interests, f)
     }
 }
 
-impl<IO: IoDevice, S: Source> DerefMut for IoObject<IO, S> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.inner
-    }
-}
-
-impl<IO: IoDevice, S: Source> Drop for IoObject<IO, S> {
+impl<IO: IoDevice + 'static, S: Source> Drop for IoObject<IO, S>
+where
+    S: Source,
+{
     fn drop(&mut self) {
-        IO::get().deregister(&mut self.inner, self.token).unwrap();
+        IO::get()
+            .deregister(&mut *self.holder.get_mut(), self.token)
+            .unwrap();
     }
 }

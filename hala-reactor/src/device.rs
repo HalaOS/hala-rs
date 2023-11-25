@@ -8,12 +8,14 @@ use std::{
 use futures::Future;
 use mio::{event::Source, Interest, Token};
 
-use crate::{ThreadModel, ThreadModelHolder};
+use crate::{MTModel, ThreadModel, ThreadModelHolder};
 
 /// Poll reactor device must implement this trait
 pub trait IoDevice {
+    type Holder<T>: ThreadModelHolder<T>;
+
     /// Get `device` instance.
-    fn get() -> Self;
+    fn get() -> &'static Self;
 
     /// Re-register an [`Source`] with the reactor device.
     fn register<S>(&self, source: &mut S, interests: Interest) -> io::Result<Token>
@@ -44,7 +46,7 @@ pub trait IoDevice {
         f: F,
     ) -> Poll<io::Result<R>>
     where
-        F: FnOnce(&mut Context<'_>) -> Poll<io::Result<R>>;
+        F: FnMut() -> io::Result<R>;
 }
 
 /// Extension trait for [`IoDevice`]
@@ -57,6 +59,24 @@ pub trait IoDeviceExt: IoDevice {
         AsyncIo {
             io: self,
             token,
+            interests,
+            f,
+        }
+    }
+
+    /// Select one ready io object and execute method `f`
+    fn select<'a, F>(
+        &'a self,
+        tokens: &'a [Token],
+        interests: Interest,
+        f: F,
+    ) -> SelectIo<'_, Self, F>
+    where
+        Self: Sized,
+    {
+        SelectIo {
+            io: self,
+            tokens,
             interests,
             f,
         }
@@ -76,29 +96,39 @@ pub struct AsyncIo<'a, IO, F> {
 impl<'a, IO, F, R> Future for AsyncIo<'a, IO, F>
 where
     IO: IoDevice,
-    F: FnMut(&mut Context<'_>) -> io::Result<R> + Unpin,
+    F: FnMut() -> io::Result<R> + Unpin,
 {
     type Output = io::Result<R>;
 
     fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.io.poll_io(cx, self.token, self.interests, |cx| loop {
-            match (self.f)(cx) {
-                Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
-                    return Poll::Pending;
-                }
-                Err(err) if err.kind() == io::ErrorKind::Interrupted => {
-                    log::trace!("IoObject({:?}) Interrupted", self.token);
-                    continue;
-                }
-                output => return Poll::Ready(output),
-            }
-        })
+        self.io.poll_io(cx, self.token, self.interests, &mut self.f)
+    }
+}
+
+/// Future object returns by [`IoDeviceExt::async_io`]
+#[allow(unused)]
+pub struct SelectIo<'a, IO, F> {
+    io: &'a IO,
+    tokens: &'a [Token],
+    interests: Interest,
+    f: F,
+}
+
+impl<'a, IO, F, R> Future for SelectIo<'a, IO, F>
+where
+    IO: IoDevice,
+    F: FnMut(&mut Context<'_>) -> io::Result<R> + Unpin,
+{
+    type Output = io::Result<R>;
+
+    fn poll(self: std::pin::Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Self::Output> {
+        todo!()
     }
 }
 
 /// IoDevice using mio implementation
 #[derive(Clone)]
-pub struct MioDevice<TM: ThreadModel> {
+pub struct MioDevice<TM: ThreadModel = MTModel> {
     poll: TM::Holder<mio::Poll>,
     /// readable waker collection
     read_wakers: TM::Holder<HashMap<Token, Waker>>,
@@ -134,7 +164,9 @@ impl<TM: ThreadModel> MioDevice<TM> {
 }
 
 impl<TM: ThreadModel> IoDevice for MioDevice<TM> {
-    fn get() -> Self {
+    type Holder<T> = TM::Holder<T>;
+
+    fn get() -> &'static Self {
         todo!()
     }
 
@@ -191,24 +223,29 @@ impl<TM: ThreadModel> IoDevice for MioDevice<TM> {
         cx: &mut Context<'_>,
         token: Token,
         interests: Interest,
-        f: F,
+        mut f: F,
     ) -> Poll<io::Result<R>>
     where
-        F: FnOnce(&mut Context<'_>) -> Poll<io::Result<R>>,
+        F: FnMut() -> io::Result<R>,
     {
-        match f(cx) {
-            Poll::Pending => {
-                if interests.is_readable() {
-                    self.read_wakers.get_mut().insert(token, cx.waker().clone());
-                } else if interests.is_writable() {
-                    self.write_wakers
-                        .get_mut()
-                        .insert(token, cx.waker().clone());
+        loop {
+            match f() {
+                Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                    if interests.is_readable() {
+                        self.read_wakers.get_mut().insert(token, cx.waker().clone());
+                    } else if interests.is_writable() {
+                        self.write_wakers
+                            .get_mut()
+                            .insert(token, cx.waker().clone());
+                    }
+                    return Poll::Pending;
                 }
-
-                Poll::Pending
+                Err(err) if err.kind() == io::ErrorKind::Interrupted => {
+                    log::trace!("IoObject({:?}) Interrupted", token);
+                    continue;
+                }
+                output => return Poll::Ready(output),
             }
-            poll => poll,
         }
     }
 }

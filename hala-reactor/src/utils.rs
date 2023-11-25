@@ -8,7 +8,7 @@ pub async fn each_addr<S, F, R, Fut>(addrs: S, mut f: F) -> io::Result<R>
 where
     S: ToSocketAddrs,
     F: FnMut(SocketAddr) -> Fut,
-    Fut: Future<Output = io::Result<R>> + Send,
+    Fut: Future<Output = io::Result<R>>,
 {
     let mut last_error = None;
 
