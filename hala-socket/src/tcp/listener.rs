@@ -6,7 +6,7 @@ use std::{
 
 use mio::Interest;
 
-use hala_reactor::IoObject;
+use hala_reactor::{IoObject, ToIoObject};
 
 use super::TcpStream;
 
@@ -32,7 +32,7 @@ impl TcpListener {
         let listener = mio::net::TcpListener::from_std(std_listener);
 
         Ok(Self {
-            io: IoObject::new(io_device, listener),
+            io: IoObject::new(io_device, listener, Interest::READABLE)?,
         })
     }
 
@@ -43,11 +43,17 @@ impl TcpListener {
             .async_io(Interest::READABLE, || self.io.inner_object.get().accept())
             .await?;
 
-        Ok((TcpStream::from_mio(stream), addr))
+        Ok((TcpStream::from_mio(stream)?, addr))
     }
 
     /// Returns the local socket address of this listener.
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
         self.io.inner_object.get().local_addr()
+    }
+}
+
+impl ToIoObject<mio::net::TcpListener> for TcpListener {
+    fn to_io_object(&self) -> &IoObject<mio::net::TcpListener> {
+        &self.io
     }
 }

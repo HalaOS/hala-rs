@@ -4,23 +4,28 @@ use mio::{event, Interest, Token};
 
 use crate::{IoDevice, ThreadModel};
 
+pub trait ToIoObject<T>
+where
+    T: event::Source,
+{
+    fn to_io_object(&self) -> &IoObject<T>;
+}
+
 #[derive(Debug)]
-pub struct IoObject<T> {
+pub struct IoObject<T>
+where
+    T: event::Source,
+{
     pub token: Token,
     pub inner_object: ThreadModel<T>,
     pub io_device: IoDevice,
+    pub interests: Interest,
 }
 
-impl<T> IoObject<T> {
-    /// Create new io object wrapper
-    pub fn new(io_device: IoDevice, inner_object: T) -> Self {
-        Self {
-            token: io_device.new_token(),
-            inner_object: inner_object.into(),
-            io_device,
-        }
-    }
-
+impl<T> IoObject<T>
+where
+    T: event::Source,
+{
     pub fn async_io<R, F>(&self, interest: Interest, f: F) -> PollIo<'_, T, F>
     where
         F: FnMut() -> io::Result<R>,
@@ -31,12 +36,20 @@ impl<T> IoObject<T> {
             object: self,
         }
     }
-}
+    /// Create new io object wrapper
+    pub fn new(io_device: IoDevice, mut inner_object: T, interests: Interest) -> io::Result<Self> {
+        let token = io_device.new_token();
 
-impl<T> IoObject<T>
-where
-    T: event::Source,
-{
+        io_device.source_register(&mut inner_object, token, interests)?;
+
+        Ok(Self {
+            token,
+            inner_object: inner_object.into(),
+            io_device,
+            interests,
+        })
+    }
+
     /// Invoke one io ops.
     pub fn poll_io<R, F>(
         &self,
@@ -57,12 +70,7 @@ where
 
                     log::trace!("IoObject({:?}) ops {:?} WouldBlock", self.token, interest);
 
-                    if let Err(err) = io_dervice.poll_register(
-                        cx,
-                        &mut *self.inner_object.get_mut(),
-                        token,
-                        interest,
-                    ) {
+                    if let Err(err) = io_dervice.poll_register(cx, token, interest) {
                         return Poll::Ready(Err(err));
                     }
 
@@ -87,7 +95,21 @@ where
     }
 }
 
-pub struct PollIo<'a, T, F> {
+impl<T> Drop for IoObject<T>
+where
+    T: event::Source,
+{
+    fn drop(&mut self) {
+        self.io_device
+            .source_deregister(&mut *self.inner_object.get_mut())
+            .unwrap();
+    }
+}
+
+pub struct PollIo<'a, T, F>
+where
+    T: event::Source,
+{
     f: F,
     interest: Interest,
     object: &'a IoObject<T>,
@@ -118,12 +140,7 @@ where
                         self.interest
                     );
 
-                    if let Err(err) = io_dervice.poll_register(
-                        cx,
-                        &mut *self.object.inner_object.get_mut(),
-                        token,
-                        interest,
-                    ) {
+                    if let Err(err) = io_dervice.poll_register(cx, token, interest) {
                         return Poll::Ready(Err(err));
                     }
 
@@ -145,5 +162,50 @@ where
                 }
             }
         }
+    }
+}
+
+/// Select one ready [`IoObject`] and execute `poll_fn`.
+pub fn select_io_object<'a, T, F>(
+    io_objects: &'a [&'a T],
+    poll_fn: F,
+) -> IoObjectSelector<'a, T, F> {
+    IoObjectSelector::new(io_objects, poll_fn)
+}
+
+pub struct IoObjectSelector<'a, T, F> {
+    io_objects: &'a [&'a T],
+    poll_fn: Option<F>,
+}
+
+impl<'a, T, F> IoObjectSelector<'a, T, F> {
+    pub fn new(io_objects: &'a [&'a T], poll_fn: F) -> Self {
+        Self {
+            io_objects,
+            poll_fn: Some(poll_fn),
+        }
+    }
+}
+
+impl<'a, T, F, R> Future for IoObjectSelector<'a, T, F>
+where
+    F: FnMut(&mut std::task::Context<'_>, &T) -> Poll<io::Result<R>> + Unpin,
+{
+    type Output = io::Result<R>;
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Self::Output> {
+        let mut poll_fn = self.as_mut().poll_fn.take().unwrap();
+
+        for object in self.io_objects {
+            match poll_fn(cx, *object) {
+                Poll::Pending => continue,
+                ready => return ready,
+            }
+        }
+
+        Poll::Pending
     }
 }

@@ -6,7 +6,7 @@ use std::{
 };
 
 use futures::{AsyncRead, AsyncWrite};
-use hala_reactor::{global_io_device, IoObject};
+use hala_reactor::{global_io_device, IoObject, ToIoObject};
 use mio::Interest;
 
 pub struct TcpStream {
@@ -29,16 +29,21 @@ impl TcpStream {
         let io = IoObject::new(
             global_io_device().clone(),
             mio::net::TcpStream::from_std(std_stream),
-        );
+            Interest::READABLE.add(Interest::WRITABLE),
+        )?;
 
         Ok(Self { io })
     }
 
     /// Create object from [`mio::net::TcpStream`]
-    pub(crate) fn from_mio(stream: mio::net::TcpStream) -> Self {
-        let io = IoObject::new(global_io_device().clone(), stream);
+    pub(crate) fn from_mio(stream: mio::net::TcpStream) -> io::Result<Self> {
+        let io = IoObject::new(
+            global_io_device().clone(),
+            stream,
+            Interest::READABLE.add(Interest::WRITABLE),
+        )?;
 
-        Self { io }
+        Ok(Self { io })
     }
 }
 
@@ -82,5 +87,11 @@ impl AsyncRead for TcpStream {
         self.io.poll_io(cx, Interest::READABLE, || {
             self.io.inner_object.get_mut().read(buf)
         })
+    }
+}
+
+impl ToIoObject<mio::net::TcpStream> for TcpStream {
+    fn to_io_object(&self) -> &IoObject<mio::net::TcpStream> {
+        &self.io
     }
 }

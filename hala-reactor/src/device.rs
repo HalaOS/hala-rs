@@ -83,10 +83,8 @@ impl IoDevice {
         token
     }
 
-    /// Register readable/writeable event waker.
-    pub fn poll_register<S>(
+    pub fn source_register<S>(
         &self,
-        cx: &mut Context<'_>,
         source: &mut S,
         token: Token,
         interests: Interest,
@@ -97,8 +95,23 @@ impl IoDevice {
         self.poll
             .get_mut()
             .registry()
-            .register(source, token, interests)?;
+            .register(source, token, interests)
+    }
 
+    pub fn source_deregister<S>(&self, source: &mut S) -> io::Result<()>
+    where
+        S: event::Source + ?Sized,
+    {
+        self.poll.get_mut().registry().deregister(source)
+    }
+
+    /// Register readable/writeable event waker.
+    pub fn poll_register(
+        &self,
+        cx: &mut Context<'_>,
+        token: Token,
+        interests: Interest,
+    ) -> io::Result<()> {
         if interests.is_readable() {
             let waker = cx.waker().clone();
 

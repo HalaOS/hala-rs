@@ -38,36 +38,40 @@ mod tests {
                     listener
                 );
 
-                let (mut conn, remote_addr) = listener.accept().await.unwrap();
+                loop {
+                    let (mut conn, remote_addr) = listener.accept().await.unwrap();
 
-                log::trace!("accept one connection from {}", remote_addr);
+                    log::trace!("accept one connection from {}", remote_addr);
 
-                let mut buf = vec![0 as u8; data.len()];
+                    let mut buf = vec![0 as u8; data.len()];
 
-                conn.read_exact(&mut buf).await.unwrap();
+                    conn.read_exact(&mut buf).await.unwrap();
 
-                log::trace!("{:?} recv data {}", conn, from_utf8(&buf).unwrap());
+                    log::trace!("{:?} recv data {}", conn, from_utf8(&buf).unwrap());
 
-                assert_eq!(buf, data);
+                    assert_eq!(buf, data);
 
-                conn.write_all(&buf).await.unwrap();
+                    conn.write_all(&buf).await.unwrap();
 
-                log::trace!("{:?} write data {}", conn, buf.len());
+                    log::trace!("{:?} write data {}", conn, buf.len());
+                }
             })
             .unwrap();
 
-        let mut conn = TcpStream::connect(local_addr).await.unwrap();
+        for _ in 0..2 {
+            let mut conn = TcpStream::connect(local_addr).await.unwrap();
 
-        let write_size = conn.write(data).await.unwrap();
+            let write_size = conn.write(data).await.unwrap();
 
-        log::trace!("client conn write data {}", write_size);
+            log::trace!("client conn write data {}", write_size);
 
-        let mut buf = vec![0 as u8; data.len()];
+            let mut buf = vec![0 as u8; data.len()];
 
-        conn.read_exact(&mut buf).await.unwrap();
+            conn.read_exact(&mut buf).await.unwrap();
 
-        assert_eq!(buf, data);
+            assert_eq!(buf, data);
 
-        conn.write_all(&buf).await.unwrap();
+            conn.write_all(&buf).await.unwrap();
+        }
     }
 }

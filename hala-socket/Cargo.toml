@@ -12,6 +12,7 @@ futures = {workspace = true}
 hala-reactor = {workspace = true, optional = true}
 log = {workspace = true}
 mio = {workspace = true}
+quiche = {workspace = true, optional = true}
 thiserror = {workspace = true}
 
 [dev-dependencies]
@@ -19,6 +20,7 @@ hala-io-test = {workspace = true, features = ["debug"]}
 pretty_env_logger = {workspace = true}
 
 [features]
-default = ["single-thread"]
+default = ["multi-thread", "quic"]
 multi-thread = ["hala-reactor/multi-thread"]
+quic = ["quiche"]
 single-thread = ["hala-reactor/single-thread"]
