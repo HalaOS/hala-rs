@@ -6,7 +6,7 @@ use std::{
 };
 
 use futures::{AsyncRead, AsyncWrite};
-use hala_reactor::{IoDevice, IoObject, MioDevice, StaticIoDevice, ThreadModelHolder};
+use hala_reactor::{IoDevice, IoObject, MioDevice, StaticIoDevice, ThreadModelGuard};
 use mio::Interest;
 
 pub struct TcpStream<IO: IoDevice + StaticIoDevice + 'static = MioDevice> {

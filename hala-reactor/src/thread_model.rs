@@ -6,10 +6,10 @@ use std::{
 };
 
 pub trait ThreadModel {
-    type Holder<T>: ThreadModelHolder<T> + Clone + From<T>;
+    type Guard<T>: ThreadModelGuard<T> + Clone + From<T>;
 }
 
-pub trait ThreadModelHolder<T> {
+pub trait ThreadModelGuard<T> {
     type Ref<'a, V>: Deref<Target = V>
     where
         Self: 'a,
@@ -55,7 +55,7 @@ impl<T> From<T> for STModelHolder<T> {
     }
 }
 
-impl<T> ThreadModelHolder<T> for STModelHolder<T> {
+impl<T> ThreadModelGuard<T> for STModelHolder<T> {
     type Ref<'a,V> = std::cell::Ref<'a,V> where Self:'a,V: 'a;
 
     type RefMut<'a,V> = std::cell::RefMut<'a,V> where Self:'a,V: 'a;
@@ -80,7 +80,7 @@ impl<T> ThreadModelHolder<T> for STModelHolder<T> {
 }
 
 impl ThreadModel for STModel {
-    type Holder<T> = STModelHolder<T>;
+    type Guard<T> = STModelHolder<T>;
 }
 
 /// Multi thread model
@@ -105,7 +105,7 @@ impl<T> From<T> for MTModelHolder<T> {
     }
 }
 
-impl<T> ThreadModelHolder<T> for MTModelHolder<T> {
+impl<T> ThreadModelGuard<T> for MTModelHolder<T> {
     type Ref<'a,V> = std::sync::MutexGuard<'a,V> where Self:'a,V: 'a;
 
     type RefMut<'a,V> = std::sync::MutexGuard<'a,V> where Self:'a,V: 'a;
@@ -130,5 +130,5 @@ impl<T> ThreadModelHolder<T> for MTModelHolder<T> {
 }
 
 impl ThreadModel for MTModel {
-    type Holder<T> = MTModelHolder<T>;
+    type Guard<T> = MTModelHolder<T>;
 }

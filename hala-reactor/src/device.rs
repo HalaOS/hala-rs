@@ -9,11 +9,11 @@ use std::{
 use futures::Future;
 use mio::{event::Source, Events, Interest, Token};
 
-use crate::{MTModel, STModel, ThreadModel, ThreadModelHolder};
+use crate::{MTModel, STModel, ThreadModel, ThreadModelGuard};
 
 /// Poll reactor device must implement this trait
 pub trait IoDevice {
-    type Holder<T>: ThreadModelHolder<T>;
+    type Guard<T>: ThreadModelGuard<T>;
 
     /// Re-register an [`Source`] with the reactor device.
     fn register<S>(&self, source: &mut S, interests: Interest) -> io::Result<Token>
@@ -145,11 +145,11 @@ where
 
 /// IoDevice using mio implementation
 pub struct MioDevice<TM: ThreadModel = MTModel> {
-    poll: TM::Holder<mio::Poll>,
+    poll: TM::Guard<mio::Poll>,
     /// readable waker collection
-    read_wakers: TM::Holder<HashMap<Token, Waker>>,
+    read_wakers: TM::Guard<HashMap<Token, Waker>>,
     /// writable waker collection
-    write_wakers: TM::Holder<HashMap<Token, Waker>>,
+    write_wakers: TM::Guard<HashMap<Token, Waker>>,
     /// token generating seed
     next_token: Arc<AtomicUsize>,
 }
@@ -191,7 +191,7 @@ impl<TM: ThreadModel> MioDevice<TM> {
 }
 
 impl<TM: ThreadModel> IoDevice for MioDevice<TM> {
-    type Holder<T> = TM::Holder<T>;
+    type Guard<T> = TM::Guard<T>;
 
     fn register<S>(&self, source: &mut S, interests: Interest) -> io::Result<Token>
     where

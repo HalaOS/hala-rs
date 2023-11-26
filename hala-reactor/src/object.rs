@@ -6,13 +6,13 @@ use std::{
 
 use mio::{event::Source, Interest, Token};
 
-use crate::{AsyncIo, IoDevice, IoDeviceExt, StaticIoDevice, ThreadModelHolder};
+use crate::{AsyncIo, IoDevice, IoDeviceExt, StaticIoDevice, ThreadModelGuard};
 
 /// The [`Source`] wrapper object.
 #[derive(Clone)]
 pub struct IoObject<IO: IoDevice + StaticIoDevice + 'static, S: Source> {
     pub token: Token,
-    pub holder: IO::Holder<S>,
+    pub holder: IO::Guard<S>,
     _marked: PhantomData<IO>,
 }
 
@@ -27,7 +27,7 @@ where
 
         Ok(Self {
             token,
-            holder: IO::Holder::new(inner),
+            holder: IO::Guard::new(inner),
             _marked: Default::default(),
         })
     }

@@ -6,7 +6,7 @@ use std::{
 
 use mio::Interest;
 
-use hala_reactor::{IoDevice, IoObject, MioDevice, StaticIoDevice, ThreadModelHolder};
+use hala_reactor::{IoDevice, IoObject, MioDevice, StaticIoDevice, ThreadModelGuard};
 
 use super::TcpStream;
 

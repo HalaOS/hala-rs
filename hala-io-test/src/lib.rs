@@ -16,7 +16,7 @@ where
 {
     let thread_pool = spawner::<IO>();
 
-    let handle = if IO::Holder::<()>::is_multithread() {
+    let handle = if IO::Guard::<()>::is_multithread() {
         log::trace!("start multi-thread io test");
 
         // IO::get().start(None);
@@ -53,7 +53,7 @@ where
         #[cfg(feature = "debug")]
         pretty_env_logger::init();
 
-        let pool_size = if IO::Holder::<()>::is_multithread() {
+        let pool_size = if IO::Guard::<()>::is_multithread() {
             10
         } else {
             1
