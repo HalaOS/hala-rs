@@ -46,16 +46,6 @@ pub trait IoDevice {
     where
         F: FnMut() -> io::Result<R>;
 
-    fn poll_select<'a, R, F>(
-        &'a self,
-        cx: &mut Context<'_>,
-        tokens: &'a [Token],
-        interests: Interest,
-        f: F,
-    ) -> Poll<io::Result<R>>
-    where
-        F: FnMut() -> io::Result<R>;
-
     fn event_loop(&self, poll_timeout: Option<Duration>) -> io::Result<()>;
 
     fn poll_once(&self, poll_timeout: Option<Duration>) -> io::Result<()>;
@@ -75,24 +65,6 @@ pub trait IoDeviceExt: IoDevice {
         AsyncIo {
             io: self,
             token,
-            interests,
-            f,
-        }
-    }
-
-    /// Select one ready io object and execute method `f`
-    fn async_select<'a, F>(
-        &'a self,
-        tokens: &'a [Token],
-        interests: Interest,
-        f: F,
-    ) -> SelectIo<'_, Self, F>
-    where
-        Self: Sized,
-    {
-        SelectIo {
-            io: self,
-            tokens,
             interests,
             f,
         }
@@ -118,28 +90,6 @@ where
 
     fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         self.io.poll_io(cx, self.token, self.interests, &mut self.f)
-    }
-}
-
-/// Future object returns by [`IoDeviceExt::async_io`]
-#[allow(unused)]
-pub struct SelectIo<'a, IO, F> {
-    io: &'a IO,
-    tokens: &'a [Token],
-    interests: Interest,
-    f: F,
-}
-
-impl<'a, IO, F, R> Future for SelectIo<'a, IO, F>
-where
-    IO: IoDevice,
-    F: FnMut() -> io::Result<R> + Unpin,
-{
-    type Output = io::Result<R>;
-
-    fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.io
-            .poll_select(cx, self.tokens, self.interests, &mut self.f)
     }
 }
 
@@ -251,26 +201,32 @@ impl<TM: ThreadModel> IoDevice for MioDevice<TM> {
     where
         F: FnMut() -> io::Result<R>,
     {
+        if interests.is_readable() {
+            self.read_wakers.get_mut().insert(token, cx.waker().clone());
+        } else if interests.is_writable() {
+            self.write_wakers
+                .get_mut()
+                .insert(token, cx.waker().clone());
+        }
+
         loop {
             match f() {
                 Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
-                    if interests.is_readable() {
-                        log::trace!("io = {:?} register readable waker", token);
-                        self.read_wakers.get_mut().insert(token, cx.waker().clone());
-                    } else if interests.is_writable() {
-                        log::trace!("io = {:?} register writable waker", token);
-
-                        self.write_wakers
-                            .get_mut()
-                            .insert(token, cx.waker().clone());
-                    }
                     return Poll::Pending;
                 }
                 Err(err) if err.kind() == io::ErrorKind::Interrupted => {
                     log::trace!("IoObject({:?}) Interrupted", token);
                     continue;
                 }
-                output => return Poll::Ready(output),
+                output => {
+                    if interests.is_readable() {
+                        self.read_wakers.get_mut().remove(&token);
+                    } else if interests.is_writable() {
+                        self.write_wakers.get_mut().remove(&token);
+                    }
+
+                    return Poll::Ready(output);
+                }
             }
         }
     }
@@ -310,34 +266,6 @@ impl<TM: ThreadModel> IoDevice for MioDevice<TM> {
         }
 
         Ok(())
-    }
-
-    fn poll_select<'a, R, F>(
-        &'a self,
-        cx: &mut Context<'_>,
-        tokens: &'a [Token],
-        interests: Interest,
-        mut f: F,
-    ) -> Poll<io::Result<R>>
-    where
-        F: FnMut() -> io::Result<R>,
-    {
-        for token in tokens {
-            if interests.is_readable() && self.read_wakers.get().contains_key(token) {
-                continue;
-            }
-
-            if interests.is_writable() && self.write_wakers.get().contains_key(token) {
-                continue;
-            }
-
-            match self.poll_io(cx, *token, interests, &mut f) {
-                Poll::Pending => continue,
-                poll => return poll,
-            }
-        }
-
-        return Poll::Pending;
     }
 }
 
