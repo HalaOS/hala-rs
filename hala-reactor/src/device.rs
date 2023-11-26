@@ -51,8 +51,11 @@ pub trait IoDevice {
     fn poll_once(&self, poll_timeout: Option<Duration>) -> io::Result<()>;
 }
 
-pub trait StaticIoDevice: IoDevice {
-    fn get() -> &'static Self;
+/// The trait to get context bound [`IoDevice`] object
+pub trait ContextIoDevice: IoDevice {
+    fn get() -> Self
+    where
+        Self: Sized;
 }
 
 /// Extension trait for [`IoDevice`]
@@ -271,11 +274,13 @@ impl<TM: ThreadModel> IoDevice for MioDevice<TM> {
 
 pub type MioDeviceMT = MioDevice<MTModel>;
 
-impl StaticIoDevice for MioDeviceMT {
-    fn get() -> &'static Self {
-        static INSTANCE: OnceLock<MioDeviceMT> = OnceLock::new();
+static MIODEVICEMT_INSTANCE: OnceLock<MioDeviceMT> = OnceLock::new();
 
-        INSTANCE.get_or_init(|| MioDeviceMT::new().unwrap())
+impl ContextIoDevice for MioDeviceMT {
+    fn get() -> Self {
+        MIODEVICEMT_INSTANCE
+            .get_or_init(|| MioDeviceMT::new().unwrap())
+            .clone()
     }
 }
 
@@ -295,10 +300,12 @@ impl MioDeviceMT {
 
 pub type MioDeviceST = MioDevice<STModel>;
 
-impl StaticIoDevice for MioDeviceST {
-    fn get() -> &'static Self {
-        static INSTANCE: OnceLock<MioDeviceST> = OnceLock::new();
+thread_local! {
+    static MIO_DEVICE_ST_INSTANCE: MioDeviceST = MioDeviceST::new().unwrap();
+}
 
-        INSTANCE.get_or_init(|| MioDeviceST::new().unwrap())
+impl ContextIoDevice for MioDeviceST {
+    fn get() -> Self {
+        MIO_DEVICE_ST_INSTANCE.with(|io| io.clone())
     }
 }

@@ -6,11 +6,11 @@ use std::{
 
 use mio::{event::Source, Interest, Token};
 
-use crate::{AsyncIo, IoDevice, IoDeviceExt, StaticIoDevice, ThreadModelGuard};
+use crate::{AsyncIo, ContextIoDevice, IoDevice, IoDeviceExt, ThreadModelGuard};
 
 /// The [`Source`] wrapper object.
 #[derive(Clone)]
-pub struct IoObject<IO: IoDevice + StaticIoDevice + 'static, S: Source> {
+pub struct IoObject<IO: IoDevice + ContextIoDevice + 'static, S: Source> {
     pub token: Token,
     pub holder: IO::Guard<S>,
     _marked: PhantomData<IO>,
@@ -18,7 +18,7 @@ pub struct IoObject<IO: IoDevice + StaticIoDevice + 'static, S: Source> {
 
 impl<IO, S> IoObject<IO, S>
 where
-    IO: IoDevice + StaticIoDevice + 'static,
+    IO: IoDevice + ContextIoDevice + 'static,
     S: Source,
 {
     /// Create new [`IoObject`] by providing `S`
@@ -56,13 +56,13 @@ where
     }
 }
 
-impl<IO: IoDevice + StaticIoDevice + 'static, S: Source> Drop for IoObject<IO, S>
+impl<IO: IoDevice + ContextIoDevice + 'static, S: Source> Drop for IoObject<IO, S>
 where
     S: Source,
 {
     fn drop(&mut self) {
         IO::get()
             .deregister(&mut *self.holder.get_mut(), self.token)
-            .unwrap();
+            .unwrap()
     }
 }

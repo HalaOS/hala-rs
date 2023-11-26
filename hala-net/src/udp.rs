@@ -8,13 +8,13 @@ use hala_reactor::*;
 use mio::Interest;
 
 /// A UDP socket.
-pub struct UdpSocket<IO: IoDevice + StaticIoDevice + 'static = MioDeviceMT> {
+pub struct UdpSocket<IO: IoDevice + ContextIoDevice + 'static = MioDeviceMT> {
     io: IoObject<IO, mio::net::UdpSocket>,
 }
 
 impl<IO> UdpSocket<IO>
 where
-    IO: IoDevice + StaticIoDevice + Send + Sync + 'static,
+    IO: IoDevice + ContextIoDevice + Send + Sync + 'static,
 {
     /// This function will create a new UDP socket and attempt to bind it to the addr provided.
     pub async fn bind<S: ToSocketAddrs>(laddr: S) -> io::Result<Self> {
@@ -38,8 +38,10 @@ where
     /// and limiting packets that are read via `recv` from the address specified
     /// in `addr`.
     pub async fn connect<S: ToSocketAddrs>(&self, remote: S) -> io::Result<()> {
+        let io = IO::get();
+
         let call = |addr| {
-            self.io.async_io(IO::get(), Interest::WRITABLE, move || {
+            self.io.async_io(&io, Interest::WRITABLE, move || {
                 self.io.holder.get().connect(addr)
             })
         };
@@ -50,8 +52,10 @@ where
     /// Sends data on the socket to the given address. On success, returns the
     /// number of bytes written.
     pub async fn send_to<S: ToSocketAddrs>(&self, buf: &[u8], target: S) -> io::Result<usize> {
+        let io = IO::get();
+
         let call = |addr| {
-            self.io.async_io(IO::get(), Interest::WRITABLE, move || {
+            self.io.async_io(&io, Interest::WRITABLE, move || {
                 self.io.holder.get().send_to(buf, addr)
             })
         };
@@ -62,8 +66,10 @@ where
     /// Receives data from the socket. On success, returns the number of bytes
     /// read and the address from whence the data came.
     pub async fn recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
+        let io = IO::get();
+
         self.io
-            .async_io(IO::get(), Interest::READABLE, move || {
+            .async_io(&io, Interest::READABLE, move || {
                 self.io.holder.get().recv_from(buf)
             })
             .await
@@ -74,7 +80,9 @@ where
         cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<(usize, SocketAddr)>> {
-        self.io.poll_io(IO::get(), cx, Interest::READABLE, || {
+        let io = IO::get();
+
+        self.io.poll_io(&io, cx, Interest::READABLE, || {
             self.io.holder.get().recv_from(buf)
         })
     }

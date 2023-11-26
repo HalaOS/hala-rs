@@ -9,7 +9,7 @@ static POOL: std::sync::OnceLock<futures::executor::ThreadPool> = std::sync::Onc
 
 pub fn socket_tester<IO, T, Fut>(test: T)
 where
-    IO: IoDevice + StaticIoDevice + 'static,
+    IO: IoDevice + ContextIoDevice + 'static,
     T: FnOnce() -> Fut,
     Fut: Future + Send + 'static,
     Fut::Output: Send,
@@ -38,7 +38,7 @@ where
 #[async_recursion]
 async fn run_event_loop<IO>()
 where
-    IO: IoDevice + StaticIoDevice + 'static,
+    IO: IoDevice + ContextIoDevice + 'static,
 {
     IO::get().poll_once(None).unwrap();
 

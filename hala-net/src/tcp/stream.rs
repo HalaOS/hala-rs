@@ -6,20 +6,20 @@ use std::{
 };
 
 use futures::{AsyncRead, AsyncWrite};
-use hala_reactor::{IoDevice, IoObject, MioDevice, StaticIoDevice, ThreadModelGuard};
+use hala_reactor::{ContextIoDevice, IoDevice, IoObject, MioDevice, ThreadModelGuard};
 use mio::Interest;
 
-pub struct TcpStream<IO: IoDevice + StaticIoDevice + 'static = MioDevice> {
+pub struct TcpStream<IO: IoDevice + ContextIoDevice + 'static = MioDevice> {
     io: IoObject<IO, mio::net::TcpStream>,
 }
 
-impl<IO: IoDevice + StaticIoDevice + 'static> Debug for TcpStream<IO> {
+impl<IO: IoDevice + ContextIoDevice + 'static> Debug for TcpStream<IO> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "TcpStream({:?})", self.io.token)
     }
 }
 
-impl<IO: IoDevice + StaticIoDevice + 'static> TcpStream<IO> {
+impl<IO: IoDevice + ContextIoDevice + 'static> TcpStream<IO> {
     /// Opens a TCP connection to a remote host.
     pub async fn connect<S: ToSocketAddrs>(addr: S) -> io::Result<Self> {
         let std_stream = std::net::TcpStream::connect(addr)?;
@@ -42,13 +42,14 @@ impl<IO: IoDevice + StaticIoDevice + 'static> TcpStream<IO> {
     }
 }
 
-impl<IO: IoDevice + StaticIoDevice + 'static> AsyncWrite for TcpStream<IO> {
+impl<IO: IoDevice + ContextIoDevice + 'static> AsyncWrite for TcpStream<IO> {
     fn poll_write(
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<io::Result<usize>> {
-        self.io.poll_io(IO::get(), cx, Interest::WRITABLE, || {
+        let io = IO::get();
+        self.io.poll_io(&io, cx, Interest::WRITABLE, || {
             self.io.holder.get_mut().write(buf)
         })
     }
@@ -68,13 +69,15 @@ impl<IO: IoDevice + StaticIoDevice + 'static> AsyncWrite for TcpStream<IO> {
     }
 }
 
-impl<IO: IoDevice + StaticIoDevice + 'static> AsyncRead for TcpStream<IO> {
+impl<IO: IoDevice + ContextIoDevice + 'static> AsyncRead for TcpStream<IO> {
     fn poll_read(
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        self.io.poll_io(IO::get(), cx, Interest::READABLE, || {
+        let io = IO::get();
+
+        self.io.poll_io(&io, cx, Interest::READABLE, || {
             self.io.holder.get_mut().read(buf)
         })
     }
