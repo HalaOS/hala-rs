@@ -144,7 +144,7 @@ mod tests {
 
             let client_udp: UdpSocket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
 
-            for _ in 0..10 {
+            for _ in 0..1000 {
                 let server_udp = server_udps.choose(&mut rand::thread_rng()).unwrap();
 
                 client_udp
