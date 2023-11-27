@@ -1,12 +1,13 @@
 use std::{
     collections::HashMap,
+    fmt::Debug,
     io,
     sync::{atomic::AtomicUsize, Arc, OnceLock},
     task::{Context, Poll, Waker},
     time::Duration,
 };
 
-use futures::{future::LocalBoxFuture, Future};
+use futures::{future::BoxFuture, Future};
 use mio::{event::Source, Events, Interest, Token};
 
 use crate::{MTModel, STModel, ThreadModel, ThreadModelGuard};
@@ -44,11 +45,12 @@ pub trait IoDevice {
         f: F,
     ) -> Poll<io::Result<R>>
     where
-        F: FnMut() -> io::Result<R>;
+        F: FnMut() -> io::Result<R>,
+        R: Debug;
 
     fn event_loop(&self, poll_timeout: Option<Duration>) -> io::Result<()>;
 
-    fn poll_once(&self, poll_timeout: Option<Duration>) -> io::Result<()>;
+    fn event_loop_once(&self, poll_timeout: Option<Duration>) -> io::Result<()>;
 }
 
 /// The trait to get context bound [`IoDevice`] object
@@ -59,19 +61,17 @@ pub trait ContextIoDevice: IoDevice {
 }
 
 pub trait STRunner: IoDevice + ContextIoDevice {
-    fn run_loop<'a, Spawner>(
-        spawner: &'static Spawner,
-        poll_timeout: Option<Duration>,
-    ) -> io::Result<()>
+    fn run_loop<'a, Spawner>(spawner: Spawner, poll_timeout: Option<Duration>) -> io::Result<()>
     where
-        Spawner: Fn(LocalBoxFuture<'static, ()>) + Clone,
-        Self: Sized + 'static,
+        Spawner: Fn(BoxFuture<'static, ()>) + Send + Clone + 'static,
+        Self: Sized + Send + 'static,
     {
-        let io: Self = Self::get();
+        let local_spawner = spawner.clone();
 
         let inner = async move {
-            io.poll_once(poll_timeout).unwrap();
-            Self::run_loop::<Spawner>(spawner, poll_timeout).unwrap();
+            let io: Self = Self::get();
+            io.event_loop_once(poll_timeout).unwrap();
+            Self::run_loop::<Spawner>(local_spawner, poll_timeout).unwrap();
         };
 
         spawner(Box::pin(inner));
@@ -122,6 +122,7 @@ impl<'a, IO, F, R> Future for AsyncIo<'a, IO, F>
 where
     IO: IoDevice,
     F: FnMut() -> io::Result<R> + Unpin,
+    R: Debug,
 {
     type Output = io::Result<R>;
 
@@ -154,6 +155,7 @@ impl<TM: ThreadModel> Clone for BasicMioDevice<TM> {
 
 impl<TM: ThreadModel> BasicMioDevice<TM> {
     /// Create new io device object.
+    #[track_caller]
     pub fn new() -> io::Result<Self> {
         Ok(Self {
             read_wakers: HashMap::default().into(),
@@ -170,8 +172,6 @@ impl<TM: ThreadModel> BasicMioDevice<TM> {
         let next_token = self.next_token.fetch_add(1, Ordering::SeqCst);
 
         let token = Token(next_token);
-
-        log::trace!("next token {:?}", token);
 
         token
     }
@@ -238,29 +238,28 @@ impl<TM: ThreadModel> IoDevice for BasicMioDevice<TM> {
     where
         F: FnMut() -> io::Result<R>,
     {
-        if interests.is_readable() {
-            self.read_wakers.get_mut().insert(token, cx.waker().clone());
-        } else if interests.is_writable() {
-            self.write_wakers
-                .get_mut()
-                .insert(token, cx.waker().clone());
-        }
+        log::trace!("io token={:?} {:?} poll", token, interests);
 
         loop {
             match f() {
                 Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                    if interests.is_readable() {
+                        self.read_wakers.get_mut().insert(token, cx.waker().clone());
+                    } else if interests.is_writable() {
+                        self.write_wakers
+                            .get_mut()
+                            .insert(token, cx.waker().clone());
+                    }
+
+                    log::trace!("io token={:?} {:?} WouldBlock", token, interests);
                     return Poll::Pending;
                 }
                 Err(err) if err.kind() == io::ErrorKind::Interrupted => {
-                    log::trace!("IoObject({:?}) Interrupted", token);
+                    log::trace!("io token={:?} {:?} Interrupted", token, interests);
                     continue;
                 }
                 output => {
-                    if interests.is_readable() {
-                        self.read_wakers.get_mut().remove(&token);
-                    } else if interests.is_writable() {
-                        self.write_wakers.get_mut().remove(&token);
-                    }
+                    log::trace!("io token={:?} {:?} Success", token, interests);
 
                     return Poll::Ready(output);
                 }
@@ -271,17 +270,17 @@ impl<TM: ThreadModel> IoDevice for BasicMioDevice<TM> {
     /// Run io device event loop forever
     fn event_loop(&self, poll_timeout: Option<Duration>) -> io::Result<()> {
         loop {
-            self.poll_once(poll_timeout)?;
+            self.event_loop_once(poll_timeout)?;
         }
     }
 
     /// Poll io events once.
-    fn poll_once(&self, poll_timeout: Option<Duration>) -> io::Result<()> {
+    fn event_loop_once(&self, poll_timeout: Option<Duration>) -> io::Result<()> {
         let mut events = Events::with_capacity(1024);
 
         self.poll.get_mut().poll(
             &mut events,
-            Some(poll_timeout.unwrap_or(Duration::from_millis(10))),
+            Some(poll_timeout.unwrap_or(Duration::from_micros(1))),
         )?;
 
         for event in events.iter() {
@@ -306,36 +305,45 @@ impl<TM: ThreadModel> IoDevice for BasicMioDevice<TM> {
     }
 }
 
-pub type MioDeviceMT = BasicMioDevice<MTModel>;
+pub mod mt {
+    use super::*;
 
-static MIODEVICEMT_INSTANCE: OnceLock<MioDeviceMT> = OnceLock::new();
+    pub type MioDevice = BasicMioDevice<MTModel>;
 
-impl ContextIoDevice for MioDeviceMT {
-    fn get() -> Self {
-        MIODEVICEMT_INSTANCE
-            .get_or_init(|| MioDeviceMT::new().unwrap())
-            .clone()
+    impl ContextIoDevice for MioDevice {
+        fn get() -> Self {
+            static MIODEVICEMT_INSTANCE: OnceLock<MioDevice> = OnceLock::new();
+
+            MIODEVICEMT_INSTANCE
+                .get_or_init(|| MioDevice::new().unwrap())
+                .clone()
+        }
     }
+
+    impl MTRunner for MioDevice {}
 }
 
-impl MTRunner for MioDeviceMT {}
+pub mod st {
 
-pub type MioDeviceST = BasicMioDevice<STModel>;
+    use super::*;
 
-thread_local! {
-    static MIO_DEVICE_ST_INSTANCE: MioDeviceST = MioDeviceST::new().unwrap();
-}
+    pub type MioDevice = BasicMioDevice<STModel>;
 
-impl ContextIoDevice for MioDeviceST {
-    fn get() -> Self {
-        MIO_DEVICE_ST_INSTANCE.with(|io| io.clone())
+    impl ContextIoDevice for MioDevice {
+        fn get() -> Self {
+            thread_local! {
+                static MIO_DEVICE_ST_INSTANCE: MioDevice = MioDevice::new().unwrap();
+            }
+
+            MIO_DEVICE_ST_INSTANCE.with(|io| io.clone())
+        }
     }
-}
 
-impl STRunner for MioDeviceST {}
+    impl STRunner for MioDevice {}
+}
 
 #[cfg(feature = "mt")]
-pub type MioDevice = MioDeviceMT;
+pub type MioDevice = mt::MioDevice;
 
 #[cfg(all(not(feature = "mt"), feature = "st"))]
-pub type MioDevice = MioDeviceST;
+pub type MioDevice = st::MioDevice;

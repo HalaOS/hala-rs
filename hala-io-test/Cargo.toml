@@ -17,5 +17,5 @@ pretty_env_logger = {workspace = true}
 
 [features]
 debug = []
-mt = ["hala-reactor/mt"]
+mt = ["hala-reactor/st"]
 st = ["hala-reactor/st"]

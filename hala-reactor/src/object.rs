@@ -1,4 +1,5 @@
 use std::{
+    fmt::Debug,
     io,
     marker::PhantomData,
     task::{Context, Poll},
@@ -25,6 +26,7 @@ where
     /// Create new [`IoObject`] by providing `S`
     pub fn new(mut inner: S, interests: Interest) -> io::Result<Self> {
         let io = IO::get();
+
         let token = io.register(&mut inner, interests)?;
 
         Ok(Self {
@@ -45,6 +47,7 @@ where
     ) -> Poll<io::Result<R>>
     where
         F: FnMut() -> io::Result<R>,
+        R: Debug,
     {
         self.io.poll_io(cx, self.token, interests, f)
     }

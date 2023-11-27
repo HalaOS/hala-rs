@@ -14,12 +14,14 @@ pub fn test(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let fn_name = &item_fn.sig.ident;
 
+    let test_name = item_fn.sig.ident.to_string();
+
     quote! {
         #[::core::prelude::v1::test]
         fn #fn_name() {
             #item_fn
 
-            hala_io_test::socket_tester(#fn_name);
+            hala_io_test::socket_tester(#test_name,#fn_name);
         }
 
 

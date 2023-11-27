@@ -13,6 +13,5 @@ futures = {workspace = true}
 log = {workspace = true}
 mio = {workspace = true}
 [features]
-default = ["mt"]
 mt = []
 st = []

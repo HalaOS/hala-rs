@@ -19,8 +19,8 @@ rand = {workspace = true}
 pretty_env_logger = {workspace = true}
 
 [features]
-default = ["mt"]
+default = []
 mt = ["hala-reactor/mt"]
-mt-test = ["hala-reactor/mt", "hala-io-test/mt"]
 st = ["hala-reactor/st"]
-st-test = ["hala-reactor/st", "hala-io-test/st"]
+test-mt = ["hala-reactor/mt", "hala-io-test/mt"]
+test-st = ["hala-reactor/st", "hala-io-test/st"]
