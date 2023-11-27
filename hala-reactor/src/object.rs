@@ -11,7 +11,7 @@ use crate::{AsyncIo, ContextIoDevice, IoDevice, IoDeviceExt, ThreadModelGuard};
 
 /// The [`Source`] wrapper object.
 #[derive(Clone)]
-pub struct IoObject<IO: IoDevice + ContextIoDevice + 'static, S: Source> {
+pub struct IoObject<IO: IoDevice + ContextIoDevice, S: Source> {
     pub token: Token,
     pub holder: IO::Guard<S>,
     io: IO,
@@ -20,7 +20,7 @@ pub struct IoObject<IO: IoDevice + ContextIoDevice + 'static, S: Source> {
 
 impl<IO, S> IoObject<IO, S>
 where
-    IO: IoDevice + ContextIoDevice + 'static,
+    IO: IoDevice + ContextIoDevice,
     S: Source,
 {
     /// Create new [`IoObject`] by providing `S`
@@ -71,7 +71,7 @@ where
     }
 }
 
-impl<IO: IoDevice + ContextIoDevice + 'static, S: Source> Drop for IoObject<IO, S>
+impl<IO: IoDevice + ContextIoDevice, S: Source> Drop for IoObject<IO, S>
 where
     S: Source,
 {

@@ -8,13 +8,13 @@ use hala_reactor::*;
 use mio::Interest;
 
 /// A UDP socket.
-pub struct UdpSocket<IO: IoDevice + ContextIoDevice + 'static = MioDevice> {
+pub struct UdpSocket<IO: IoDevice + ContextIoDevice = MioDevice> {
     io: IoObject<IO, mio::net::UdpSocket>,
 }
 
 impl<IO> UdpSocket<IO>
 where
-    IO: IoDevice + ContextIoDevice + 'static,
+    IO: IoDevice + ContextIoDevice,
 {
     /// This function will create a new UDP socket and attempt to bind it to the addr provided.
     pub async fn bind<S: ToSocketAddrs>(laddr: S) -> io::Result<Self> {
@@ -82,51 +82,19 @@ where
 
 #[cfg(test)]
 mod tests {
-    use rand::seq::SliceRandom;
 
     use super::*;
 
     #[hala_io_test::test]
     async fn test_udp() {
+        log::trace!("start test_udp");
         let send_buf = b"hello world";
 
         let server_udp: UdpSocket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
 
         let client_udp: UdpSocket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
 
-        client_udp
-            .send_to(send_buf, server_udp.local_addr().unwrap())
-            .await
-            .unwrap();
-
-        log::trace!("send to");
-
-        let mut buf = [0 as u8; 1024];
-
-        let (recv_size, remote_addr) = server_udp.recv_from(&mut buf).await.unwrap();
-
-        log::trace!("recv from");
-
-        assert_eq!(recv_size, send_buf.len());
-
-        assert_eq!(remote_addr, client_udp.local_addr().unwrap());
-    }
-
-    #[hala_io_test::test]
-    async fn test_udp_select() {
-        let send_buf = b"hello world";
-
-        let mut server_udps: Vec<UdpSocket> = vec![];
-
-        for _ in 0..10 {
-            server_udps.push(UdpSocket::bind("127.0.0.1:0").await.unwrap());
-        }
-
-        let client_udp: UdpSocket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-
-        for _ in 0..1 {
-            let server_udp = server_udps.choose(&mut rand::thread_rng()).unwrap();
-
+        for _ in 0..1000 {
             client_udp
                 .send_to(send_buf, server_udp.local_addr().unwrap())
                 .await
