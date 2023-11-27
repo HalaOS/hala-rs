@@ -34,7 +34,13 @@ mod mt {
         Fut: Future + Send + 'static,
         Fut::Output: Send,
     {
+        _ = pretty_env_logger::try_init();
+
+        log::trace!("start io test(mt)");
+
         hala_reactor::MioDeviceMT::get().run_loop(None);
+
+        log::trace!("start MioDeviceMT run_loop successed");
 
         let thread_pool = spawner();
 
@@ -56,13 +62,16 @@ mod st {
         POOL.with(|pool| pool.spawner())
     }
 
-    // #[cfg(all(not(feature = "mt"), feature = "st"))]
     pub fn socket_tester<T, Fut>(test: T)
     where
         T: FnOnce() -> Fut,
         Fut: Future + Send + 'static,
         Fut::Output: Send,
     {
+        _ = pretty_env_logger::try_init();
+
+        log::trace!("start io test(st)");
+
         hala_reactor::MioDeviceST::run_loop(
             &move |fut| {
                 spawner().spawn_local(fut).unwrap();
@@ -71,10 +80,12 @@ mod st {
         )
         .unwrap();
 
-        let spawner = spawner();
-        let fut = spawner.spawn_with_handle(test()).unwrap();
+        log::trace!("start MioDeviceMT run_loop successed");
 
-        block_on(fut);
+        // let spawner = spawner();
+        // let fut = spawner.spawn_with_handle(test()).unwrap();
+
+        block_on(test());
     }
 }
 

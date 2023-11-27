@@ -13,8 +13,10 @@ hala-io-test = {workspace = true, optional = true}
 hala-reactor = {workspace = true, optional = true}
 log = {workspace = true}
 mio = {workspace = true}
-pretty_env_logger = {workspace = true}
 rand = {workspace = true}
+
+[dev-dependencies]
+pretty_env_logger = {workspace = true}
 
 [features]
 default = ["mt"]
