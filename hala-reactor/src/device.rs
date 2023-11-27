@@ -1,12 +1,12 @@
 use std::{
     collections::HashMap,
     io,
-    sync::{atomic::AtomicUsize, Arc, Once, OnceLock},
+    sync::{atomic::AtomicUsize, Arc, OnceLock},
     task::{Context, Poll, Waker},
     time::Duration,
 };
 
-use futures::Future;
+use futures::{future::LocalBoxFuture, Future};
 use mio::{event::Source, Events, Interest, Token};
 
 use crate::{MTModel, STModel, ThreadModel, ThreadModelGuard};
@@ -56,6 +56,40 @@ pub trait ContextIoDevice: IoDevice {
     fn get() -> Self
     where
         Self: Sized;
+}
+
+pub trait STRunner: IoDevice + ContextIoDevice {
+    fn run_loop<'a, Spawner>(
+        spawner: &'static Spawner,
+        poll_timeout: Option<Duration>,
+    ) -> io::Result<()>
+    where
+        Spawner: Fn(LocalBoxFuture<'static, ()>) + Clone,
+        Self: Sized + 'static,
+    {
+        let io: Self = Self::get();
+
+        let inner = async move {
+            io.poll_once(poll_timeout).unwrap();
+            Self::run_loop::<Spawner>(spawner, poll_timeout).unwrap();
+        };
+
+        spawner(Box::pin(inner));
+
+        Ok(())
+    }
+}
+
+pub trait MTRunner: IoDevice {
+    /// Start MultiThread IoDevice service.
+    fn run_loop(&self, poll_timeout: Option<Duration>)
+    where
+        Self: ContextIoDevice + Sized,
+    {
+        std::thread::spawn(move || {
+            _ = Self::get().event_loop(poll_timeout);
+        });
+    }
 }
 
 /// Extension trait for [`IoDevice`]
@@ -284,19 +318,7 @@ impl ContextIoDevice for MioDeviceMT {
     }
 }
 
-impl MioDeviceMT {
-    pub fn start(&self, poll_timeout: Option<Duration>) {
-        static INIT: Once = Once::new();
-
-        INIT.call_once(|| {
-            let io_device = self.clone();
-
-            std::thread::spawn(move || {
-                _ = io_device.event_loop(poll_timeout);
-            });
-        });
-    }
-}
+impl MTRunner for MioDeviceMT {}
 
 pub type MioDeviceST = BasicMioDevice<STModel>;
 
@@ -309,6 +331,8 @@ impl ContextIoDevice for MioDeviceST {
         MIO_DEVICE_ST_INSTANCE.with(|io| io.clone())
     }
 }
+
+impl STRunner for MioDeviceST {}
 
 #[cfg(feature = "mt")]
 pub type MioDevice = MioDeviceMT;

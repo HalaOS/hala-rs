@@ -1,0 +1,10 @@
+[tasks.test]
+dependencies = ["test-mt", "test-st"]
+
+[tasks.test-mt]
+args = ["test", "--no-default-features", "--features", "mt-test"]
+command = "cargo"
+
+[tasks.test-st]
+args = ["test", "--no-default-features", "--features", "st-test"]
+command = "cargo"

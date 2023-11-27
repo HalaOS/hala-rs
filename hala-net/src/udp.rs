@@ -82,22 +82,50 @@ where
 
 #[cfg(test)]
 mod tests {
-    use futures::task::SpawnExt;
     use rand::seq::SliceRandom;
 
     use super::*;
 
-    #[test]
-    fn test_udp_mt() {
-        // pretty_env_logger::init();
+    #[hala_io_test::test]
+    async fn test_udp() {
+        let send_buf = b"hello world";
 
-        MioDeviceMT::get().start(None);
-        async fn test_udp() {
-            let send_buf = b"hello world";
+        let server_udp: UdpSocket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
 
-            let server_udp: UdpSocket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let client_udp: UdpSocket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
 
-            let client_udp: UdpSocket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        client_udp
+            .send_to(send_buf, server_udp.local_addr().unwrap())
+            .await
+            .unwrap();
+
+        log::trace!("send to");
+
+        let mut buf = [0 as u8; 1024];
+
+        let (recv_size, remote_addr) = server_udp.recv_from(&mut buf).await.unwrap();
+
+        log::trace!("recv from");
+
+        assert_eq!(recv_size, send_buf.len());
+
+        assert_eq!(remote_addr, client_udp.local_addr().unwrap());
+    }
+
+    #[hala_io_test::test]
+    async fn test_udp_select() {
+        let send_buf = b"hello world";
+
+        let mut server_udps: Vec<UdpSocket> = vec![];
+
+        for _ in 0..10 {
+            server_udps.push(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        }
+
+        let client_udp: UdpSocket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+
+        for _ in 0..1000 {
+            let server_udp = server_udps.choose(&mut rand::thread_rng()).unwrap();
 
             client_udp
                 .send_to(send_buf, server_udp.local_addr().unwrap())
@@ -116,63 +144,5 @@ mod tests {
 
             assert_eq!(remote_addr, client_udp.local_addr().unwrap());
         }
-
-        let pool = futures::executor::ThreadPool::builder()
-            .pool_size(10)
-            .create()
-            .unwrap();
-
-        let remote = pool.spawn_with_handle(test_udp()).unwrap();
-
-        futures::executor::block_on(remote);
-    }
-
-    #[test]
-    fn test_udp_select_mt() {
-        // _ = pretty_env_logger::try_init();
-
-        MioDeviceMT::get().start(None);
-
-        async fn test_udp() {
-            let send_buf = b"hello world";
-
-            let mut server_udps: Vec<UdpSocket> = vec![];
-
-            for _ in 0..10 {
-                server_udps.push(UdpSocket::bind("127.0.0.1:0").await.unwrap());
-            }
-
-            let client_udp: UdpSocket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-
-            for _ in 0..1000 {
-                let server_udp = server_udps.choose(&mut rand::thread_rng()).unwrap();
-
-                client_udp
-                    .send_to(send_buf, server_udp.local_addr().unwrap())
-                    .await
-                    .unwrap();
-
-                log::trace!("send to");
-
-                let mut buf = [0 as u8; 1024];
-
-                let (recv_size, remote_addr) = server_udp.recv_from(&mut buf).await.unwrap();
-
-                log::trace!("recv from");
-
-                assert_eq!(recv_size, send_buf.len());
-
-                assert_eq!(remote_addr, client_udp.local_addr().unwrap());
-            }
-        }
-
-        let pool = futures::executor::ThreadPool::builder()
-            .pool_size(10)
-            .create()
-            .unwrap();
-
-        let remote = pool.spawn_with_handle(test_udp()).unwrap();
-
-        futures::executor::block_on(remote);
     }
 }

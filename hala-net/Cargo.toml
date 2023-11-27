@@ -9,6 +9,7 @@ version.workspace = true
 
 [dependencies]
 futures = {workspace = true}
+hala-io-test = {workspace = true, optional = true}
 hala-reactor = {workspace = true, optional = true}
 log = {workspace = true}
 mio = {workspace = true}
@@ -18,4 +19,6 @@ rand = {workspace = true}
 [features]
 default = ["mt"]
 mt = ["hala-reactor/mt"]
+mt-test = ["hala-reactor/mt", "hala-io-test/mt"]
 st = ["hala-reactor/st"]
+st-test = ["hala-reactor/st", "hala-io-test/st"]

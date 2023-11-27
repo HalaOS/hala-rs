@@ -11,9 +11,11 @@ version.workspace = true
 async-recursion = {workspace = true}
 futures = {workspace = true}
 hala-io-test-derive = {path = "./derive", version = "^0.1"}
-hala-reactor = {workspace = true}
+hala-reactor = {workspace = true, optional = true}
 log = {workspace = true}
 pretty_env_logger = {workspace = true}
 
 [features]
 debug = []
+mt = ["hala-reactor/mt"]
+st = ["hala-reactor/st"]

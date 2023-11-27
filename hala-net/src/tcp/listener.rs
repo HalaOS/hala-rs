@@ -10,6 +10,7 @@ use hala_reactor::{ContextIoDevice, IoDevice, IoObject, MioDevice, ThreadModelGu
 
 use super::TcpStream;
 
+/// A structure representing a socket tcp server
 pub struct TcpListener<IO: IoDevice + ContextIoDevice + 'static = MioDevice> {
     io: IoObject<IO, mio::net::TcpListener>,
 }
