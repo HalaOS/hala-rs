@@ -37,9 +37,9 @@ where
         })
     }
 
-    /// invoke one poll io
+    /// Call an nonblocking io operation and register async `waker` if the result is WOULD_BLOCk.
     #[inline]
-    pub fn poll_io<R, F>(
+    pub fn poll_io_with_context<R, F>(
         &self,
         cx: &mut Context<'_>,
         interests: Interest,
@@ -49,7 +49,17 @@ where
         F: FnMut() -> io::Result<R>,
         R: Debug,
     {
-        self.io.poll_io(cx, self.token, interests, f)
+        self.io.poll_io_with_context(cx, self.token, interests, f)
+    }
+
+    /// Call an nonblocking io operation
+    #[inline]
+    pub fn poll_io<R, F>(&self, interests: Interest, f: F) -> Poll<io::Result<R>>
+    where
+        F: FnMut() -> io::Result<R>,
+        R: Debug,
+    {
+        self.io.poll_io(self.token, interests, f)
     }
 
     #[inline]

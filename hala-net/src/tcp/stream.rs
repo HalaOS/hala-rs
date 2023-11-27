@@ -48,7 +48,7 @@ impl<IO: IoDevice + ContextIoDevice + 'static> AsyncWrite for TcpStream<IO> {
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<io::Result<usize>> {
-        self.io.poll_io(cx, Interest::WRITABLE, || {
+        self.io.poll_io_with_context(cx, Interest::WRITABLE, || {
             self.io.holder.get_mut().write(buf)
         })
     }
@@ -74,7 +74,7 @@ impl<IO: IoDevice + ContextIoDevice + 'static> AsyncRead for TcpStream<IO> {
         cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        self.io.poll_io(cx, Interest::READABLE, || {
+        self.io.poll_io_with_context(cx, Interest::READABLE, || {
             self.io.holder.get_mut().read(buf)
         })
     }

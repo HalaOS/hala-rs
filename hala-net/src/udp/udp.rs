@@ -14,7 +14,7 @@ pub struct UdpSocket<IO: IoDevice + ContextIoDevice + 'static = MioDevice> {
 
 impl<IO> UdpSocket<IO>
 where
-    IO: IoDevice + ContextIoDevice + Send + Sync + 'static,
+    IO: IoDevice + ContextIoDevice + 'static,
 {
     /// This function will create a new UDP socket and attempt to bind it to the addr provided.
     pub async fn bind<S: ToSocketAddrs>(laddr: S) -> io::Result<Self> {
@@ -74,7 +74,7 @@ where
         cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<(usize, SocketAddr)>> {
-        self.io.poll_io(cx, Interest::READABLE, || {
+        self.io.poll_io_with_context(cx, Interest::READABLE, || {
             self.io.holder.get().recv_from(buf)
         })
     }

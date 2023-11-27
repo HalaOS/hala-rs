@@ -36,8 +36,8 @@ pub trait IoDevice {
     where
         S: Source;
 
-    /// invoke one poll io
-    fn poll_io<R, F>(
+    /// invoke one poll io, and register waker if `WOULD_BLOCK`
+    fn poll_io_with_context<R, F>(
         &self,
         cx: &mut Context<'_>,
         token: Token,
@@ -47,6 +47,31 @@ pub trait IoDevice {
     where
         F: FnMut() -> io::Result<R>,
         R: Debug;
+
+    fn poll_io<R, F>(&self, token: Token, interests: Interest, mut f: F) -> Poll<io::Result<R>>
+    where
+        F: FnMut() -> io::Result<R>,
+        R: Debug,
+    {
+        log::trace!("io token={:?} {:?} poll", token, interests);
+
+        loop {
+            match f() {
+                Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                    return Poll::Pending;
+                }
+                Err(err) if err.kind() == io::ErrorKind::Interrupted => {
+                    log::trace!("io token={:?} {:?} Interrupted", token, interests);
+                    continue;
+                }
+                output => {
+                    log::trace!("io token={:?} {:?} Success", token, interests);
+
+                    return Poll::Ready(output);
+                }
+            }
+        }
+    }
 
     fn event_loop(&self, poll_timeout: Option<Duration>) -> io::Result<()>;
 
@@ -127,7 +152,8 @@ where
     type Output = io::Result<R>;
 
     fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        self.io.poll_io(cx, self.token, self.interests, &mut self.f)
+        self.io
+            .poll_io_with_context(cx, self.token, self.interests, &mut self.f)
     }
 }
 
@@ -228,42 +254,33 @@ impl<TM: ThreadModel> IoDevice for BasicMioDevice<TM> {
         Ok(())
     }
 
-    fn poll_io<R, F>(
+    fn poll_io_with_context<R, F>(
         &self,
         cx: &mut Context<'_>,
         token: Token,
         interests: Interest,
-        mut f: F,
+        f: F,
     ) -> Poll<io::Result<R>>
     where
         F: FnMut() -> io::Result<R>,
+        R: Debug,
     {
         log::trace!("io token={:?} {:?} poll", token, interests);
 
-        loop {
-            match f() {
-                Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
-                    if interests.is_readable() {
-                        self.read_wakers.get_mut().insert(token, cx.waker().clone());
-                    } else if interests.is_writable() {
-                        self.write_wakers
-                            .get_mut()
-                            .insert(token, cx.waker().clone());
-                    }
+        match self.poll_io(token, interests, f) {
+            Poll::Pending => {
+                if interests.is_readable() {
+                    self.read_wakers.get_mut().insert(token, cx.waker().clone());
+                } else if interests.is_writable() {
+                    self.write_wakers
+                        .get_mut()
+                        .insert(token, cx.waker().clone());
+                }
 
-                    log::trace!("io token={:?} {:?} WouldBlock", token, interests);
-                    return Poll::Pending;
-                }
-                Err(err) if err.kind() == io::ErrorKind::Interrupted => {
-                    log::trace!("io token={:?} {:?} Interrupted", token, interests);
-                    continue;
-                }
-                output => {
-                    log::trace!("io token={:?} {:?} Success", token, interests);
-
-                    return Poll::Ready(output);
-                }
+                log::trace!("io token={:?} {:?} WouldBlock", token, interests);
+                return Poll::Pending;
             }
+            polling => polling,
         }
     }
 
