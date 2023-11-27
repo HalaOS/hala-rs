@@ -16,6 +16,7 @@ mio = {workspace = true}
 rand = {workspace = true}
 
 [dev-dependencies]
+divan = {workspace = true}
 pretty_env_logger = {workspace = true}
 
 [features]
@@ -24,3 +25,7 @@ mt = ["hala-reactor/mt"]
 st = ["hala-reactor/st"]
 test-mt = ["hala-reactor/mt", "hala-io-test/mt"]
 test-st = ["hala-reactor/st", "hala-io-test/st"]
+
+[[bench]]
+harness = false
+name = "udp_group"

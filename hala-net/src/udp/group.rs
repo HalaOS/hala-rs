@@ -11,7 +11,7 @@ use mio::{Interest, Token};
 /// Handle a range of udp endpoints
 pub struct UdpGroup<IO = MioDevice>
 where
-    IO: IoDevice + ContextIoDevice + SelectableIoDevice,
+    IO: IoDevice + ContextIoDevice + GroupIoDevice,
 {
     range: HashMap<Token, usize>,
     tokens: Vec<Token>,
@@ -22,7 +22,7 @@ where
 
 impl<IO> UdpGroup<IO>
 where
-    IO: IoDevice + ContextIoDevice + SelectableIoDevice,
+    IO: IoDevice + ContextIoDevice + GroupIoDevice,
 {
     /// Bind udp group with `ip` and port range
     pub async fn bind(ip: IpAddr, ports: Range<u16>) -> io::Result<Self> {
@@ -95,7 +95,7 @@ where
 
 impl<IO> Drop for UdpGroup<IO>
 where
-    IO: IoDevice + ContextIoDevice + SelectableIoDevice,
+    IO: IoDevice + ContextIoDevice + GroupIoDevice,
 {
     fn drop(&mut self) {
         self.io.deregister_group(self.group).unwrap();
@@ -130,7 +130,7 @@ mod tests {
 
         let ports = range.map(|i| i).collect::<Vec<_>>();
 
-        for _ in 0..100 {
+        for _ in 0..1000 {
             let port: u16 = *ports.choose(&mut rand::thread_rng()).unwrap();
 
             client_udp
@@ -153,5 +153,14 @@ mod tests {
 
             assert_eq!(remote_addr, client_udp.local_addr().unwrap());
         }
+    }
+
+    #[hala_io_test::test]
+    async fn test_loop() {
+        let client_udp: UdpSocket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+
+        let mut buf = [0 as u8; 1024];
+
+        client_udp.recv_from(&mut buf).await.unwrap();
     }
 }

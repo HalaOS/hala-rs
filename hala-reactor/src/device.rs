@@ -12,6 +12,7 @@ use mio::{
     event::{Event, Source},
     Events, Interest, Token,
 };
+use rand::seq::SliceRandom;
 
 use crate::{MTModel, STModel, ThreadModel, ThreadModelGuard};
 
@@ -106,7 +107,7 @@ pub trait IoDevice {
     fn event_loop_once(&self, poll_timeout: Option<Duration>) -> io::Result<()>;
 }
 
-pub trait SelectableIoDevice: IoDevice {
+pub trait GroupIoDevice: IoDevice {
     fn register_group(&self, tokens: &[Token], interests: Interest) -> io::Result<Token>;
 
     fn deregister_group(&self, token: Token) -> io::Result<()>;
@@ -186,7 +187,7 @@ pub trait IoDeviceExt: IoDevice {
         f: F,
     ) -> SelectIo<'_, Self, F>
     where
-        Self: SelectableIoDevice + Sized,
+        Self: GroupIoDevice + Sized,
     {
         SelectIo {
             io: self,
@@ -208,7 +209,7 @@ pub struct SelectIo<'a, IO, F> {
 
 impl<'a, IO, F, R> Future for SelectIo<'a, IO, F>
 where
-    IO: IoDevice + SelectableIoDevice,
+    IO: IoDevice + GroupIoDevice,
     F: FnMut(Token) -> io::Result<R> + Unpin,
     R: Debug,
 {
@@ -621,7 +622,7 @@ impl<TM: ThreadModel> IoDevice for BasicMioDevice<TM> {
     }
 }
 
-impl<TM: ThreadModel> SelectableIoDevice for BasicMioDevice<TM> {
+impl<TM: ThreadModel> GroupIoDevice for BasicMioDevice<TM> {
     fn poll_select<R, F>(
         &self,
         cx: &mut Context<'_>,
@@ -637,7 +638,9 @@ impl<TM: ThreadModel> SelectableIoDevice for BasicMioDevice<TM> {
             .get_mut()
             .register_group_waker(cx, group, interests)?;
 
-        let tokens = self.inner.get_mut().group_tokens(group)?.to_owned();
+        let mut tokens = self.inner.get_mut().group_tokens(group)?.to_owned();
+
+        tokens.shuffle(&mut rand::thread_rng());
 
         for token in tokens {
             match self.poll_io(|| f(token)) {

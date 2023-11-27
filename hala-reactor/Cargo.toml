@@ -12,6 +12,8 @@ async-recursion = {workspace = true}
 futures = {workspace = true}
 log = {workspace = true}
 mio = {workspace = true}
+rand = {workspace = true}
+
 [features]
 mt = []
 st = []
