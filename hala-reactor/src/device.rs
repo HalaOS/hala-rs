@@ -97,7 +97,7 @@ where
 }
 
 /// IoDevice using mio implementation
-pub struct MioDevice<TM: ThreadModel = MTModel> {
+pub struct BasicMioDevice<TM: ThreadModel = MTModel> {
     poll: TM::Guard<mio::Poll>,
     /// readable waker collection
     read_wakers: TM::Guard<HashMap<Token, Waker>>,
@@ -107,7 +107,7 @@ pub struct MioDevice<TM: ThreadModel = MTModel> {
     next_token: Arc<AtomicUsize>,
 }
 
-impl<TM: ThreadModel> Clone for MioDevice<TM> {
+impl<TM: ThreadModel> Clone for BasicMioDevice<TM> {
     fn clone(&self) -> Self {
         Self {
             poll: self.poll.clone(),
@@ -118,7 +118,7 @@ impl<TM: ThreadModel> Clone for MioDevice<TM> {
     }
 }
 
-impl<TM: ThreadModel> MioDevice<TM> {
+impl<TM: ThreadModel> BasicMioDevice<TM> {
     /// Create new io device object.
     pub fn new() -> io::Result<Self> {
         Ok(Self {
@@ -143,7 +143,7 @@ impl<TM: ThreadModel> MioDevice<TM> {
     }
 }
 
-impl<TM: ThreadModel> IoDevice for MioDevice<TM> {
+impl<TM: ThreadModel> IoDevice for BasicMioDevice<TM> {
     type Guard<T> = TM::Guard<T>;
 
     fn register<S>(&self, source: &mut S, interests: Interest) -> io::Result<Token>
@@ -272,7 +272,7 @@ impl<TM: ThreadModel> IoDevice for MioDevice<TM> {
     }
 }
 
-pub type MioDeviceMT = MioDevice<MTModel>;
+pub type MioDeviceMT = BasicMioDevice<MTModel>;
 
 static MIODEVICEMT_INSTANCE: OnceLock<MioDeviceMT> = OnceLock::new();
 
@@ -298,7 +298,7 @@ impl MioDeviceMT {
     }
 }
 
-pub type MioDeviceST = MioDevice<STModel>;
+pub type MioDeviceST = BasicMioDevice<STModel>;
 
 thread_local! {
     static MIO_DEVICE_ST_INSTANCE: MioDeviceST = MioDeviceST::new().unwrap();
@@ -309,3 +309,9 @@ impl ContextIoDevice for MioDeviceST {
         MIO_DEVICE_ST_INSTANCE.with(|io| io.clone())
     }
 }
+
+#[cfg(feature = "mt")]
+pub type MioDevice = MioDeviceMT;
+
+#[cfg(all(not(feature = "mt"), feature = "st"))]
+pub type MioDevice = MioDeviceST;

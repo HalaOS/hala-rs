@@ -13,6 +13,7 @@ use crate::{AsyncIo, ContextIoDevice, IoDevice, IoDeviceExt, ThreadModelGuard};
 pub struct IoObject<IO: IoDevice + ContextIoDevice + 'static, S: Source> {
     pub token: Token,
     pub holder: IO::Guard<S>,
+    io: IO,
     _marked: PhantomData<IO>,
 }
 
@@ -23,9 +24,11 @@ where
 {
     /// Create new [`IoObject`] by providing `S`
     pub fn new(mut inner: S, interests: Interest) -> io::Result<Self> {
-        let token = IO::get().register(&mut inner, interests)?;
+        let io = IO::get();
+        let token = io.register(&mut inner, interests)?;
 
         Ok(Self {
+            io,
             token,
             holder: IO::Guard::new(inner),
             _marked: Default::default(),
@@ -36,7 +39,6 @@ where
     #[inline]
     pub fn poll_io<R, F>(
         &self,
-        device: &IO,
         cx: &mut Context<'_>,
         interests: Interest,
         f: F,
@@ -44,15 +46,15 @@ where
     where
         F: FnMut() -> io::Result<R>,
     {
-        device.poll_io(cx, self.token, interests, f)
+        self.io.poll_io(cx, self.token, interests, f)
     }
 
     #[inline]
-    pub fn async_io<'a, F>(&self, device: &'a IO, interests: Interest, f: F) -> AsyncIo<'a, IO, F>
+    pub fn async_io<F>(&self, interests: Interest, f: F) -> AsyncIo<'_, IO, F>
     where
         Self: Sized,
     {
-        device.async_io(self.token, interests, f)
+        self.io.async_io(self.token, interests, f)
     }
 }
 
@@ -61,7 +63,7 @@ where
     S: Source,
 {
     fn drop(&mut self) {
-        IO::get()
+        self.io
             .deregister(&mut *self.holder.get_mut(), self.token)
             .unwrap()
     }

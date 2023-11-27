@@ -36,11 +36,9 @@ impl<IO: IoDevice + ContextIoDevice> TcpListener<IO> {
 
     /// Accepts a new incoming connection from this listener.
     pub async fn accept(&self) -> io::Result<(TcpStream, SocketAddr)> {
-        let io = IO::get();
-
         let (stream, addr) = self
             .io
-            .async_io(&io, Interest::READABLE, || self.io.holder.get().accept())
+            .async_io(Interest::READABLE, || self.io.holder.get().accept())
             .await?;
 
         Ok((TcpStream::from_mio(stream)?, addr))

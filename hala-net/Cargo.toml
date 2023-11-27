@@ -9,8 +9,13 @@ version.workspace = true
 
 [dependencies]
 futures = {workspace = true}
-hala-reactor = {workspace = true}
+hala-reactor = {workspace = true, optional = true}
 log = {workspace = true}
 mio = {workspace = true}
 pretty_env_logger = {workspace = true}
 rand = {workspace = true}
+
+[features]
+default = ["mt"]
+mt = ["hala-reactor/mt"]
+st = ["hala-reactor/st"]
