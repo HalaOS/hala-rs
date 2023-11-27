@@ -54,12 +54,12 @@ where
 
     /// Call an nonblocking io operation
     #[inline]
-    pub fn poll_io<R, F>(&self, interests: Interest, f: F) -> Poll<io::Result<R>>
+    pub fn poll_io<R, F>(&self, _interests: Interest, f: F) -> Poll<io::Result<R>>
     where
         F: FnMut() -> io::Result<R>,
         R: Debug,
     {
-        self.io.poll_io(self.token, interests, f)
+        self.io.poll_io(f)
     }
 
     #[inline]

@@ -19,6 +19,18 @@ use crate::{MTModel, STModel, ThreadModel, ThreadModelGuard};
 pub trait IoDevice {
     type Guard<T>: ThreadModelGuard<T>;
 
+    fn batch_register<S>(
+        &self,
+        source: &mut [&mut S],
+        interests: Interest,
+    ) -> io::Result<Vec<Token>>
+    where
+        S: Source;
+
+    fn batch_deregister<S>(&self, source: &mut [&mut S], tokens: &[Token]) -> io::Result<()>
+    where
+        S: Source;
+
     /// Re-register an [`Source`] with the reactor device.
     fn register<S>(&self, source: &mut S, interests: Interest) -> io::Result<Token>
     where
@@ -60,24 +72,23 @@ pub trait IoDevice {
         F: FnMut() -> io::Result<R>,
         R: Debug;
 
-    fn poll_io<R, F>(&self, token: Token, interests: Interest, mut f: F) -> Poll<io::Result<R>>
+    fn poll_io<R, F>(&self, mut f: F) -> Poll<io::Result<R>>
     where
         F: FnMut() -> io::Result<R>,
         R: Debug,
     {
-        log::trace!("io token={:?} {:?} poll", token, interests);
-
         loop {
             match f() {
                 Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                    // log::trace!("io token={:?} {:?} Pending", token, interests);
                     return Poll::Pending;
                 }
                 Err(err) if err.kind() == io::ErrorKind::Interrupted => {
-                    log::trace!("io token={:?} {:?} Interrupted", token, interests);
+                    // log::trace!("io token={:?} {:?} Interrupted", token, interests);
                     continue;
                 }
                 output => {
-                    log::trace!("io token={:?} {:?} Success", token, interests);
+                    // log::trace!("io token={:?} {:?} Success", token, interests);
 
                     return Poll::Ready(output);
                 }
@@ -96,11 +107,15 @@ pub trait IoDevice {
 }
 
 pub trait SelectableIoDevice: IoDevice {
+    fn register_group(&self, tokens: &[Token], interests: Interest) -> io::Result<Token>;
+
+    fn deregister_group(&self, token: Token) -> io::Result<()>;
+
     // Select one ready io to invoke and register `waker` if all IOs returns `WOULD_BLOCK`
     fn poll_select<R, F>(
         &self,
         cx: &mut Context<'_>,
-        tokens: &[Token],
+        group: Token,
         interests: Interest,
         f: F,
     ) -> Poll<io::Result<R>>
@@ -166,7 +181,7 @@ pub trait IoDeviceExt: IoDevice {
     /// Create a new asynchronous io calling with nonblock sync `F`
     fn async_select<'a, F>(
         &'a self,
-        tokens: &'a [Token],
+        group: Token,
         interests: Interest,
         f: F,
     ) -> SelectIo<'_, Self, F>
@@ -175,7 +190,7 @@ pub trait IoDeviceExt: IoDevice {
     {
         SelectIo {
             io: self,
-            tokens,
+            group,
             interests,
             f,
         }
@@ -186,7 +201,7 @@ impl<T: IoDevice> IoDeviceExt for T {}
 
 pub struct SelectIo<'a, IO, F> {
     io: &'a IO,
-    tokens: &'a [Token],
+    group: Token,
     interests: Interest,
     f: F,
 }
@@ -201,7 +216,7 @@ where
 
     fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         self.io
-            .poll_select(cx, self.tokens, self.interests, &mut self.f)
+            .poll_select(cx, self.group, self.interests, &mut self.f)
     }
 }
 
@@ -229,13 +244,18 @@ where
 
 struct MioDeviceInner {
     /// readable waker collection
-    read_wakers: HashMap<Token, WakerOrToken>,
+    read_wakers: HashMap<Token, Waker>,
     /// writable waker collection
-    write_wakers: HashMap<Token, WakerOrToken>,
+    write_wakers: HashMap<Token, Waker>,
 
-    read_group: HashMap<Token, (Waker, Vec<Token>)>,
+    /// readable waker collection
+    read_group_wakers: HashMap<Token, Waker>,
+    /// writable waker collection
+    write_group_wakers: HashMap<Token, Waker>,
 
-    write_group: HashMap<Token, (Waker, Vec<Token>)>,
+    groups: HashMap<Token, Vec<Token>>,
+
+    token_to_groups: HashMap<Token, Token>,
 }
 
 impl MioDeviceInner {
@@ -243,8 +263,10 @@ impl MioDeviceInner {
         Ok(Self {
             read_wakers: Default::default(),
             write_wakers: Default::default(),
-            read_group: Default::default(),
-            write_group: Default::default(),
+            read_group_wakers: Default::default(),
+            write_group_wakers: Default::default(),
+            groups: Default::default(),
+            token_to_groups: Default::default(),
         })
     }
 
@@ -281,60 +303,81 @@ impl MioDeviceInner {
         Ok(())
     }
 
-    fn register_wakers(&mut self, cx: &mut Context<'_>, tokens: &[Token], interests: Interest) {
-        log::trace!(
-            "io_device register group={:?} {:?} {:?}",
-            tokens[0],
-            interests,
-            tokens
-        );
-
-        for token in tokens {
-            if interests.is_readable() {
-                self.read_wakers.insert(*token, tokens[0].into());
-            }
-
-            if interests.is_writable() {
-                self.write_wakers.insert(*token, tokens[0].into());
-            }
-        }
+    fn register_group_waker(
+        &mut self,
+        cx: &mut Context<'_>,
+        group: Token,
+        interests: Interest,
+    ) -> io::Result<()> {
+        log::trace!("io_device register group={:?} {:?}", group, interests,);
 
         if interests.is_readable() {
-            self.read_group
-                .insert(tokens[0], (cx.waker().clone(), tokens.to_owned()));
+            self.read_group_wakers
+                .insert(group, cx.waker().clone().into());
         }
 
         if interests.is_writable() {
-            self.write_group
-                .insert(tokens[0], (cx.waker().clone(), tokens.to_owned()));
+            self.write_group_wakers
+                .insert(group, cx.waker().clone().into());
         }
+
+        Ok(())
     }
 
-    fn deregister_wakers(&mut self, tokens: &[Token], interests: Interest) {
+    fn deregister_group_waker(&mut self, group: Token, interests: Interest) -> io::Result<()> {
+        log::trace!("io_device deregister group={:?} {:?}", group, interests,);
+
+        self.read_group_wakers.remove(&group);
+
+        self.write_group_wakers.remove(&group);
+
+        Ok(())
+    }
+
+    fn register_group(
+        &mut self,
+        group: Token,
+        tokens: &[Token],
+        interests: Interest,
+    ) -> io::Result<()> {
         log::trace!(
-            "io_device deregister group={:?} {:?} {:?}",
-            tokens[0],
+            "io_device register group={:?} {:?} {:?}",
+            group,
             interests,
             tokens
         );
 
         for token in tokens {
-            if interests.is_readable() {
-                self.read_wakers.remove(token);
-            }
-
-            if interests.is_writable() {
-                self.write_wakers.remove(token);
-            }
+            self.token_to_groups.insert(*token, group);
         }
 
-        if interests.is_readable() {
-            self.read_group.remove(&tokens[0]);
+        self.groups.insert(group, tokens.to_owned());
+
+        Ok(())
+    }
+
+    fn deregister_group(&mut self, group: Token) -> io::Result<Vec<Token>> {
+        log::trace!("io_device deregister group={:?}", group);
+
+        self.deregister_group_waker(group, Interest::READABLE.add(Interest::WRITABLE))?;
+
+        let tokens = self
+            .groups
+            .remove(&group)
+            .ok_or(io::Error::new(io::ErrorKind::NotFound, "Group not found"))?;
+
+        for token in tokens.iter() {
+            self.token_to_groups.remove(token);
         }
 
-        if interests.is_writable() {
-            self.write_group.remove(&tokens[0]);
-        }
+        Ok(tokens)
+    }
+
+    fn group_tokens(&self, group: Token) -> io::Result<&[Token]> {
+        self.groups
+            .get(&group)
+            .map(|t| t.as_slice())
+            .ok_or(io::Error::new(io::ErrorKind::NotFound, "Group not found"))
     }
 
     fn handle_events(&mut self, events: &Events) {
@@ -347,59 +390,25 @@ impl MioDeviceInner {
         log::trace!("io_device handle {:?}", event);
 
         if event.is_readable() {
-            if let Some(waker_or_token) = self.read_wakers.remove(&event.token()) {
-                log::trace!("io_device found read_waker {:?}", waker_or_token);
+            if let Some(waker) = self.read_wakers.remove(&event.token()) {
+                waker.wake_by_ref();
+            }
 
-                match waker_or_token {
-                    WakerOrToken::Token(token) => {
-                        if let Some((waker, tokens)) = self.read_group.remove(&token) {
-                            for token in tokens {
-                                self.read_wakers.remove(&token);
-                            }
-
-                            waker.wake_by_ref();
-
-                            log::trace!(
-                                "io_device handle group={:?} Readable event",
-                                waker_or_token
-                            );
-
-                            return true;
-                        }
-                    }
-                    WakerOrToken::Waker(waker) => {
-                        waker.wake_by_ref();
-
-                        log::trace!("io_device handle token={:?} Readable event", event.token());
-                    }
+            if let Some(group) = self.token_to_groups.get(&event.token()) {
+                if let Some(waker) = self.read_group_wakers.remove(group) {
+                    waker.wake_by_ref();
                 }
             }
         }
 
         if event.is_writable() {
-            if let Some(waker_or_token) = self.write_wakers.remove(&event.token()) {
-                match waker_or_token {
-                    WakerOrToken::Token(token) => {
-                        if let Some((waker, tokens)) = self.write_group.remove(&token) {
-                            for token in tokens {
-                                self.read_wakers.remove(&token);
-                            }
+            if let Some(waker) = self.write_wakers.remove(&event.token()) {
+                waker.wake_by_ref();
+            }
 
-                            waker.wake_by_ref();
-
-                            log::trace!(
-                                "io_device handle group={:?} Writable event",
-                                waker_or_token
-                            );
-
-                            return true;
-                        }
-                    }
-                    WakerOrToken::Waker(waker) => {
-                        waker.wake_by_ref();
-
-                        log::trace!("io_device handle token={:?} Writable event", event.token());
-                    }
+            if let Some(group) = self.token_to_groups.get(&event.token()) {
+                if let Some(waker) = self.write_group_wakers.remove(group) {
+                    waker.wake_by_ref();
                 }
             }
         }
@@ -469,6 +478,44 @@ impl<TM: ThreadModel> BasicMioDevice<TM> {
 impl<TM: ThreadModel> IoDevice for BasicMioDevice<TM> {
     type Guard<T> = TM::Guard<T>;
 
+    fn batch_register<S>(
+        &self,
+        sources: &mut [&mut S],
+        interests: Interest,
+    ) -> io::Result<Vec<Token>>
+    where
+        S: Source,
+    {
+        let poll = self.poll.get();
+
+        let mut tokens = vec![];
+
+        for source in sources {
+            let token = self.new_token();
+
+            poll.registry().register(*source, token, interests)?;
+
+            tokens.push(token);
+        }
+
+        Ok(tokens)
+    }
+    fn batch_deregister<S>(&self, sources: &mut [&mut S], tokens: &[Token]) -> io::Result<()>
+    where
+        S: Source,
+    {
+        let poll = self.poll.get();
+
+        let mut inner = self.inner.get_mut();
+
+        for (index, source) in sources.iter_mut().enumerate() {
+            poll.registry().deregister(*source)?;
+
+            inner.deregister_waker(tokens[index], Interest::READABLE.add(Interest::WRITABLE))?;
+        }
+
+        Ok(())
+    }
     fn register<S>(&self, source: &mut S, interests: Interest) -> io::Result<Token>
     where
         S: Source,
@@ -559,7 +606,7 @@ impl<TM: ThreadModel> IoDevice for BasicMioDevice<TM> {
 
         self.inner.get_mut().register_waker(cx, token, interests)?;
 
-        match self.poll_io(token, interests, f) {
+        match self.poll_io(f) {
             Poll::Pending => {
                 log::trace!("io token={:?} {:?} WouldBlock", token, interests);
 
@@ -578,7 +625,7 @@ impl<TM: ThreadModel> SelectableIoDevice for BasicMioDevice<TM> {
     fn poll_select<R, F>(
         &self,
         cx: &mut Context<'_>,
-        tokens: &[Token],
+        group: Token,
         interests: Interest,
         mut f: F,
     ) -> Poll<io::Result<R>>
@@ -586,21 +633,46 @@ impl<TM: ThreadModel> SelectableIoDevice for BasicMioDevice<TM> {
         F: FnMut(Token) -> io::Result<R>,
         R: Debug,
     {
-        let mut inner = self.inner.get_mut();
+        self.inner
+            .get_mut()
+            .register_group_waker(cx, group, interests)?;
+
+        let tokens = self.inner.get_mut().group_tokens(group)?.to_owned();
 
         for token in tokens {
-            match self.poll_io(*token, interests, || f(*token)) {
-                Poll::Pending => continue,
+            match self.poll_io(|| f(token)) {
+                Poll::Pending => {
+                    continue;
+                }
                 polling => {
-                    inner.deregister_wakers(tokens, interests);
+                    self.inner
+                        .get_mut()
+                        .deregister_group_waker(group, interests)?;
+
                     return polling;
                 }
             }
         }
 
-        inner.register_wakers(cx, tokens, interests);
+        log::trace!("io group={:?} {:?} Pending", group, interests);
 
         Poll::Pending
+    }
+
+    fn register_group(&self, tokens: &[Token], interests: Interest) -> io::Result<Token> {
+        let token = self.new_token();
+
+        self.inner
+            .get_mut()
+            .register_group(token, tokens, interests)?;
+
+        Ok(token)
+    }
+
+    fn deregister_group(&self, group: Token) -> io::Result<()> {
+        self.inner.get_mut().deregister_group(group)?;
+
+        Ok(())
     }
 }
 pub mod mt {
