@@ -10,19 +10,59 @@ fn main() {
 
 struct UdpSocketImpl {}
 
-impl RawUdpSocket for UdpSocketImpl {}
+#[allow(unused)]
+impl RawUdpSocket for UdpSocketImpl {
+    fn send_to(&self, buf: &[u8], raddr: std::net::SocketAddr) -> io::Result<usize> {
+        todo!()
+    }
+
+    fn recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, std::net::SocketAddr)> {
+        todo!()
+    }
+
+    fn try_clone(&self) -> io::Result<Self>
+    where
+        Self: Sized,
+    {
+        todo!()
+    }
+}
 
 struct TcpListenerImpl {}
 
-impl RawTcpListener for TcpListenerImpl {}
+impl RawTcpListener for TcpListenerImpl {
+    type TcpStream = TcpStreamImpl;
+
+    fn accept(&self) -> io::Result<(Self::TcpStream, std::net::SocketAddr)> {
+        todo!()
+    }
+}
 
 struct TcpStreamImpl {}
 
-impl RawTcpStream for TcpStreamImpl {}
+#[allow(unused)]
+impl RawTcpStream for TcpStreamImpl {
+    fn read(&self, buf: &mut [u8]) -> io::Result<usize> {
+        todo!()
+    }
+
+    fn write(&self, buf: &[u8]) -> io::Result<usize> {
+        todo!()
+    }
+}
 
 struct PollerImpl {}
 
-impl RawPoller for PollerImpl {}
+impl RawPoller for PollerImpl {
+    fn poll_once(
+        &self,
+        _timeout: Option<std::time::Duration>,
+    ) -> io::Result<Vec<hala_io_driver::Event>> {
+        Ok(vec![])
+    }
+}
+
+#[derive(Clone)]
 struct DriverImpl {}
 
 impl RawDriver for DriverImpl {
@@ -52,6 +92,13 @@ impl RawDriver for DriverImpl {
     #[inline(never)]
     fn tcp_connect(&self, _raddr: std::net::SocketAddr) -> io::Result<Self::TcpStream> {
         Ok(TcpStreamImpl {})
+    }
+
+    fn try_clone(&self) -> io::Result<Self>
+    where
+        Self: Sized,
+    {
+        Ok(self.clone())
     }
 }
 

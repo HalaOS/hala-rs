@@ -9,3 +9,9 @@ pub use udp::*;
 
 mod tcp;
 pub use tcp::*;
+
+mod event;
+pub use event::*;
+
+mod registry;
+pub use registry::*;

@@ -30,6 +30,11 @@ pub trait RawDriver {
 
     /// Create new [`TcpStream`] socket and connect to `raddr`
     fn tcp_connect(&self, raddr: SocketAddr) -> io::Result<Self::TcpStream>;
+
+    /// Returns cloned `Self` if the implementation supports this.
+    fn try_clone(&self) -> io::Result<Self>
+    where
+        Self: Sized;
 }
 
 #[repr(C)]
@@ -38,11 +43,13 @@ struct RawDriverHeader<D: RawDriver> {
     raw_driver: D,
 }
 
+#[repr(C)]
 struct RawDriverVTable {
     new_poller: unsafe fn(NonNull<RawDriverVTable>) -> io::Result<Poller>,
     udp_bind: unsafe fn(NonNull<RawDriverVTable>, SocketAddr) -> io::Result<UdpSocket>,
     tcp_listen: unsafe fn(NonNull<RawDriverVTable>, SocketAddr) -> io::Result<TcpListener>,
     tcp_connect: unsafe fn(NonNull<RawDriverVTable>, SocketAddr) -> io::Result<TcpStream>,
+    try_clone: unsafe fn(NonNull<RawDriverVTable>) -> io::Result<Driver>,
 }
 
 impl RawDriverVTable {
@@ -88,11 +95,18 @@ impl RawDriverVTable {
                 .map(|p| p.into())
         }
 
+        unsafe fn try_clone<R: RawDriver>(ptr: NonNull<RawDriverVTable>) -> io::Result<Driver> {
+            let header = ptr.cast::<RawDriverHeader<R>>();
+
+            header.as_ref().raw_driver.try_clone().map(|p| p.into())
+        }
+
         RawDriverVTable {
             new_poller: new_poller::<C>,
             udp_bind: udp_bind::<C>,
             tcp_listen: tcp_listen::<C>,
             tcp_connect: tcp_connect::<C>,
+            try_clone: try_clone::<C>,
         }
     }
 }
@@ -101,6 +115,12 @@ impl RawDriverVTable {
 #[derive(Clone)]
 pub struct Driver {
     ptr: NonNull<RawDriverVTable>,
+}
+
+impl<T: RawDriver> From<T> for Driver {
+    fn from(value: T) -> Self {
+        Self::new(value)
+    }
 }
 
 impl Driver {
@@ -134,6 +154,15 @@ impl Driver {
     /// Create new `TcpStream` and connect to `raddr`, see [`more`](RawDriver::tcp_listen)
     pub fn tcp_connect(&self, raddr: SocketAddr) -> io::Result<TcpStream> {
         unsafe { (self.ptr.as_ref().tcp_connect)(self.ptr, raddr) }
+    }
+
+    /// Returns cloned `Self` if the implementation supports this
+    pub fn try_clone(&self) -> io::Result<Self> {
+        unsafe { (self.ptr.as_ref().try_clone)(self.ptr) }
+    }
+
+    pub fn raw_mut<R: RawDriver>(&self) -> &mut R {
+        unsafe { &mut self.ptr.cast::<RawDriverHeader<R>>().as_mut().raw_driver }
     }
 }
 
