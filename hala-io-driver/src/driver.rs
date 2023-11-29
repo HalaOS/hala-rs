@@ -35,10 +35,14 @@ pub enum FileDescription {
 /// File handle used by `fd_close`, `fd_ctl` ,etc..
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Handle {
-    id: usize,
-    desc: FileDescription,
+    pub id: usize,
+    pub desc: FileDescription,
     data: *const (),
 }
+
+unsafe impl Send for Handle {}
+
+unsafe impl Sync for Handle {}
 
 impl Default for Handle {
     fn default() -> Self {
@@ -57,10 +61,33 @@ impl Handle {
     }
 }
 
+#[derive(Debug)]
 pub enum ReadOps {
-    ReadLen(usize),
+    Read(usize),
 
     RecvFrom(usize, SocketAddr),
+}
+
+impl ReadOps {
+    pub fn try_to_read(self) -> io::Result<usize> {
+        match self {
+            Self::Read(len) => Ok(len),
+            v => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Can't convert 'ReadOps' to Read, {:?}", v),
+            )),
+        }
+    }
+
+    pub fn try_to_recv_from(self) -> io::Result<(usize, SocketAddr)> {
+        match self {
+            Self::RecvFrom(len, raddr) => Ok((len, raddr)),
+            v => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Can't convert 'ReadOps' to RecvFrom, {:?}", v),
+            )),
+        }
+    }
 }
 
 pub enum WriteOps<'a> {
@@ -69,6 +96,7 @@ pub enum WriteOps<'a> {
     SendTo(&'a [u8], SocketAddr),
 }
 
+#[derive(Debug)]
 pub enum CtlOps<'a> {
     Register {
         handles: &'a [Handle],
@@ -78,12 +106,31 @@ pub enum CtlOps<'a> {
         handles: &'a [Handle],
         interests: Interest,
     },
+
     Deregister(&'a [Handle]),
 
+    OpenFile(&'a str),
+
+    Bind(&'a [SocketAddr]),
+    Accept,
+    Incoming(Handle, SocketAddr),
+    Connect(&'a [SocketAddr]),
     UserDefine {
         write_buf: &'a [u8],
         read_buf: &'a [u8],
     },
+}
+
+impl<'a> CtlOps<'a> {
+    pub fn try_into_incoming(self) -> io::Result<(Handle, SocketAddr)> {
+        match self {
+            Self::Incoming(handle, raddr) => Ok((handle, raddr)),
+            v => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Can't convert 'CtlOps' to Incoming, {:?}", v),
+            )),
+        }
+    }
 }
 
 /// Implementator provide [`Driver`] instance.
@@ -103,7 +150,7 @@ pub trait RawDriver {
 
     fn try_clone_boxed(&self) -> io::Result<Box<dyn RawDriver + Sync + Send>>;
 
-    fn fd_ctl(&self, handle: Handle, ops: CtlOps) -> io::Result<usize>;
+    fn fd_ctl(&self, handle: Handle, ops: CtlOps) -> io::Result<CtlOps>;
 }
 
 /// reactor io driver
@@ -138,7 +185,7 @@ impl Driver {
     }
 
     #[inline]
-    pub fn fd_ctl(&self, handle: Handle, ops: CtlOps) -> io::Result<usize> {
+    pub fn fd_ctl(&self, handle: Handle, ops: CtlOps) -> io::Result<CtlOps> {
         self.inner.fd_ctl(handle, ops)
     }
 }
