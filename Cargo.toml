@@ -1,5 +1,5 @@
 [workspace]
-members = ["hala-mux", "hala-reactor", "hala-net", "hala-io-test"]
+members = ["hala-mux", "hala-reactor"]
 resolver = "2"
 
 [workspace.package]
