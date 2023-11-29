@@ -1,170 +1,160 @@
-use std::{io, net::SocketAddr, ptr::NonNull};
-
-use crate::{
-    Poller, RawPoller, RawTcpListener, RawTcpStream, RawUdpSocket, TcpListener, TcpStream,
-    UdpSocket,
+use std::{
+    io,
+    net::SocketAddr,
+    ptr::{null, NonNull},
+    time::Duration,
 };
 
-/// The `RawDriver` allow the framework to generate [`Driver`] instance.
+use bitmask_enum::bitmask;
+
+#[bitmask(u8)]
+pub enum Interest {
+    Read,
+    Write,
+    Close,
+    UserDefine,
+}
+
+/// Io event object from driver
+pub struct Event {
+    pub source: Handle,
+    pub interests: Interest,
+    pub interests_use_define: Option<usize>,
+}
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub enum FileDescription {
+    File,
+    Poller,
+    TcpListener,
+    TcpStream,
+    UdpSocket,
+    UserDefine(NonNull<*const ()>),
+}
+
+/// File handle used by `fd_close`, `fd_ctl` ,etc..
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Handle {
+    id: usize,
+    desc: FileDescription,
+    data: *const (),
+}
+
+impl Default for Handle {
+    fn default() -> Self {
+        Self {
+            id: 0,
+            desc: FileDescription::TcpStream,
+            data: null(),
+        }
+    }
+}
+
+impl Handle {
+    /// Create new handle instance.
+    pub fn new(id: usize, desc: FileDescription, data: *const ()) -> Self {
+        Self { id, desc, data }
+    }
+}
+
+pub enum ReadOps {
+    ReadLen(usize),
+
+    RecvFrom(usize, SocketAddr),
+}
+
+pub enum WriteOps<'a> {
+    Write(&'a [u8]),
+
+    SendTo(&'a [u8], SocketAddr),
+}
+
+pub enum CtlOps<'a> {
+    Register {
+        handles: &'a [Handle],
+        interests: Interest,
+    },
+    Reregister {
+        handles: &'a [Handle],
+        interests: Interest,
+    },
+    Deregister(&'a [Handle]),
+
+    UserDefine {
+        write_buf: &'a [u8],
+        read_buf: &'a [u8],
+    },
+}
+
+/// Implementator provide [`Driver`] instance.
 pub trait RawDriver {
-    /// [`RawPoller`] type provided by the runtime implementor
-    type Poller: RawPoller;
+    /// Open file description
+    fn fd_open(&self, desc: FileDescription) -> io::Result<Handle>;
 
-    /// [`RawUdpSocket`] type provided by the runtime implementor
-    type UdpSocket: RawUdpSocket;
+    /// Close file description by `handle`.
+    fn fd_close(&self, handle: Handle) -> io::Result<()>;
 
-    /// [`RawTcpListener`] type provided by the runtime implementor
-    type TcpListener: RawTcpListener;
+    fn fd_read(&self, handle: Handle, buf: &mut [u8]) -> io::Result<ReadOps>;
 
-    /// [`RawTcpStream`] type provided by the runtime implementor
-    type TcpStream: RawTcpStream;
+    fn fd_write(&self, handle: Handle, ops: WriteOps) -> io::Result<usize>;
 
-    /// Create new runtime io event `Poller` object.
-    fn new_poller(&self) -> io::Result<Self::Poller>;
+    /// Poll readiness events with `timeout` argument.
+    fn poll_once(&self, poller: Handle, timeout: Option<Duration>) -> io::Result<Vec<Event>>;
 
-    /// Create new `UdpSocket` and bind it to `laddr`
-    fn udp_bind(&self, laddr: SocketAddr) -> io::Result<Self::UdpSocket>;
+    fn try_clone_boxed(&self) -> io::Result<Box<dyn RawDriver + Sync + Send>>;
 
-    /// Create new [`TcpListener`] socket and listen incoming connection on `laddr`
-    fn tcp_listen(&self, laddr: SocketAddr) -> io::Result<Self::TcpListener>;
-
-    /// Create new [`TcpStream`] socket and connect to `raddr`
-    fn tcp_connect(&self, raddr: SocketAddr) -> io::Result<Self::TcpStream>;
-
-    /// Returns cloned `Self` if the implementation supports this.
-    fn try_clone(&self) -> io::Result<Self>
-    where
-        Self: Sized;
+    fn fd_ctl(&self, handle: Handle, ops: CtlOps) -> io::Result<usize>;
 }
 
-#[repr(C)]
-struct RawDriverHeader<D: RawDriver> {
-    vtable: RawDriverVTable,
-    raw_driver: D,
-}
-
-#[repr(C)]
-struct RawDriverVTable {
-    new_poller: unsafe fn(NonNull<RawDriverVTable>) -> io::Result<Poller>,
-    udp_bind: unsafe fn(NonNull<RawDriverVTable>, SocketAddr) -> io::Result<UdpSocket>,
-    tcp_listen: unsafe fn(NonNull<RawDriverVTable>, SocketAddr) -> io::Result<TcpListener>,
-    tcp_connect: unsafe fn(NonNull<RawDriverVTable>, SocketAddr) -> io::Result<TcpStream>,
-    try_clone: unsafe fn(NonNull<RawDriverVTable>) -> io::Result<Driver>,
-}
-
-impl RawDriverVTable {
-    fn new<C: RawDriver>() -> Self {
-        unsafe fn new_poller<C: RawDriver>(ptr: NonNull<RawDriverVTable>) -> io::Result<Poller> {
-            let header = ptr.cast::<RawDriverHeader<C>>();
-
-            header.as_ref().raw_driver.new_poller().map(|p| p.into())
-        }
-
-        unsafe fn udp_bind<C: RawDriver>(
-            ptr: NonNull<RawDriverVTable>,
-            laddr: SocketAddr,
-        ) -> io::Result<UdpSocket> {
-            let header = ptr.cast::<RawDriverHeader<C>>();
-
-            header.as_ref().raw_driver.udp_bind(laddr).map(|p| p.into())
-        }
-
-        unsafe fn tcp_listen<C: RawDriver>(
-            ptr: NonNull<RawDriverVTable>,
-            laddr: SocketAddr,
-        ) -> io::Result<TcpListener> {
-            let header = ptr.cast::<RawDriverHeader<C>>();
-
-            header
-                .as_ref()
-                .raw_driver
-                .tcp_listen(laddr)
-                .map(|p| p.into())
-        }
-
-        unsafe fn tcp_connect<C: RawDriver>(
-            ptr: NonNull<RawDriverVTable>,
-            raddr: SocketAddr,
-        ) -> io::Result<TcpStream> {
-            let header = ptr.cast::<RawDriverHeader<C>>();
-
-            header
-                .as_ref()
-                .raw_driver
-                .tcp_connect(raddr)
-                .map(|p| p.into())
-        }
-
-        unsafe fn try_clone<R: RawDriver>(ptr: NonNull<RawDriverVTable>) -> io::Result<Driver> {
-            let header = ptr.cast::<RawDriverHeader<R>>();
-
-            header.as_ref().raw_driver.try_clone().map(|p| p.into())
-        }
-
-        RawDriverVTable {
-            new_poller: new_poller::<C>,
-            udp_bind: udp_bind::<C>,
-            tcp_listen: tcp_listen::<C>,
-            tcp_connect: tcp_connect::<C>,
-            try_clone: try_clone::<C>,
-        }
-    }
-}
-
-/// Hala io runtime driver object which handle varaint io objects creating/drop
-#[derive(Clone)]
+/// reactor io driver
 pub struct Driver {
-    ptr: NonNull<RawDriverVTable>,
-}
-
-impl<T: RawDriver> From<T> for Driver {
-    fn from(value: T) -> Self {
-        Self::new(value)
-    }
+    inner: Box<dyn RawDriver + Sync + Send>,
 }
 
 impl Driver {
-    /// Create new driver from [`RawDriver`]
-    pub fn new<D: RawDriver>(raw_driver: D) -> Self {
-        let boxed = Box::new(RawDriverHeader::<D> {
-            vtable: RawDriverVTable::new::<D>(),
-            raw_driver,
-        });
-
-        let ptr = unsafe { NonNull::new_unchecked(Box::into_raw(boxed) as *mut RawDriverVTable) };
-
-        Self { ptr }
+    #[inline]
+    pub fn fd_open(&self, desc: FileDescription) -> io::Result<Handle> {
+        self.inner.fd_open(desc)
     }
 
-    /// Create new io events [`Poller`]
-    pub fn new_poller(&self) -> io::Result<Poller> {
-        unsafe { (self.ptr.as_ref().new_poller)(self.ptr) }
+    #[inline]
+    pub fn fd_close(&self, handle: Handle) -> io::Result<()> {
+        self.inner.fd_close(handle)
     }
 
-    /// Create new `UdpSocket` and bind it to `laddr`, see [`more`](RawDriver::udp_bind)
-    pub fn udp_bind(&self, laddr: SocketAddr) -> io::Result<UdpSocket> {
-        unsafe { (self.ptr.as_ref().udp_bind)(self.ptr, laddr) }
+    #[inline]
+    pub fn fd_read(&self, handle: Handle, buf: &mut [u8]) -> io::Result<ReadOps> {
+        self.inner.fd_read(handle, buf)
     }
 
-    /// Create new `TcpListener` and listen on `laddr`, see [`more`](RawDriver::tcp_listen)
-    pub fn tcp_listen(&self, laddr: SocketAddr) -> io::Result<TcpListener> {
-        unsafe { (self.ptr.as_ref().tcp_listen)(self.ptr, laddr) }
+    #[inline]
+    pub fn fd_write(&self, handle: Handle, ops: WriteOps) -> io::Result<usize> {
+        self.inner.fd_write(handle, ops)
     }
 
-    /// Create new `TcpStream` and connect to `raddr`, see [`more`](RawDriver::tcp_listen)
-    pub fn tcp_connect(&self, raddr: SocketAddr) -> io::Result<TcpStream> {
-        unsafe { (self.ptr.as_ref().tcp_connect)(self.ptr, raddr) }
+    /// Poll readiness events with `timeout` argument.
+    pub fn poll_once(&self, poller: Handle, timeout: Option<Duration>) -> io::Result<Vec<Event>> {
+        self.inner.poll_once(poller, timeout)
     }
 
-    /// Returns cloned `Self` if the implementation supports this
-    pub fn try_clone(&self) -> io::Result<Self> {
-        unsafe { (self.ptr.as_ref().try_clone)(self.ptr) }
-    }
-
-    pub fn raw_mut<R: RawDriver>(&self) -> &mut R {
-        unsafe { &mut self.ptr.cast::<RawDriverHeader<R>>().as_mut().raw_driver }
+    #[inline]
+    pub fn fd_ctl(&self, handle: Handle, ops: CtlOps) -> io::Result<usize> {
+        self.inner.fd_ctl(handle, ops)
     }
 }
 
-unsafe impl Sync for Driver {}
-unsafe impl Send for Driver {}
+impl<R: RawDriver + Sync + Send + 'static> From<R> for Driver {
+    fn from(value: R) -> Self {
+        Self {
+            inner: Box::new(value),
+        }
+    }
+}
+
+impl Clone for Driver {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.try_clone_boxed().unwrap(),
+        }
+    }
+}
