@@ -1,5 +1,5 @@
 [workspace]
-members = ["hala-mux", "hala-io-context"]
+members = ["hala-mux", "hala-io-driver"]
 resolver = "2"
 
 [workspace.package]
