@@ -1,6 +1,6 @@
 use std::io;
 
-use crate::driver::{CtlOps, Driver, FileDescription, Handle, Interest};
+use crate::driver::{CtlOps, Driver, FileDescription, Handle, Interest, WriteOps};
 
 #[derive(Clone)]
 pub struct File {
@@ -33,5 +33,13 @@ impl File {
             poller,
             driver,
         })
+    }
+
+    pub fn write(&self, buf: &[u8]) -> io::Result<usize> {
+        self.driver.fd_write(self.handle, WriteOps::Write(buf))
+    }
+
+    pub fn read(&self, buf: &mut [u8]) -> io::Result<usize> {
+        self.driver.fd_read(self.handle, buf)?.try_to_read()
     }
 }

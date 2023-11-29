@@ -133,7 +133,7 @@ impl<'a> CtlOps<'a> {
     }
 }
 
-/// Implementator provide [`Driver`] instance.
+/// User defined driver must implement this trait
 pub trait RawDriver {
     /// Open file description
     fn fd_open(&self, desc: FileDescription) -> io::Result<Handle>;
