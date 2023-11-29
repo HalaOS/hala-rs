@@ -23,7 +23,24 @@ pub struct Event {
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub enum FileDescription {
+pub enum OpenOps<'a> {
+    OpenFile(&'a str),
+
+    Bind(&'a [SocketAddr]),
+
+    Connect(&'a [SocketAddr]),
+
+    UserDefine {
+        id: usize,
+        write_buf: &'a [u8],
+        read_buf: &'a [u8],
+    },
+}
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Description {
+    Timeout,
+    Tick,
     File,
     Poller,
     TcpListener,
@@ -36,7 +53,7 @@ pub enum FileDescription {
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Handle {
     pub id: usize,
-    pub desc: FileDescription,
+    pub desc: Description,
     data: *const (),
 }
 
@@ -48,7 +65,7 @@ impl Default for Handle {
     fn default() -> Self {
         Self {
             id: 0,
-            desc: FileDescription::TcpStream,
+            desc: Description::TcpStream,
             data: null(),
         }
     }
@@ -56,7 +73,7 @@ impl Default for Handle {
 
 impl Handle {
     /// Create new handle instance.
-    pub fn new(id: usize, desc: FileDescription, data: *const ()) -> Self {
+    pub fn new(id: usize, desc: Description, data: *const ()) -> Self {
         Self { id, desc, data }
     }
 }
@@ -116,6 +133,7 @@ pub enum CtlOps<'a> {
     Incoming(Handle, SocketAddr),
     Connect(&'a [SocketAddr]),
     UserDefine {
+        id: usize,
         write_buf: &'a [u8],
         read_buf: &'a [u8],
     },
@@ -136,7 +154,7 @@ impl<'a> CtlOps<'a> {
 /// User defined driver must implement this trait
 pub trait RawDriver {
     /// Open file description
-    fn fd_open(&self, desc: FileDescription) -> io::Result<Handle>;
+    fn fd_open(&self, desc: Description, ops: Option<OpenOps>) -> io::Result<Handle>;
 
     /// Close file description by `handle`.
     fn fd_close(&self, handle: Handle) -> io::Result<()>;
@@ -160,8 +178,8 @@ pub struct Driver {
 
 impl Driver {
     #[inline]
-    pub fn fd_open(&self, desc: FileDescription) -> io::Result<Handle> {
-        self.inner.fd_open(desc)
+    pub fn fd_open(&self, desc: Description, ops: Option<OpenOps>) -> io::Result<Handle> {
+        self.inner.fd_open(desc, ops)
     }
 
     #[inline]

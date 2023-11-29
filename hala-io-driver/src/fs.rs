@@ -1,6 +1,6 @@
 use std::io;
 
-use crate::driver::{CtlOps, Driver, FileDescription, Handle, Interest, WriteOps};
+use crate::driver::{CtlOps, Description, Driver, Handle, Interest, OpenOps, WriteOps};
 
 #[derive(Clone)]
 pub struct File {
@@ -16,9 +16,7 @@ impl File {
         path: &str,
         interests: Interest,
     ) -> io::Result<Self> {
-        let handle = driver.fd_open(FileDescription::File)?;
-
-        driver.fd_ctl(handle, CtlOps::OpenFile(path))?;
+        let handle = driver.fd_open(Description::File, Some(OpenOps::OpenFile(path)))?;
 
         driver.fd_ctl(
             poller,

@@ -3,7 +3,7 @@ use std::{
     net::{SocketAddr, ToSocketAddrs},
 };
 
-use crate::driver::{CtlOps, Driver, FileDescription, Handle, Interest, WriteOps};
+use crate::driver::{CtlOps, Description, Driver, Handle, Interest, OpenOps, WriteOps};
 
 #[derive(Clone)]
 pub struct TcpListener {
@@ -16,11 +16,9 @@ impl TcpListener {
     /// Creates a new `TcpListener` which will be bound to the specified
     /// address.
     pub fn bind<S: ToSocketAddrs>(driver: Driver, poller: Handle, laddrs: S) -> io::Result<Self> {
-        let handle = driver.fd_open(FileDescription::TcpListener)?;
-
         let laddrs = laddrs.to_socket_addrs()?.into_iter().collect::<Vec<_>>();
 
-        driver.fd_ctl(handle, CtlOps::Bind(&laddrs))?;
+        let handle = driver.fd_open(Description::TcpListener, Some(OpenOps::Bind(&laddrs)))?;
 
         driver.fd_ctl(
             poller,
@@ -79,11 +77,9 @@ impl TcpStream {
         poller: Handle,
         raddrs: S,
     ) -> io::Result<Self> {
-        let handle = driver.fd_open(FileDescription::TcpStream)?;
-
         let raddrs = raddrs.to_socket_addrs()?.into_iter().collect::<Vec<_>>();
 
-        driver.fd_ctl(handle, CtlOps::Connect(&raddrs))?;
+        let handle = driver.fd_open(Description::TcpStream, Some(OpenOps::Connect(&raddrs)))?;
 
         Self::new(driver, poller, handle)
     }
@@ -106,11 +102,9 @@ pub struct UdpSocket {
 
 impl UdpSocket {
     pub fn bind<S: ToSocketAddrs>(driver: Driver, poller: Handle, laddrs: S) -> io::Result<Self> {
-        let handle = driver.fd_open(FileDescription::UdpSocket)?;
-
         let laddrs = laddrs.to_socket_addrs()?.into_iter().collect::<Vec<_>>();
 
-        driver.fd_ctl(handle, CtlOps::Bind(&laddrs))?;
+        let handle = driver.fd_open(Description::UdpSocket, Some(OpenOps::Bind(&laddrs)))?;
 
         driver.fd_ctl(
             poller,
