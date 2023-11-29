@@ -16,6 +16,7 @@ pub enum Interest {
 }
 
 /// Io event object from driver
+#[derive(Debug, Clone)]
 pub struct Event {
     pub source: Handle,
     pub interests: Interest,
@@ -24,12 +25,23 @@ pub struct Event {
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum OpenOps<'a> {
+    /// When opening a file system file entry, the implementation uses this varaint as the path to the open file.
     OpenFile(&'a str),
 
+    /// TcpListener use this varaint to bound local addresses.
     Bind(&'a [SocketAddr]),
 
+    /// UdpSocket / TcpStream use this variant to connect remote peer
     Connect(&'a [SocketAddr]),
 
+    /// This value is used by the fd_open implementation when the parameter
+    /// Description is `Timeout` or `Poller`.
+    Timeout(Duration),
+
+    /// The ops to open tick file description.
+    Tick(Duration),
+
+    /// The meaning of this variant is defined by the implementation
     UserDefine {
         id: usize,
         write_buf: &'a [u8],
@@ -113,6 +125,7 @@ pub enum WriteOps<'a> {
     SendTo(&'a [u8], SocketAddr),
 }
 
+/// fd_ctl method operation/result variants.
 #[derive(Debug)]
 pub enum CtlOps<'a> {
     Register {
@@ -125,6 +138,12 @@ pub enum CtlOps<'a> {
     },
 
     Deregister(&'a [Handle]),
+
+    /// Poll for a ready event once, if there is no ready event will wait for `Duration`
+    PollOnce(Option<Duration>),
+
+    /// Readiness io events collection, this variant usually returns by `PollOnce` method.
+    Readiness(Vec<Event>),
 
     OpenFile(&'a str),
 
@@ -163,12 +182,9 @@ pub trait RawDriver {
 
     fn fd_write(&self, handle: Handle, ops: WriteOps) -> io::Result<usize>;
 
-    /// Poll readiness events with `timeout` argument.
-    fn poll_once(&self, poller: Handle, timeout: Option<Duration>) -> io::Result<Vec<Event>>;
+    fn fd_ctl(&self, handle: Handle, ops: CtlOps) -> io::Result<CtlOps>;
 
     fn try_clone_boxed(&self) -> io::Result<Box<dyn RawDriver + Sync + Send>>;
-
-    fn fd_ctl(&self, handle: Handle, ops: CtlOps) -> io::Result<CtlOps>;
 }
 
 /// reactor io driver
@@ -195,11 +211,6 @@ impl Driver {
     #[inline]
     pub fn fd_write(&self, handle: Handle, ops: WriteOps) -> io::Result<usize> {
         self.inner.fd_write(handle, ops)
-    }
-
-    /// Poll readiness events with `timeout` argument.
-    pub fn poll_once(&self, poller: Handle, timeout: Option<Duration>) -> io::Result<Vec<Event>> {
-        self.inner.poll_once(poller, timeout)
     }
 
     #[inline]
