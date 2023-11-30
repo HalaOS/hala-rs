@@ -5,7 +5,6 @@ use std::{
 
 use crate::driver::{CtlOps, Description, Driver, Handle, Interest, OpenOps, WriteOps};
 
-#[derive(Clone)]
 pub struct TcpListener {
     pub driver: Driver,
     pub handle: Handle,
@@ -48,7 +47,12 @@ impl TcpListener {
     }
 }
 
-#[derive(Clone)]
+impl Drop for TcpListener {
+    fn drop(&mut self) {
+        self.driver.fd_close(self.handle).unwrap();
+    }
+}
+
 pub struct TcpStream {
     pub driver: Driver,
     pub poller: Handle,
@@ -93,7 +97,12 @@ impl TcpStream {
     }
 }
 
-#[derive(Clone)]
+impl Drop for TcpStream {
+    fn drop(&mut self) {
+        self.driver.fd_close(self.handle).unwrap();
+    }
+}
+
 pub struct UdpSocket {
     pub driver: Driver,
     pub poller: Handle,
@@ -128,5 +137,11 @@ impl UdpSocket {
 
     pub fn recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
         self.driver.fd_read(self.handle, buf)?.try_to_recv_from()
+    }
+}
+
+impl Drop for UdpSocket {
+    fn drop(&mut self) {
+        self.driver.fd_close(self.handle).unwrap();
     }
 }

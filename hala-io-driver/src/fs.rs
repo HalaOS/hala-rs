@@ -2,7 +2,6 @@ use std::io;
 
 use crate::driver::{CtlOps, Description, Driver, Handle, Interest, OpenOps, WriteOps};
 
-#[derive(Clone)]
 pub struct File {
     pub driver: Driver,
     pub handle: Handle,
@@ -39,5 +38,11 @@ impl File {
 
     pub fn read(&self, buf: &mut [u8]) -> io::Result<usize> {
         self.driver.fd_read(self.handle, buf)?.try_to_read()
+    }
+}
+
+impl Drop for File {
+    fn drop(&mut self) {
+        self.driver.fd_close(self.handle).unwrap();
     }
 }

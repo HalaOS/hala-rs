@@ -168,6 +168,16 @@ impl<'a> CtlOps<'a> {
             )),
         }
     }
+
+    pub fn try_into_readiness(self) -> io::Result<Vec<Event>> {
+        match self {
+            Self::Readiness(events) => Ok(events),
+            v => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Can't convert 'CtlOps' to Readiness, {:?}", v),
+            )),
+        }
+    }
 }
 
 /// User defined driver must implement this trait
@@ -189,10 +199,16 @@ pub trait RawDriver {
 
 /// reactor io driver
 pub struct Driver {
-    inner: Box<dyn RawDriver + Sync + Send>,
+    inner: Box<dyn RawDriver + Send>,
 }
 
 impl Driver {
+    pub fn new<R: RawDriver + Send + 'static>(raw: R) -> Self {
+        Self {
+            inner: Box::new(raw),
+        }
+    }
+
     #[inline]
     pub fn fd_open(&self, desc: Description, ops: Option<OpenOps>) -> io::Result<Handle> {
         self.inner.fd_open(desc, ops)
@@ -221,9 +237,7 @@ impl Driver {
 
 impl<R: RawDriver + Sync + Send + 'static> From<R> for Driver {
     fn from(value: R) -> Self {
-        Self {
-            inner: Box::new(value),
-        }
+        Self::new(value)
     }
 }
 
@@ -232,5 +246,48 @@ impl Clone for Driver {
         Self {
             inner: self.inner.try_clone_boxed().unwrap(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::thread::spawn;
+
+    use super::*;
+
+    struct MockDriver {}
+
+    #[allow(unused)]
+    impl RawDriver for MockDriver {
+        fn fd_open(&self, desc: Description, ops: Option<OpenOps>) -> io::Result<Handle> {
+            todo!()
+        }
+
+        fn fd_close(&self, handle: Handle) -> io::Result<()> {
+            todo!()
+        }
+
+        fn fd_read(&self, handle: Handle, buf: &mut [u8]) -> io::Result<ReadOps> {
+            todo!()
+        }
+
+        fn fd_write(&self, handle: Handle, ops: WriteOps) -> io::Result<usize> {
+            todo!()
+        }
+
+        fn fd_ctl(&self, handle: Handle, ops: CtlOps) -> io::Result<CtlOps> {
+            todo!()
+        }
+
+        fn try_clone_boxed(&self) -> io::Result<Box<dyn RawDriver + Sync + Send>> {
+            todo!()
+        }
+    }
+
+    #[test]
+    fn trait_send_test() {
+        let driver = Driver::from(MockDriver {});
+
+        spawn(move || driver.fd_open(Description::File, Some(OpenOps::OpenFile("test.text"))));
     }
 }
