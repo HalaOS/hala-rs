@@ -1,12 +1,13 @@
 use std::{
-    io,
+    io::{self, Read, Write},
+    ops::Deref,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
 };
 
-use crate::{Handle, RawDriver};
+use crate::{Handle, RawDriver, ReadOps};
 
 pub struct MioDriver {
     next_id: Arc<AtomicUsize>,
@@ -87,9 +88,19 @@ impl RawDriver for MioDriver {
     fn fd_read(&self, handle: crate::Handle, buf: &mut [u8]) -> std::io::Result<crate::ReadOps> {
         match handle.desc {
             crate::Description::File => todo!(),
-            crate::Description::TcpListener => todo!(),
-            crate::Description::TcpStream => todo!(),
-            crate::Description::UdpSocket => todo!(),
+            crate::Description::TcpStream => {
+                let read_size = handle.as_typed::<mio::net::TcpStream>().deref().read(buf)?;
+
+                Ok(ReadOps::Read(read_size))
+            }
+            crate::Description::UdpSocket => {
+                let (read_size, remote_addr) = handle
+                    .as_typed::<mio::net::UdpSocket>()
+                    .deref()
+                    .recv_from(buf)?;
+
+                Ok(ReadOps::RecvFrom(read_size, remote_addr))
+            }
             _ => Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!("[Mio driver] handle not support ops fd_read, {:?}", handle),
@@ -98,7 +109,33 @@ impl RawDriver for MioDriver {
     }
 
     fn fd_write(&self, handle: crate::Handle, ops: crate::WriteOps) -> std::io::Result<usize> {
-        todo!()
+        match handle.desc {
+            crate::Description::File => todo!(),
+            crate::Description::TcpStream => {
+                let buf = ops.try_to_write()?;
+
+                let write_size = handle
+                    .as_typed::<mio::net::TcpStream>()
+                    .deref()
+                    .write(buf)?;
+
+                Ok(write_size)
+            }
+            crate::Description::UdpSocket => {
+                let (buf, raddr) = ops.try_to_sendto()?;
+
+                let write_size = handle
+                    .as_typed::<mio::net::UdpSocket>()
+                    .deref()
+                    .send_to(buf, raddr)?;
+
+                Ok(write_size)
+            }
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("[Mio driver] handle not support ops fd_write, {:?}", handle),
+            )),
+        }
     }
 
     fn fd_ctl(&self, handle: crate::Handle, ops: crate::CtlOps) -> std::io::Result<crate::CtlOps> {

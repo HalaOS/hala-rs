@@ -2,7 +2,9 @@ use std::{
     io,
     mem::swap,
     net::SocketAddr,
-    ptr::{null, NonNull},
+    ops::{Deref, DerefMut},
+    pin::Pin,
+    ptr::{null, null_mut, NonNull},
     time::Duration,
 };
 
@@ -130,6 +132,13 @@ impl Handle {
 
         data
     }
+
+    pub fn as_typed<T>(&self) -> TypedHandle<T>
+    where
+        T: Unpin,
+    {
+        TypedHandle::new(self.data)
+    }
 }
 
 impl<T> From<(usize, Description, Box<T>)> for Handle {
@@ -151,6 +160,47 @@ impl From<(usize, Description)> for Handle {
         }
     }
 }
+
+pub struct TypedHandle<T> {
+    boxed: Pin<Box<T>>,
+}
+
+impl<T> TypedHandle<T>
+where
+    T: Unpin,
+{
+    pub fn new(data: *const ()) -> Self {
+        Self {
+            boxed: Pin::new(unsafe { Box::from_raw(data as *mut T) }),
+        }
+    }
+}
+
+impl<T> Drop for TypedHandle<T> {
+    fn drop(&mut self) {
+        let mut null = unsafe { Box::from_raw(null_mut()) };
+
+        swap(&mut self.boxed, &mut null);
+
+        Box::into_raw(null);
+    }
+}
+
+impl<T> Deref for TypedHandle<T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        &*self.boxed
+    }
+}
+
+// impl<T> DerefMut for TypedHandle<T>
+// where
+//     T: Unpin,
+// {
+//     fn deref_mut(&mut self) -> &mut Self::Target {
+//         &mut *self.boxed
+//     }
+// }
 
 #[derive(Debug)]
 pub enum ReadOps {
@@ -181,12 +231,34 @@ impl ReadOps {
     }
 }
 
+#[derive(Debug)]
 pub enum WriteOps<'a> {
     Write(&'a [u8]),
 
     SendTo(&'a [u8], SocketAddr),
 }
 
+impl<'a> WriteOps<'a> {
+    pub fn try_to_write(self) -> io::Result<&'a [u8]> {
+        match self {
+            Self::Write(buf) => Ok(buf),
+            v => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Can't convert 'ReadOps' to RecvFrom, {:?}", v),
+            )),
+        }
+    }
+
+    pub fn try_to_sendto(self) -> io::Result<(&'a [u8], SocketAddr)> {
+        match self {
+            Self::SendTo(buf, addr) => Ok((buf, addr)),
+            v => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Can't convert 'ReadOps' to SendTo, {:?}", v),
+            )),
+        }
+    }
+}
 /// fd_ctl method operation/result variants.
 #[derive(Debug)]
 pub enum CtlOps<'a> {
