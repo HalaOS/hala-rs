@@ -11,6 +11,11 @@ version.workspace = true
 bitmask-enum = {workspace = true}
 divan = {workspace = true}
 log = {workspace = true}
+mio = {workspace = true, optional = true}
 
 [dev-dependencies]
 pretty_env_logger = {workspace = true}
+
+[features]
+default = ["mio_driver"]
+mio_driver = ["mio"]

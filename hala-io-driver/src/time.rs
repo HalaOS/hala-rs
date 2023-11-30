@@ -18,7 +18,7 @@ impl Tick {
     ) -> io::Result<Tick> {
         let poller = poller.into();
 
-        let handle = driver.fd_open(Description::Timeout, OpenOps::Tick { duration, oneshot })?;
+        let handle = driver.fd_open(Description::Tick, OpenOps::Tick { duration, oneshot })?;
 
         driver.fd_ctl(
             poller,

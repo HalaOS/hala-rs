@@ -1,5 +1,6 @@
 use std::{
     io,
+    mem::swap,
     net::SocketAddr,
     ptr::{null, NonNull},
     time::Duration,
@@ -49,9 +50,30 @@ pub enum OpenOps<'a> {
     },
 }
 
+impl<'a> OpenOps<'a> {
+    pub fn try_to_bind(self) -> io::Result<&'a [SocketAddr]> {
+        match self {
+            Self::Bind(laddrs) => Ok(laddrs),
+            v => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Can't convert 'OpenOps' to Bind, {:?}", v),
+            )),
+        }
+    }
+
+    pub fn try_to_connect(self) -> io::Result<&'a [SocketAddr]> {
+        match self {
+            Self::Connect(laddrs) => Ok(laddrs),
+            v => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Can't convert 'OpenOps' to Connect, {:?}", v),
+            )),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Description {
-    Timeout,
     Tick,
     File,
     Poller,
@@ -85,8 +107,48 @@ impl Default for Handle {
 
 impl Handle {
     /// Create new handle instance.
-    pub fn new(id: usize, desc: Description, data: *const ()) -> Self {
+    pub fn new<T>(id: usize, desc: Description, value: Option<T>) -> Self {
+        let data = if let Some(value) = value {
+            Box::into_raw(Box::new(value)) as *const ()
+        } else {
+            null()
+        };
+
         Self { id, desc, data }
+    }
+
+    pub fn into_boxed<T>(self) -> (usize, Description, Box<T>) {
+        (self.id, self.desc, unsafe {
+            Box::from_raw(self.data as *mut T)
+        })
+    }
+
+    pub fn set_data<T>(&mut self, value: T) -> *const () {
+        let mut data = Box::into_raw(Box::new(value)) as *const ();
+
+        swap(&mut data, &mut self.data);
+
+        data
+    }
+}
+
+impl<T> From<(usize, Description, Box<T>)> for Handle {
+    fn from(value: (usize, Description, Box<T>)) -> Self {
+        Self {
+            id: value.0,
+            desc: value.1,
+            data: Box::into_raw(value.2) as *const (),
+        }
+    }
+}
+
+impl From<(usize, Description)> for Handle {
+    fn from(value: (usize, Description)) -> Self {
+        Self {
+            id: value.0,
+            desc: value.1,
+            data: null(),
+        }
     }
 }
 
