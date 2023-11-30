@@ -21,7 +21,7 @@ pub enum Interest {
 /// Io event object from driver
 #[derive(Debug, Clone)]
 pub struct Event {
-    pub source: Handle,
+    pub handle_id: usize,
     pub interests: Interest,
     pub interests_use_define: Option<usize>,
 }
@@ -276,27 +276,34 @@ pub enum CtlOps<'a> {
 
     /// Poll for a ready event once, if there is no ready event will wait for `Duration`
     PollOnce(Option<Duration>),
+    Tick(usize),
+    Accept,
+    UserDefine {
+        id: usize,
+        write_buf: &'a [u8],
+        read_buf: &'a mut [u8],
+    },
+}
+
+#[derive(Debug)]
+pub enum CtlResult {
+    None,
+
+    Incoming(Handle, SocketAddr),
 
     /// Readiness io events collection, this variant usually returns by `PollOnce` method.
     Readiness(Vec<Event>),
 
-    OpenFile(&'a str),
-
-    Bind(&'a [SocketAddr]),
-
     Tick(usize),
 
-    Accept,
-    Incoming(Handle, SocketAddr),
-    Connect(&'a [SocketAddr]),
     UserDefine {
         id: usize,
-        write_buf: &'a [u8],
-        read_buf: &'a [u8],
+        write_size: usize,
+        read_size: usize,
     },
 }
 
-impl<'a> CtlOps<'a> {
+impl CtlResult {
     pub fn try_into_incoming(self) -> io::Result<(Handle, SocketAddr)> {
         match self {
             Self::Incoming(handle, raddr) => Ok((handle, raddr)),
@@ -340,7 +347,7 @@ pub trait RawDriver {
 
     fn fd_write(&self, handle: Handle, ops: WriteOps) -> io::Result<usize>;
 
-    fn fd_ctl(&self, handle: Handle, ops: CtlOps) -> io::Result<CtlOps>;
+    fn fd_ctl(&self, handle: Handle, ops: CtlOps) -> io::Result<CtlResult>;
 
     fn fd_clone(&self, handle: Handle) -> io::Result<Handle>;
 
@@ -380,7 +387,7 @@ impl Driver {
     }
 
     #[inline]
-    pub fn fd_ctl(&self, handle: Handle, ops: CtlOps) -> io::Result<CtlOps> {
+    pub fn fd_ctl(&self, handle: Handle, ops: CtlOps) -> io::Result<CtlResult> {
         self.inner.fd_ctl(handle, ops)
     }
 
@@ -430,7 +437,7 @@ mod tests {
             todo!()
         }
 
-        fn fd_ctl(&self, handle: Handle, ops: CtlOps) -> io::Result<CtlOps> {
+        fn fd_ctl(&self, handle: Handle, ops: CtlOps) -> io::Result<CtlResult> {
             todo!()
         }
 
