@@ -1,7 +1,5 @@
 use std::{
     io::{self, Read, Write},
-    ops::Deref,
-    rc::Rc,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc, Mutex,
@@ -101,43 +99,46 @@ fn register(poller: Handle, handles: &[Handle], interests: Interest) -> io::Resu
         }
     }
 
-    let poller = poller.as_typed::<MioPoller>();
-
-    for source in handles {
-        match source.desc {
-            Description::Tick => todo!(),
-            Description::File => todo!(),
-            Description::TcpListener => {
-                protect_call_source(*source, |source: &mut mio::net::TcpListener, token, _| {
-                    poller
-                        .registry
-                        .register(source, token, to_mio_interests(interests))
-                })?;
-            }
-            Description::TcpStream => {
-                protect_call_source(*source, |source: &mut mio::net::TcpStream, token, _| {
-                    poller
-                        .registry
-                        .register(source, token, to_mio_interests(interests))
-                })?
-            }
-            Description::UdpSocket => {
-                protect_call_source(*source, |source: &mut mio::net::UdpSocket, token, _| {
-                    poller
-                        .registry
-                        .register(source, token, to_mio_interests(interests))
-                })?
-            }
-            _ => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!("[Mio driver] unsupport fd_ctl handle, {:?}", source),
-                ))
+    poller.with(|poller: &mut MioPoller| {
+        for source in handles {
+            match source.desc {
+                Description::Tick => todo!(),
+                Description::File => todo!(),
+                Description::TcpListener => {
+                    protect_call_source(
+                        *source,
+                        |source: &mut mio::net::TcpListener, token, _| {
+                            poller
+                                .registry
+                                .register(source, token, to_mio_interests(interests))
+                        },
+                    )?;
+                }
+                Description::TcpStream => {
+                    protect_call_source(*source, |source: &mut mio::net::TcpStream, token, _| {
+                        poller
+                            .registry
+                            .register(source, token, to_mio_interests(interests))
+                    })?
+                }
+                Description::UdpSocket => {
+                    protect_call_source(*source, |source: &mut mio::net::UdpSocket, token, _| {
+                        poller
+                            .registry
+                            .register(source, token, to_mio_interests(interests))
+                    })?
+                }
+                _ => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("[Mio driver] unsupport fd_ctl handle, {:?}", source),
+                    ))
+                }
             }
         }
-    }
 
-    Ok(CtlResult::None)
+        Ok(CtlResult::None)
+    })
 }
 
 fn reregister(poller: Handle, handles: &[Handle], interests: Interest) -> io::Result<CtlResult> {
@@ -154,43 +155,46 @@ fn reregister(poller: Handle, handles: &[Handle], interests: Interest) -> io::Re
         }
     }
 
-    let poller = poller.as_typed::<MioPoller>();
-
-    for source in handles {
-        match source.desc {
-            Description::Tick => todo!(),
-            Description::File => todo!(),
-            Description::TcpListener => {
-                protect_call_source(*source, |source: &mut mio::net::TcpListener, token, _| {
-                    poller
-                        .registry
-                        .reregister(source, token, to_mio_interests(interests))
-                })?;
-            }
-            Description::TcpStream => {
-                protect_call_source(*source, |source: &mut mio::net::TcpStream, token, _| {
-                    poller
-                        .registry
-                        .reregister(source, token, to_mio_interests(interests))
-                })?
-            }
-            Description::UdpSocket => {
-                protect_call_source(*source, |source: &mut mio::net::UdpSocket, token, _| {
-                    poller
-                        .registry
-                        .reregister(source, token, to_mio_interests(interests))
-                })?
-            }
-            _ => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!("[Mio driver] unsupport fd_ctl handle, {:?}", source),
-                ))
+    poller.with(|poller: &mut MioPoller| {
+        for source in handles {
+            match source.desc {
+                Description::Tick => todo!(),
+                Description::File => todo!(),
+                Description::TcpListener => {
+                    protect_call_source(
+                        *source,
+                        |source: &mut mio::net::TcpListener, token, _| {
+                            poller
+                                .registry
+                                .reregister(source, token, to_mio_interests(interests))
+                        },
+                    )?;
+                }
+                Description::TcpStream => {
+                    protect_call_source(*source, |source: &mut mio::net::TcpStream, token, _| {
+                        poller
+                            .registry
+                            .reregister(source, token, to_mio_interests(interests))
+                    })?
+                }
+                Description::UdpSocket => {
+                    protect_call_source(*source, |source: &mut mio::net::UdpSocket, token, _| {
+                        poller
+                            .registry
+                            .reregister(source, token, to_mio_interests(interests))
+                    })?
+                }
+                _ => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("[Mio driver] unsupport fd_ctl handle, {:?}", source),
+                    ))
+                }
             }
         }
-    }
 
-    Ok(CtlResult::None)
+        Ok(CtlResult::None)
+    })
 }
 
 fn deregister(poller: Handle, handles: &[Handle]) -> io::Result<CtlResult> {
@@ -207,46 +211,48 @@ fn deregister(poller: Handle, handles: &[Handle]) -> io::Result<CtlResult> {
         }
     }
 
-    let poller = poller.as_typed::<MioPoller>();
-
-    for source in handles {
-        match source.desc {
-            Description::Tick => todo!(),
-            Description::File => todo!(),
-            Description::TcpListener => {
-                protect_call_source(*source, |source: &mut mio::net::TcpListener, _, _| {
-                    poller.registry.deregister(source)
-                })?;
-            }
-            Description::TcpStream => {
-                protect_call_source(*source, |source: &mut mio::net::TcpStream, _, _| {
-                    poller.registry.deregister(source)
-                })?
-            }
-            Description::UdpSocket => {
-                protect_call_source(*source, |source: &mut mio::net::UdpSocket, _, _| {
-                    poller.registry.deregister(source)
-                })?
-            }
-            _ => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!("[Mio driver] unsupport fd_ctl handle, {:?}", source),
-                ))
+    poller.with(|poller: &mut MioPoller| {
+        for source in handles {
+            match source.desc {
+                Description::Tick => todo!(),
+                Description::File => todo!(),
+                Description::TcpListener => {
+                    protect_call_source(*source, |source: &mut mio::net::TcpListener, _, _| {
+                        poller.registry.deregister(source)
+                    })?;
+                }
+                Description::TcpStream => {
+                    protect_call_source(*source, |source: &mut mio::net::TcpStream, _, _| {
+                        poller.registry.deregister(source)
+                    })?
+                }
+                Description::UdpSocket => {
+                    protect_call_source(*source, |source: &mut mio::net::UdpSocket, _, _| {
+                        poller.registry.deregister(source)
+                    })?
+                }
+                _ => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("[Mio driver] unsupport fd_ctl handle, {:?}", source),
+                    ))
+                }
             }
         }
-    }
 
-    Ok(CtlResult::None)
+        Ok(CtlResult::None)
+    })
 }
 
 #[derive(Debug, Default, Clone)]
 pub struct MioDriver {
-    multi_thread: bool,
     next_id: Arc<AtomicUsize>,
 }
 
 impl MioDriver {
+    pub fn new() -> Self {
+        Default::default()
+    }
     fn new_file_id(&self) -> usize {
         self.next_id.fetch_add(1, Ordering::SeqCst)
     }
@@ -278,7 +284,7 @@ impl RawDriver for MioDriver {
                 Ok(Handle::new(self.new_file_id(), desc, Some(tcp_listener)))
             }
             crate::Description::TcpStream => {
-                let laddrs = ops.try_to_bind()?;
+                let laddrs = ops.try_to_connect()?;
                 let tcp_stream = std::net::TcpStream::connect(laddrs)?;
 
                 tcp_stream.set_nonblocking(true)?;
@@ -309,11 +315,7 @@ impl RawDriver for MioDriver {
             crate::Description::Tick => todo!("Unimplement Tick"),
             crate::Description::File => _ = todo!("Un9implement file"),
             crate::Description::Poller => {
-                if self.multi_thread {
-                    handle.into_boxed::<Arc<mio::Poll>>();
-                } else {
-                    handle.into_boxed::<Rc<mio::Poll>>();
-                }
+                handle.into_boxed::<MioPoller>();
             }
             crate::Description::TcpListener => _ = handle.into_boxed::<mio::net::TcpListener>(),
             crate::Description::TcpStream => _ = handle.into_boxed::<mio::net::TcpStream>(),
@@ -328,15 +330,13 @@ impl RawDriver for MioDriver {
         match handle.desc {
             crate::Description::File => todo!(),
             crate::Description::TcpStream => {
-                let read_size = handle.as_typed::<mio::net::TcpStream>().deref().read(buf)?;
+                let read_size = handle.with(|stream: &mut mio::net::TcpStream| stream.read(buf))?;
 
                 Ok(ReadOps::Read(read_size))
             }
             crate::Description::UdpSocket => {
-                let (read_size, remote_addr) = handle
-                    .as_typed::<mio::net::UdpSocket>()
-                    .deref()
-                    .recv_from(buf)?;
+                let (read_size, remote_addr) =
+                    handle.with(|stream: &mut mio::net::UdpSocket| stream.recv_from(buf))?;
 
                 Ok(ReadOps::RecvFrom(read_size, remote_addr))
             }
@@ -353,20 +353,16 @@ impl RawDriver for MioDriver {
             crate::Description::TcpStream => {
                 let buf = ops.try_to_write()?;
 
-                let write_size = handle
-                    .as_typed::<mio::net::TcpStream>()
-                    .deref()
-                    .write(buf)?;
+                let write_size =
+                    handle.with(|stream: &mut mio::net::TcpStream| stream.write(buf))?;
 
                 Ok(write_size)
             }
             crate::Description::UdpSocket => {
                 let (buf, raddr) = ops.try_to_sendto()?;
 
-                let write_size = handle
-                    .as_typed::<mio::net::UdpSocket>()
-                    .deref()
-                    .send_to(buf, raddr)?;
+                let write_size =
+                    handle.with(|stream: &mut mio::net::UdpSocket| stream.send_to(buf, raddr))?;
 
                 Ok(write_size)
             }
@@ -392,12 +388,9 @@ impl RawDriver for MioDriver {
                 if let Description::Poller = handle.desc {
                     let mut events = mio::Events::with_capacity(1024);
 
-                    handle
-                        .as_typed::<MioPoller>()
-                        .poller
-                        .lock()
-                        .unwrap()
-                        .poll(&mut events, timeout);
+                    handle.with(|poller: &mut MioPoller| {
+                        poller.poller.lock().unwrap().poll(&mut events, timeout)
+                    })?;
 
                     Ok(CtlResult::Readiness(from_io_evenets(events)))
                 } else {
@@ -409,7 +402,8 @@ impl RawDriver for MioDriver {
             }
             crate::CtlOps::Tick(_) => todo!(),
             crate::CtlOps::Accept => {
-                let (conn, remote_addr) = handle.as_typed::<mio::net::TcpListener>().accept()?;
+                let (conn, remote_addr) =
+                    handle.with(|listener: &mut mio::net::TcpListener| listener.accept())?;
 
                 Ok(CtlResult::Incoming(
                     Handle::new(self.new_file_id(), Description::TcpStream, Some(conn)),
@@ -425,11 +419,7 @@ impl RawDriver for MioDriver {
 
     fn fd_clone(&self, handle: crate::Handle) -> std::io::Result<crate::Handle> {
         match handle.desc {
-            Description::Poller => Ok(Handle::new(
-                self.new_file_id(),
-                handle.desc,
-                Some(handle.as_typed::<MioPoller>().clone()),
-            )),
+            Description::Poller => Ok(handle.with_clone::<MioPoller>(self.new_file_id())),
             _ => Err(io::Error::new(
                 io::ErrorKind::Unsupported,
                 format!(

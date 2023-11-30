@@ -2,9 +2,7 @@ use std::{
     io,
     mem::swap,
     net::SocketAddr,
-    ops::Deref,
-    pin::Pin,
-    ptr::{null, null_mut, NonNull},
+    ptr::{null, NonNull},
     time::Duration,
 };
 
@@ -133,11 +131,21 @@ impl Handle {
         data
     }
 
-    pub fn as_typed<T>(&self) -> TypedHandle<T>
+    pub fn with<R, T>(&self, mut f: impl FnMut(&mut T) -> R) -> R {
+        let mut boxed = unsafe { Box::from_raw(self.data as *mut T) };
+
+        let r = f(&mut boxed);
+
+        Box::into_raw(boxed);
+
+        r
+    }
+
+    pub fn with_clone<T>(&self, new_id: usize) -> Self
     where
-        T: Unpin,
+        T: Clone,
     {
-        TypedHandle::new(self.data)
+        Self::new(new_id, self.desc, Some(self.with(|t: &mut T| t.clone())))
     }
 }
 
@@ -158,38 +166,6 @@ impl From<(usize, Description)> for Handle {
             desc: value.1,
             data: null(),
         }
-    }
-}
-
-pub struct TypedHandle<T> {
-    boxed: Pin<Box<T>>,
-}
-
-impl<T> TypedHandle<T>
-where
-    T: Unpin,
-{
-    pub fn new(data: *const ()) -> Self {
-        Self {
-            boxed: Pin::new(unsafe { Box::from_raw(data as *mut T) }),
-        }
-    }
-}
-
-impl<T> Drop for TypedHandle<T> {
-    fn drop(&mut self) {
-        let mut null = unsafe { Box::from_raw(null_mut()) };
-
-        swap(&mut self.boxed, &mut null);
-
-        Box::into_raw(null);
-    }
-}
-
-impl<T> Deref for TypedHandle<T> {
-    type Target = T;
-    fn deref(&self) -> &Self::Target {
-        &*self.boxed
     }
 }
 

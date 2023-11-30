@@ -20,10 +20,13 @@ impl Clone for Poller {
 }
 
 impl Poller {
-    pub fn new(driver: Driver) -> io::Result<Self> {
+    pub fn new(driver: &Driver) -> io::Result<Self> {
         let handle = driver.fd_open(Description::Poller, OpenOps::None)?;
 
-        Ok(Self { driver, handle })
+        Ok(Self {
+            driver: driver.clone(),
+            handle,
+        })
     }
 
     pub fn poll_once(&self, timeout: Option<Duration>) -> io::Result<Vec<Event>> {
