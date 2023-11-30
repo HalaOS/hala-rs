@@ -37,13 +37,15 @@ impl Tick {
     }
 
     /// If timeout expired returns Ok(()), otherwise returns error `WOULD_BLOCK`
-    pub fn read(&self) -> io::Result<()> {
-        *self.times.borrow_mut() = self
+    pub fn read_next(&self) -> io::Result<usize> {
+        let next = self
             .driver
             .fd_ctl(self.handle, CtlOps::Tick(*self.times.borrow()))?
             .try_into_tick()?;
 
-        Ok(())
+        *self.times.borrow_mut() = next;
+
+        Ok(next)
     }
 }
 
