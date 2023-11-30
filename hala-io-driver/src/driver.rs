@@ -25,6 +25,7 @@ pub struct Event {
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum OpenOps<'a> {
+    None,
     /// When opening a file system file entry, the implementation uses this varaint as the path to the open file.
     OpenFile(&'a str),
 
@@ -34,12 +35,11 @@ pub enum OpenOps<'a> {
     /// UdpSocket / TcpStream use this variant to connect remote peer
     Connect(&'a [SocketAddr]),
 
-    /// This value is used by the fd_open implementation when the parameter
-    /// Description is `Timeout` or `Poller`.
-    Timeout(Duration),
-
     /// The ops to open tick file description.
-    Tick(Duration),
+    Tick {
+        duration: Duration,
+        oneshot: bool,
+    },
 
     /// The meaning of this variant is defined by the implementation
     UserDefine {
@@ -128,6 +128,7 @@ pub enum WriteOps<'a> {
 /// fd_ctl method operation/result variants.
 #[derive(Debug)]
 pub enum CtlOps<'a> {
+    None,
     Register {
         handles: &'a [Handle],
         interests: Interest,
@@ -148,6 +149,9 @@ pub enum CtlOps<'a> {
     OpenFile(&'a str),
 
     Bind(&'a [SocketAddr]),
+
+    Tick(usize),
+
     Accept,
     Incoming(Handle, SocketAddr),
     Connect(&'a [SocketAddr]),
@@ -178,12 +182,22 @@ impl<'a> CtlOps<'a> {
             )),
         }
     }
+
+    pub fn try_into_tick(self) -> io::Result<usize> {
+        match self {
+            Self::Tick(times) => Ok(times),
+            v => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Can't convert 'CtlOps' to Readiness, {:?}", v),
+            )),
+        }
+    }
 }
 
 /// User defined driver must implement this trait
 pub trait RawDriver {
     /// Open file description
-    fn fd_open(&self, desc: Description, ops: Option<OpenOps>) -> io::Result<Handle>;
+    fn fd_open(&self, desc: Description, ops: OpenOps) -> io::Result<Handle>;
 
     /// Close file description by `handle`.
     fn fd_close(&self, handle: Handle) -> io::Result<()>;
@@ -193,6 +207,8 @@ pub trait RawDriver {
     fn fd_write(&self, handle: Handle, ops: WriteOps) -> io::Result<usize>;
 
     fn fd_ctl(&self, handle: Handle, ops: CtlOps) -> io::Result<CtlOps>;
+
+    fn fd_clone(&self, handle: Handle) -> io::Result<Handle>;
 
     fn try_clone_boxed(&self) -> io::Result<Box<dyn RawDriver + Sync + Send>>;
 }
@@ -210,7 +226,7 @@ impl Driver {
     }
 
     #[inline]
-    pub fn fd_open(&self, desc: Description, ops: Option<OpenOps>) -> io::Result<Handle> {
+    pub fn fd_open(&self, desc: Description, ops: OpenOps) -> io::Result<Handle> {
         self.inner.fd_open(desc, ops)
     }
 
@@ -232,6 +248,11 @@ impl Driver {
     #[inline]
     pub fn fd_ctl(&self, handle: Handle, ops: CtlOps) -> io::Result<CtlOps> {
         self.inner.fd_ctl(handle, ops)
+    }
+
+    #[inline]
+    pub fn fd_clone(&self, handle: Handle) -> io::Result<Handle> {
+        self.inner.fd_clone(handle)
     }
 }
 
@@ -259,7 +280,7 @@ mod tests {
 
     #[allow(unused)]
     impl RawDriver for MockDriver {
-        fn fd_open(&self, desc: Description, ops: Option<OpenOps>) -> io::Result<Handle> {
+        fn fd_open(&self, desc: Description, ops: OpenOps) -> io::Result<Handle> {
             todo!()
         }
 
@@ -282,12 +303,16 @@ mod tests {
         fn try_clone_boxed(&self) -> io::Result<Box<dyn RawDriver + Sync + Send>> {
             todo!()
         }
+
+        fn fd_clone(&self, handle: Handle) -> io::Result<Handle> {
+            todo!()
+        }
     }
 
     #[test]
     fn trait_send_test() {
         let driver = Driver::from(MockDriver {});
 
-        spawn(move || driver.fd_open(Description::File, Some(OpenOps::OpenFile("test.text"))));
+        spawn(move || driver.fd_open(Description::File, OpenOps::OpenFile("test.text")));
     }
 }

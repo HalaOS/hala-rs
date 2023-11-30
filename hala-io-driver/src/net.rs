@@ -14,10 +14,16 @@ pub struct TcpListener {
 impl TcpListener {
     /// Creates a new `TcpListener` which will be bound to the specified
     /// address.
-    pub fn bind<S: ToSocketAddrs>(driver: Driver, poller: Handle, laddrs: S) -> io::Result<Self> {
+    pub fn bind<P: Into<Handle>, S: ToSocketAddrs>(
+        driver: &Driver,
+        poller: P,
+        laddrs: S,
+    ) -> io::Result<Self> {
+        let poller = poller.into();
+
         let laddrs = laddrs.to_socket_addrs()?.into_iter().collect::<Vec<_>>();
 
-        let handle = driver.fd_open(Description::TcpListener, Some(OpenOps::Bind(&laddrs)))?;
+        let handle = driver.fd_open(Description::TcpListener, OpenOps::Bind(&laddrs))?;
 
         driver.fd_ctl(
             poller,
@@ -30,7 +36,7 @@ impl TcpListener {
         Ok(Self {
             handle,
             poller,
-            driver,
+            driver: driver.clone(),
         })
     }
 
@@ -40,15 +46,16 @@ impl TcpListener {
             .fd_ctl(self.handle, CtlOps::Accept)?
             .try_into_incoming()?;
 
-        Ok((
-            TcpStream::new(self.driver.clone(), self.poller, handle)?,
-            raddr,
-        ))
+        Ok((TcpStream::new(&self.driver, self.poller, handle)?, raddr))
     }
 }
 
 impl Drop for TcpListener {
     fn drop(&mut self) {
+        self.driver
+            .fd_ctl(self.poller, CtlOps::Deregister(&[self.handle]))
+            .unwrap();
+
         self.driver.fd_close(self.handle).unwrap();
     }
 }
@@ -60,7 +67,7 @@ pub struct TcpStream {
 }
 
 impl TcpStream {
-    pub fn new(driver: Driver, poller: Handle, handle: Handle) -> io::Result<Self> {
+    pub fn new(driver: &Driver, poller: Handle, handle: Handle) -> io::Result<Self> {
         driver.fd_ctl(
             poller,
             CtlOps::Register {
@@ -70,20 +77,22 @@ impl TcpStream {
         )?;
 
         Ok(Self {
-            driver,
+            driver: driver.clone(),
             handle,
             poller,
         })
     }
 
-    pub fn connect<S: ToSocketAddrs>(
-        driver: Driver,
-        poller: Handle,
+    pub fn connect<P: Into<Handle>, S: ToSocketAddrs>(
+        driver: &Driver,
+        poller: P,
         raddrs: S,
     ) -> io::Result<Self> {
+        let poller = poller.into();
+
         let raddrs = raddrs.to_socket_addrs()?.into_iter().collect::<Vec<_>>();
 
-        let handle = driver.fd_open(Description::TcpStream, Some(OpenOps::Connect(&raddrs)))?;
+        let handle = driver.fd_open(Description::TcpStream, OpenOps::Connect(&raddrs))?;
 
         Self::new(driver, poller, handle)
     }
@@ -99,6 +108,10 @@ impl TcpStream {
 
 impl Drop for TcpStream {
     fn drop(&mut self) {
+        self.driver
+            .fd_ctl(self.poller, CtlOps::Deregister(&[self.handle]))
+            .unwrap();
+
         self.driver.fd_close(self.handle).unwrap();
     }
 }
@@ -110,10 +123,16 @@ pub struct UdpSocket {
 }
 
 impl UdpSocket {
-    pub fn bind<S: ToSocketAddrs>(driver: Driver, poller: Handle, laddrs: S) -> io::Result<Self> {
+    pub fn bind<P: Into<Handle>, S: ToSocketAddrs>(
+        driver: &Driver,
+        poller: P,
+        laddrs: S,
+    ) -> io::Result<Self> {
+        let poller = poller.into();
+
         let laddrs = laddrs.to_socket_addrs()?.into_iter().collect::<Vec<_>>();
 
-        let handle = driver.fd_open(Description::UdpSocket, Some(OpenOps::Bind(&laddrs)))?;
+        let handle = driver.fd_open(Description::UdpSocket, OpenOps::Bind(&laddrs))?;
 
         driver.fd_ctl(
             poller,
@@ -126,7 +145,7 @@ impl UdpSocket {
         Ok(Self {
             handle,
             poller,
-            driver,
+            driver: driver.clone(),
         })
     }
 
@@ -142,6 +161,10 @@ impl UdpSocket {
 
 impl Drop for UdpSocket {
     fn drop(&mut self) {
+        self.driver
+            .fd_ctl(self.poller, CtlOps::Deregister(&[self.handle]))
+            .unwrap();
+
         self.driver.fd_close(self.handle).unwrap();
     }
 }

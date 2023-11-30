@@ -9,13 +9,14 @@ pub struct File {
 }
 
 impl File {
-    pub fn new(
-        driver: Driver,
-        poller: Handle,
+    pub fn new<P: Into<Handle>>(
+        driver: &Driver,
+        poller: P,
         path: &str,
         interests: Interest,
     ) -> io::Result<Self> {
-        let handle = driver.fd_open(Description::File, Some(OpenOps::OpenFile(path)))?;
+        let poller = poller.into();
+        let handle = driver.fd_open(Description::File, OpenOps::OpenFile(path))?;
 
         driver.fd_ctl(
             poller,
@@ -28,7 +29,7 @@ impl File {
         Ok(Self {
             handle,
             poller,
-            driver,
+            driver: driver.clone(),
         })
     }
 
@@ -43,6 +44,10 @@ impl File {
 
 impl Drop for File {
     fn drop(&mut self) {
+        self.driver
+            .fd_ctl(self.poller, CtlOps::Deregister(&[self.handle]))
+            .unwrap();
+
         self.driver.fd_close(self.handle).unwrap();
     }
 }

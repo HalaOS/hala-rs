@@ -1,4 +1,11 @@
-pub mod driver;
-pub mod fs;
-pub mod net;
-pub mod poller;
+mod driver;
+mod fs;
+mod net;
+mod poller;
+mod time;
+
+pub use driver::*;
+pub use fs::*;
+pub use net::*;
+pub use poller::*;
+pub use time::*;
