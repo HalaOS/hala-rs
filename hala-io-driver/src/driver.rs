@@ -2,7 +2,7 @@ use std::{
     io,
     mem::swap,
     net::SocketAddr,
-    ops::{Deref, DerefMut},
+    ops::Deref,
     pin::Pin,
     ptr::{null, null_mut, NonNull},
     time::Duration,

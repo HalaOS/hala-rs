@@ -1,15 +1,18 @@
 use std::{
     io::{self, Read, Write},
     ops::Deref,
+    rc::Rc,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
 };
 
-use crate::{Handle, RawDriver, ReadOps};
+use crate::{Description, Handle, RawDriver, ReadOps};
 
+#[derive(Debug, Default, Clone)]
 pub struct MioDriver {
+    multi_thread: bool,
     next_id: Arc<AtomicUsize>,
 }
 
@@ -29,11 +32,15 @@ impl RawDriver for MioDriver {
         match desc {
             crate::Description::Tick => todo!("Unsupport file type Tick"),
             crate::Description::File => todo!("Unsupport file type File"),
-            crate::Description::Poller => Ok(Handle::new(
-                self.new_file_id(),
-                desc,
-                Some(mio::Poll::new()?),
-            )),
+            crate::Description::Poller => {
+                let handle = if self.multi_thread {
+                    Handle::new(self.new_file_id(), desc, Some(Arc::new(mio::Poll::new()?)))
+                } else {
+                    Handle::new(self.new_file_id(), desc, Some(Rc::new(mio::Poll::new()?)))
+                };
+
+                Ok(handle)
+            }
             crate::Description::TcpListener => {
                 let laddrs = ops.try_to_bind()?;
                 let tcp_listener = std::net::TcpListener::bind(laddrs)?;
@@ -75,7 +82,13 @@ impl RawDriver for MioDriver {
         match handle.desc {
             crate::Description::Tick => todo!("Unimplement Tick"),
             crate::Description::File => _ = todo!("Unimplement file"),
-            crate::Description::Poller => _ = handle.into_boxed::<mio::Poll>(),
+            crate::Description::Poller => {
+                if self.multi_thread {
+                    handle.into_boxed::<Arc<mio::Poll>>();
+                } else {
+                    handle.into_boxed::<Rc<mio::Poll>>();
+                }
+            }
             crate::Description::TcpListener => _ = handle.into_boxed::<mio::net::TcpListener>(),
             crate::Description::TcpStream => _ = handle.into_boxed::<mio::net::TcpStream>(),
             crate::Description::UdpSocket => _ = handle.into_boxed::<mio::net::UdpSocket>(),
@@ -143,10 +156,33 @@ impl RawDriver for MioDriver {
     }
 
     fn fd_clone(&self, handle: crate::Handle) -> std::io::Result<crate::Handle> {
-        todo!()
+        match handle.desc {
+            Description::Poller => {
+                if self.multi_thread {
+                    Ok(Handle::new(
+                        self.new_file_id(),
+                        handle.desc,
+                        Some(handle.as_typed::<Arc<mio::Poll>>().clone()),
+                    ))
+                } else {
+                    Ok(Handle::new(
+                        self.new_file_id(),
+                        handle.desc,
+                        Some(handle.as_typed::<Rc<mio::Poll>>().clone()),
+                    ))
+                }
+            }
+            _ => Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                format!(
+                    "[Mio driver] Only Poller handle can call fd_clone, {:?}",
+                    handle
+                ),
+            )),
+        }
     }
 
     fn try_clone_boxed(&self) -> std::io::Result<Box<dyn RawDriver + Sync + Send>> {
-        todo!()
+        Ok(Box::new(self.clone()))
     }
 }
