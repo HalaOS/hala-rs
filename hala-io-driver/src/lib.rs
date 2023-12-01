@@ -12,3 +12,6 @@ pub use time::*;
 
 #[cfg(feature = "mio_driver")]
 pub mod mio;
+
+#[cfg(feature = "notifier")]
+pub mod notifier;

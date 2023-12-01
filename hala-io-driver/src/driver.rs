@@ -169,15 +169,6 @@ impl From<(usize, Description)> for Handle {
     }
 }
 
-// impl<T> DerefMut for TypedHandle<T>
-// where
-//     T: Unpin,
-// {
-//     fn deref_mut(&mut self) -> &mut Self::Target {
-//         &mut *self.boxed
-//     }
-// }
-
 #[derive(Debug)]
 pub enum ReadOps {
     Read(usize),
@@ -327,16 +318,19 @@ pub trait RawDriver {
 
     fn fd_clone(&self, handle: Handle) -> io::Result<Handle>;
 
-    fn try_clone_boxed(&self) -> io::Result<Box<dyn RawDriver + Sync + Send>>;
+    fn try_clone_boxed(&self) -> io::Result<Box<dyn RawDriver>>;
 }
 
 /// reactor io driver
 pub struct Driver {
-    inner: Box<dyn RawDriver + Send>,
+    inner: Box<dyn RawDriver>,
 }
 
+unsafe impl Send for Driver {}
+unsafe impl Sync for Driver {}
+
 impl Driver {
-    pub fn new<R: RawDriver + Send + 'static>(raw: R) -> Self {
+    pub fn new<R: RawDriver + 'static>(raw: R) -> Self {
         Self {
             inner: Box::new(raw),
         }
@@ -373,7 +367,7 @@ impl Driver {
     }
 }
 
-impl<R: RawDriver + Sync + Send + 'static> From<R> for Driver {
+impl<R: RawDriver + 'static> From<R> for Driver {
     fn from(value: R) -> Self {
         Self::new(value)
     }
@@ -417,7 +411,7 @@ mod tests {
             todo!()
         }
 
-        fn try_clone_boxed(&self) -> io::Result<Box<dyn RawDriver + Sync + Send>> {
+        fn try_clone_boxed(&self) -> io::Result<Box<dyn RawDriver>> {
             todo!()
         }
 

@@ -430,7 +430,7 @@ impl RawDriver for MioDriver {
         }
     }
 
-    fn try_clone_boxed(&self) -> std::io::Result<Box<dyn RawDriver + Sync + Send>> {
+    fn try_clone_boxed(&self) -> std::io::Result<Box<dyn RawDriver>> {
         Ok(Box::new(self.clone()))
     }
 }
