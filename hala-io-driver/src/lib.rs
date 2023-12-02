@@ -12,3 +12,9 @@ pub use driver::*;
 
 mod file;
 pub use file::*;
+
+#[cfg(feature = "global")]
+mod global;
+
+#[cfg(feature = "global")]
+pub use global::*;
