@@ -31,7 +31,7 @@ pub fn get_driver() -> io::Result<Driver> {
 }
 
 /// Register new local thread io driver
-pub fn register_local_driver<R: RawDriver + Clone>(raw: R) -> io::Result<()> {
+pub fn register_local_driver<D: Into<Driver>>(driver: D) -> io::Result<()> {
     if INSTANCE.get().is_some() {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
@@ -39,18 +39,14 @@ pub fn register_local_driver<R: RawDriver + Clone>(raw: R) -> io::Result<()> {
         ));
     }
 
-    let driver = Driver::new(raw);
-
-    LOCAL_INSTANCE.replace(Some(driver));
+    LOCAL_INSTANCE.replace(Some(driver.into()));
 
     Ok(())
 }
 
 /// Register new io driver
-pub fn register_driver<R: RawDriver + Clone>(raw: R) -> io::Result<()> {
-    let driver = Driver::new(raw);
-
-    INSTANCE.set(driver).map_err(|_| {
+pub fn register_driver<D: Into<Driver>>(driver: D) -> io::Result<()> {
+    INSTANCE.set(driver.into()).map_err(|_| {
         io::Error::new(
             io::ErrorKind::PermissionDenied,
             "[Hala-IO] call register_driver twice",

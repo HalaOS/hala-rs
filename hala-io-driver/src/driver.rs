@@ -251,6 +251,12 @@ pub struct Driver {
 unsafe impl Send for Driver {}
 unsafe impl Sync for Driver {}
 
+impl<R: RawDriver + Clone> From<R> for Driver {
+    fn from(value: R) -> Self {
+        Self::new(value)
+    }
+}
+
 impl Driver {
     /// Creates a new `Driver` from [`RawDriver`].
     pub fn new<R: RawDriver + Clone>(raw: R) -> Self {

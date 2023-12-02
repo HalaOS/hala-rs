@@ -4,17 +4,23 @@ use std::{
     task::Waker,
 };
 
-use crate::{Description, Interest, MioNotifier, MioPoller, RawDriverExt, Token, TypedHandle};
+use crate::{Description, Driver, Interest, IntoRawDriver, RawDriverExt, Token, TypedHandle};
 
-pub struct MioDriver<N, P> {
+use super::*;
+
+pub struct BasicMioDriver<N, P>
+where
+    N: Clone,
+    P: Clone,
+{
     notifier: N,
     _marked: PhantomData<P>,
 }
 
-impl<N, P> MioDriver<N, P>
+impl<N, P> BasicMioDriver<N, P>
 where
-    N: MioNotifier + Default,
-    P: MioPoller + Default,
+    N: MioNotifier + Default + Clone,
+    P: MioPoller + Default + Clone,
 {
     pub fn new() -> Self {
         Self {
@@ -24,7 +30,7 @@ where
     }
 }
 
-impl<N, P> Clone for MioDriver<N, P>
+impl<N, P> Clone for BasicMioDriver<N, P>
 where
     N: Clone,
     P: Clone,
@@ -37,10 +43,10 @@ where
     }
 }
 
-impl<N, P> MioDriver<N, P>
+impl<N, P> BasicMioDriver<N, P>
 where
-    N: MioNotifier,
-    P: MioPoller,
+    N: MioNotifier + Clone,
+    P: MioPoller + Clone,
 {
     fn nonblocking_call<R, F>(
         &self,
@@ -62,7 +68,7 @@ where
                 Err(err) if err.kind() == io::ErrorKind::WouldBlock => return Err(err),
 
                 r => {
-                    self.notifier.remove_waker(token, interests);
+                    _ = self.notifier.remove_waker(token, interests);
 
                     return r;
                 }
@@ -71,9 +77,9 @@ where
     }
 }
 
-impl<N, P> RawDriverExt for MioDriver<N, P>
+impl<N, P> RawDriverExt for BasicMioDriver<N, P>
 where
-    N: MioNotifier,
+    N: MioNotifier + Clone,
     P: MioPoller + Default + Clone,
 {
     fn fd_user_define_open(&self, id: usize, _buf: &[u8]) -> std::io::Result<crate::Handle> {
@@ -328,4 +334,16 @@ where
 
         Ok(())
     }
+}
+
+type STMioDriver = BasicMioDriver<STMioNotifier, STMioPoller>;
+
+type MTMioDriver = BasicMioDriver<MTMioNotifier, MTMioPoller>;
+
+pub fn local_mio_driver() -> Driver {
+    STMioDriver::new().into_raw_driver().into()
+}
+
+pub fn mio_driver() -> Driver {
+    MTMioDriver::new().into_raw_driver().into()
 }

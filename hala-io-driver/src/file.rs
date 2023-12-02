@@ -5,7 +5,7 @@ use std::{
 };
 
 /// File id for file description handle.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Token(pub usize);
 
 pub trait TokenGenerator {
