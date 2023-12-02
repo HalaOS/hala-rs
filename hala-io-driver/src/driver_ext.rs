@@ -1,9 +1,10 @@
+use std::io;
+use std::task::Waker;
 use std::time::Duration;
-use std::{io, task::Context};
 
 use std::net::SocketAddr;
 
-use crate::{CmdResp, Description, FileMode, Handle, Interest, RawDriver};
+use crate::{CmdResp, Description, FileMode, Handle, Interest, IntoRawDriver, RawDriver};
 
 /// Easier to implement version of `RawDriver` trait
 pub trait RawDriverExt {
@@ -14,9 +15,9 @@ pub trait RawDriverExt {
     /// Create new file
     fn file_open(&self, path: &str, mode: FileMode) -> io::Result<Handle>;
 
-    fn file_write(&self, cx: Context<'_>, handle: Handle, buf: &[u8]) -> io::Result<usize>;
+    fn file_write(&self, waker: Waker, handle: Handle, buf: &[u8]) -> io::Result<usize>;
 
-    fn file_read(&self, cx: Context<'_>, handle: Handle, buf: &mut [u8]) -> io::Result<usize>;
+    fn file_read(&self, waker: Waker, handle: Handle, buf: &mut [u8]) -> io::Result<usize>;
 
     /// Close file handle
     fn file_close(&self, handle: Handle) -> io::Result<()>;
@@ -31,11 +32,8 @@ pub trait RawDriverExt {
     fn tcp_listener_bind(&self, laddrs: &[SocketAddr]) -> io::Result<Handle>;
 
     /// Accept one incoming `TcpStream` socket, may returns WOULD_BLOCK
-    fn tcp_listener_accept(
-        &self,
-        cx: Context<'_>,
-        handle: Handle,
-    ) -> io::Result<(Handle, SocketAddr)>;
+    fn tcp_listener_accept(&self, waker: Waker, handle: Handle)
+        -> io::Result<(Handle, SocketAddr)>;
 
     /// Close `TcpListener` socket.
     fn tcp_listener_close(&self, handle: Handle) -> io::Result<()>;
@@ -44,11 +42,10 @@ pub trait RawDriverExt {
     fn tcp_stream_connect(&self, raddrs: &[SocketAddr]) -> io::Result<Handle>;
 
     /// Write data to underly `TcpStream`
-    fn tcp_stream_write(&self, cx: Context<'_>, handle: Handle, buf: &[u8]) -> io::Result<usize>;
+    fn tcp_stream_write(&self, waker: Waker, handle: Handle, buf: &[u8]) -> io::Result<usize>;
 
     /// Read data from underly `TcpStream`
-    fn tcp_stream_read(&self, cx: Context<'_>, handle: Handle, buf: &mut [u8])
-        -> io::Result<usize>;
+    fn tcp_stream_read(&self, waker: Waker, handle: Handle, buf: &mut [u8]) -> io::Result<usize>;
 
     /// Close `TcpStream` socket.
     fn tcp_stream_close(&self, handle: Handle) -> io::Result<()>;
@@ -59,7 +56,7 @@ pub trait RawDriverExt {
     /// Send one datagram to `raddr` peer
     fn udp_socket_sendto(
         &self,
-        cx: Context<'_>,
+        waker: Waker,
         handle: Handle,
         buf: &[u8],
         raddr: SocketAddr,
@@ -68,7 +65,7 @@ pub trait RawDriverExt {
     /// Recv one datagram from peer.
     fn udp_socket_recv_from(
         &self,
-        cx: Context<'_>,
+        waker: Waker,
         handle: Handle,
         buf: &mut [u8],
     ) -> io::Result<(usize, SocketAddr)>;
@@ -108,17 +105,18 @@ pub trait RawDriverExt {
 }
 
 /// Adapter `RawDriverExt` trait to `RawDriver` trait
-pub struct RawDriverExtProxy<T> {
+#[derive(Clone)]
+pub struct RawDriverExtProxy<T: Clone> {
     inner: T,
 }
 
-impl<T: RawDriverExt> RawDriverExtProxy<T> {
+impl<T: RawDriverExt + Clone> RawDriverExtProxy<T> {
     pub fn new(inner: T) -> Self {
         Self { inner }
     }
 }
 
-impl<T: RawDriverExt> RawDriver for RawDriverExtProxy<T> {
+impl<T: RawDriverExt + Clone> RawDriver for RawDriverExtProxy<T> {
     fn fd_open(
         &self,
         desc: crate::Description,
@@ -161,14 +159,14 @@ impl<T: RawDriverExt> RawDriver for RawDriverExtProxy<T> {
 
     fn fd_cntl(&self, handle: Handle, cmd: crate::Cmd) -> io::Result<crate::CmdResp> {
         match cmd {
-            crate::Cmd::Read { cx, buf } => match handle.desc {
+            crate::Cmd::Read { waker, buf } => match handle.desc {
                 Description::File => self
                     .inner
-                    .file_read(cx, handle, buf)
+                    .file_read(waker, handle, buf)
                     .map(|len| CmdResp::ReadData(len)),
                 Description::TcpStream => self
                     .inner
-                    .tcp_stream_read(cx, handle, buf)
+                    .tcp_stream_read(waker, handle, buf)
                     .map(|len| CmdResp::ReadData(len)),
                 _ => {
                     return Err(io::Error::new(
@@ -177,14 +175,14 @@ impl<T: RawDriverExt> RawDriver for RawDriverExtProxy<T> {
                     ));
                 }
             },
-            crate::Cmd::Write { cx, buf } => match handle.desc {
+            crate::Cmd::Write { waker, buf } => match handle.desc {
                 Description::File => self
                     .inner
-                    .file_write(cx, handle, buf)
+                    .file_write(waker, handle, buf)
                     .map(|len| CmdResp::WriteData(len)),
                 Description::TcpStream => self
                     .inner
-                    .tcp_stream_write(cx, handle, buf)
+                    .tcp_stream_write(waker, handle, buf)
                     .map(|len| CmdResp::WriteData(len)),
                 _ => {
                     return Err(io::Error::new(
@@ -193,18 +191,18 @@ impl<T: RawDriverExt> RawDriver for RawDriverExtProxy<T> {
                     ));
                 }
             },
-            crate::Cmd::SendTo { cx, buf, raddr } => {
+            crate::Cmd::SendTo { waker, buf, raddr } => {
                 handle.expect(Description::UdpSocket)?;
 
                 self.inner
-                    .udp_socket_sendto(cx, handle, buf, raddr)
+                    .udp_socket_sendto(waker, handle, buf, raddr)
                     .map(|len| CmdResp::WriteData(len))
             }
-            crate::Cmd::RecvFrom { cx, buf } => {
+            crate::Cmd::RecvFrom { waker, buf } => {
                 handle.expect(Description::UdpSocket)?;
 
                 self.inner
-                    .udp_socket_recv_from(cx, handle, buf)
+                    .udp_socket_recv_from(waker, handle, buf)
                     .map(|(len, raddr)| CmdResp::RecvFrom(len, raddr))
             }
             crate::Cmd::Register { source, interests } => {
@@ -228,11 +226,11 @@ impl<T: RawDriverExt> RawDriver for RawDriverExtProxy<T> {
                     .poller_deregister(handle, source)
                     .map(|_| CmdResp::None)
             }
-            crate::Cmd::Accept(cx) => {
+            crate::Cmd::Accept(waker) => {
                 handle.expect(Description::TcpListener)?;
 
                 self.inner
-                    .tcp_listener_accept(cx, handle)
+                    .tcp_listener_accept(waker, handle)
                     .map(|(stream, raddr)| CmdResp::Incoming(stream, raddr))
             }
             crate::Cmd::PollOnce(duration) => {
@@ -275,15 +273,10 @@ impl<T: RawDriverExt> RawDriver for RawDriverExtProxy<T> {
     }
 }
 
-trait ToRawDriver {
-    type Driver: RawDriver;
-    fn to_raw_driver(self) -> Self::Driver;
-}
-
-impl<T: RawDriverExt> ToRawDriver for T {
+impl<T: RawDriverExt + Clone> IntoRawDriver for T {
     type Driver = RawDriverExtProxy<T>;
 
-    fn to_raw_driver(self) -> Self::Driver {
+    fn into_raw_driver(self) -> Self::Driver {
         RawDriverExtProxy::new(self)
     }
 }

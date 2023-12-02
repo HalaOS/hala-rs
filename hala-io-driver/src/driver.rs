@@ -1,4 +1,4 @@
-use std::{io, net::SocketAddr, ptr::NonNull, task::Context, time::Duration};
+use std::{io, net::SocketAddr, ptr::NonNull, task::Waker, time::Duration};
 
 use bitmask_enum::bitmask;
 
@@ -83,25 +83,25 @@ impl<'a> OpenFlags<'a> {
 pub enum Cmd<'a> {
     /// Write data to stream file description.
     Read {
-        cx: Context<'a>,
+        waker: Waker,
         buf: &'a mut [u8],
     },
     /// Read data from stream file description.
     Write {
-        cx: Context<'a>,
+        waker: Waker,
         buf: &'a [u8],
     },
 
     /// Command `Sendto` parameter for udp socket.
     SendTo {
-        cx: Context<'a>,
+        waker: Waker,
         buf: &'a [u8],
         raddr: SocketAddr,
     },
 
     /// Command to invoke UdpSocket `recv_from` method.
     RecvFrom {
-        cx: Context<'a>,
+        waker: Waker,
         buf: &'a mut [u8],
     },
 
@@ -121,7 +121,7 @@ pub enum Cmd<'a> {
     Deregister(Handle),
 
     /// Try accept one incoming connection.
-    Accept(Context<'a>),
+    Accept(Waker),
 
     /// Poll once io readiness events.
     PollOnce(Option<Duration>),
@@ -228,6 +228,11 @@ impl DriverVTable {
             drop: drop::<R>,
         }
     }
+}
+
+pub trait IntoRawDriver {
+    type Driver: RawDriver + Clone;
+    fn into_raw_driver(self) -> Self::Driver;
 }
 
 #[repr(C)]
