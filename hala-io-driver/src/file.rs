@@ -1,4 +1,5 @@
 use std::{
+    io,
     marker::PhantomData,
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -72,6 +73,20 @@ impl Handle {
     /// Drop handle context data with special type.
     pub fn drop_as<T>(self) {
         _ = unsafe { Box::from_raw(self.data as *mut T) };
+    }
+
+    pub fn expect(&self, desc: Description) -> io::Result<()> {
+        if self.desc != desc {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!(
+                    "Expect file handle type {:?}, but got {:?}",
+                    desc, self.desc
+                ),
+            ));
+        }
+
+        Ok(())
     }
 }
 

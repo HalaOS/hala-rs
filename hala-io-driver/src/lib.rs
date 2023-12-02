@@ -18,3 +18,8 @@ mod global;
 
 #[cfg(feature = "global")]
 pub use global::*;
+
+#[cfg(feature = "driver_ext")]
+mod driver_ext;
+#[cfg(feature = "driver_ext")]
+pub use driver_ext::*;

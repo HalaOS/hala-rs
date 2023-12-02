@@ -17,20 +17,80 @@ pub enum FileMode {
 pub enum OpenFlags<'a> {
     None,
     /// The path to the local file system to open.
-    Path(&'a str),
+    OpenFile(&'a str, FileMode),
     /// The binding addrs of the opening socket
     Bind(&'a [SocketAddr]),
     /// The address list of the remote peer to which the open socket will connect
     Connect(&'a [SocketAddr]),
+    Duration(Duration),
+    UserDefined(&'a [u8]),
+}
+
+impl<'a> OpenFlags<'a> {
+    pub fn try_into_open_file(self) -> io::Result<(&'a str, FileMode)> {
+        match self {
+            Self::OpenFile(path, mode) => Ok((path, mode)),
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("Expect OpenFile, but got {:?}", self),
+            )),
+        }
+    }
+
+    pub fn try_into_bind(self) -> io::Result<&'a [SocketAddr]> {
+        match self {
+            Self::Bind(laddrs) => Ok(laddrs),
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("Expect Bind, but got {:?}", self),
+            )),
+        }
+    }
+
+    pub fn try_into_connect(self) -> io::Result<&'a [SocketAddr]> {
+        match self {
+            Self::Connect(raddrs) => Ok(raddrs),
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("Expect Bind, but got {:?}", self),
+            )),
+        }
+    }
+
+    pub fn try_into_duration(self) -> io::Result<Duration> {
+        match self {
+            Self::Duration(duration) => Ok(duration),
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("Expect Bind, but got {:?}", self),
+            )),
+        }
+    }
+
+    pub fn try_into_user_defined(self) -> io::Result<&'a [u8]> {
+        match self {
+            Self::UserDefined(buf) => Ok(buf),
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("Expect UserDefined, but got {:?}", self),
+            )),
+        }
+    }
 }
 
 /// File description control command.
 #[derive(Debug)]
 pub enum Cmd<'a> {
     /// Write data to stream file description.
-    Read { cx: Context<'a>, buf: &'a mut [u8] },
+    Read {
+        cx: Context<'a>,
+        buf: &'a mut [u8],
+    },
     /// Read data from stream file description.
-    Write { cx: Context<'a>, buf: &'a [u8] },
+    Write {
+        cx: Context<'a>,
+        buf: &'a [u8],
+    },
 
     /// Command `Sendto` parameter for udp socket.
     SendTo {
@@ -40,13 +100,22 @@ pub enum Cmd<'a> {
     },
 
     /// Command to invoke UdpSocket `recv_from` method.
-    RecvFrom { cx: Context<'a>, buf: &'a mut [u8] },
+    RecvFrom {
+        cx: Context<'a>,
+        buf: &'a mut [u8],
+    },
 
     /// Register io event interests with `Poll`
-    Register { source: Handle, interests: Interest },
+    Register {
+        source: Handle,
+        interests: Interest,
+    },
 
     /// Re-register io event interests with `Poll`
-    ReRegister { source: Handle, interests: Interest },
+    ReRegister {
+        source: Handle,
+        interests: Interest,
+    },
 
     /// Deregister io event interests with `Poll`
     Deregister(Handle),
@@ -56,6 +125,11 @@ pub enum Cmd<'a> {
 
     /// Poll once io readiness events.
     PollOnce(Option<Duration>),
+
+    /// Try to clone the handle.
+    TryClone,
+
+    Tick(usize),
 }
 
 /// The response of `fd_cntl` .
@@ -64,11 +138,15 @@ pub enum CmdResp {
     /// Command `RecvFrom` response data.
     RecvFrom(usize, SocketAddr),
     /// Command `Accept` response data.
-    Incoming(Handle),
+    Incoming(Handle, SocketAddr),
     /// Command `Write` / `SendTo` response data
     WriteData(usize),
     /// Command `Read` response data.
     ReadData(usize),
+    /// Command `TryClone` response data.
+    Cloned(Handle),
+
+    Tick(usize),
 }
 
 /// io driver must implement this trait.
