@@ -9,15 +9,23 @@ version.workspace = true
 
 [dependencies]
 bitmask-enum = {workspace = true}
-divan = {workspace = true}
 futures = {workspace = true, optional = true}
 log = {workspace = true}
 mio = {workspace = true, optional = true}
 
 [dev-dependencies]
+divan = {workspace = true}
 pretty_env_logger = {workspace = true}
 
 [features]
 default = ["mio_driver", "notifier"]
 mio_driver = ["mio"]
 notifier = ["futures"]
+
+[[bench]]
+harness = false
+name = "typed_handle"
+
+[[bench]]
+harness = false
+name = "driver"
