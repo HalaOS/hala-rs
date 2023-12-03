@@ -133,6 +133,7 @@ pub enum Cmd<'a> {
 }
 
 /// The response of `fd_cntl` .
+#[derive(Debug, Clone)]
 pub enum CmdResp {
     None,
     /// Command `RecvFrom` response data.

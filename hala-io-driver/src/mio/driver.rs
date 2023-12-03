@@ -147,6 +147,8 @@ where
     fn tcp_listener_bind(&self, laddrs: &[std::net::SocketAddr]) -> std::io::Result<crate::Handle> {
         let tcp_listener = std::net::TcpListener::bind(laddrs)?;
 
+        tcp_listener.set_nonblocking(true)?;
+
         let tcp_lisener = mio::net::TcpListener::from_std(tcp_listener);
 
         Ok((Description::TcpListener, tcp_lisener).into())
@@ -180,6 +182,8 @@ where
         raddrs: &[std::net::SocketAddr],
     ) -> std::io::Result<crate::Handle> {
         let tcp_stream = std::net::TcpStream::connect(raddrs)?;
+
+        tcp_stream.set_nonblocking(true)?;
 
         let tcp_stream = mio::net::TcpStream::from_std(tcp_stream);
 
@@ -226,6 +230,8 @@ where
 
     fn udp_socket_bind(&self, laddrs: &[std::net::SocketAddr]) -> std::io::Result<crate::Handle> {
         let udp_socket = std::net::UdpSocket::bind(laddrs)?;
+
+        udp_socket.set_nonblocking(true)?;
 
         let upd_socket = mio::net::UdpSocket::from_std(udp_socket);
 
