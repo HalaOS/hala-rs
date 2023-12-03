@@ -81,13 +81,15 @@ impl MioNotifierInner {
     fn on(&mut self, token: Token, interests: Interest) {
         if interests.contains(Interest::Readable) {
             if let Some(waker) = self.read_wakers.remove(&token) {
-                waker.wake_by_ref();
+                log::trace!("[MioDriver] {:?} wake Readable", token);
+                waker.wake();
             }
         }
 
-        if interests.contains(Interest::Readable) {
+        if interests.contains(Interest::Writable) {
             if let Some(waker) = self.write_wakers.remove(&token) {
-                waker.wake_by_ref();
+                log::trace!("[MioDriver] {:?} wake Writable", token);
+                waker.wake();
             }
         }
     }

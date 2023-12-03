@@ -1,11 +1,11 @@
 use std::{io, sync::Arc, time::Duration};
 
-use crate::{Handle, Interest, TypedHandle};
+use crate::{Handle, Interest, Token, TypedHandle};
 
 use super::*;
 
 pub trait MioPoller {
-    fn poll_once(&self, timeout: Option<Duration>) -> io::Result<()>;
+    fn poll_once(&self, timeout: Option<Duration>) -> io::Result<Vec<(Token, Interest)>>;
     fn register(&self, handle: Handle, interests: Interest) -> io::Result<()>;
 
     fn reregister(&self, handle: Handle, interests: Interest) -> io::Result<()>;
@@ -50,10 +50,26 @@ impl<TM> MioPoller for BasicMioPoller<TM>
 where
     TM: ThreadModel,
 {
-    fn poll_once(&self, timeout: Option<Duration>) -> io::Result<()> {
+    fn poll_once(&self, timeout: Option<Duration>) -> io::Result<Vec<(Token, Interest)>> {
         let mut events = mio::event::Events::with_capacity(1024);
 
-        self.poll.get_mut().poll(&mut events, timeout)
+        self.poll.get_mut().poll(&mut events, timeout)?;
+
+        let mut hala_events = vec![];
+
+        for event in events.iter() {
+            let mut interests = Interest::Readable | Interest::Writable;
+
+            if !event.is_readable() {
+                interests = interests ^ Interest::Readable;
+            } else if !event.is_writable() {
+                interests = interests ^ Interest::Writable;
+            }
+
+            hala_events.push((Token(event.token().0), interests));
+        }
+
+        Ok(hala_events)
     }
 
     fn register(&self, handle: Handle, interests: Interest) -> io::Result<()> {

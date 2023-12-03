@@ -333,8 +333,15 @@ where
     ) -> std::io::Result<()> {
         poller.expect(Description::Poller)?;
 
-        TypedHandle::<P>::new(poller)
-            .with(|poller| poller.poll_once(Some(timeout.unwrap_or(Duration::from_secs(1)))))
+        TypedHandle::<P>::new(poller).with(|poller| {
+            let events = poller.poll_once(Some(timeout.unwrap_or(Duration::from_millis(10))))?;
+
+            for (token, interests) in events {
+                self.notifier.on(token, interests);
+            }
+
+            Ok(())
+        })
     }
 
     fn poller_close(&self, poller: crate::Handle) -> std::io::Result<()> {
