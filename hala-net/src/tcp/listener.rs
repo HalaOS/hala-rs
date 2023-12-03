@@ -34,11 +34,20 @@ impl TcpListener {
 
     /// Accepts a new incoming connection from this listener.
     pub async fn accept(&self) -> io::Result<(TcpStream, SocketAddr)> {
-        todo!()
+        let (handle, raddr) = async_io(|cx| {
+            self.driver
+                .fd_cntl(self.fd, Cmd::Accept(cx.waker().clone()))
+        })
+        .await?
+        .try_into_incoming()?;
+
+        Ok((TcpStream::new(self.driver.clone(), handle), raddr))
     }
 
     /// Returns the local socket address of this listener.
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
-        todo!()
+        self.driver
+            .fd_cntl(self.fd, Cmd::LocalAddr)?
+            .try_into_sockaddr()
     }
 }

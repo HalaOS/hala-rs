@@ -9,16 +9,17 @@ version.workspace = true
 
 [dependencies]
 bitmask-enum = {workspace = true}
-futures = {workspace = true}
 log = {workspace = true}
 mio = {workspace = true, optional = true}
 
 [dev-dependencies]
 divan = {workspace = true}
+futures = {workspace = true}
 pretty_env_logger = {workspace = true}
 
 [features]
-default = ["mio_driver", "global", "driver_ext"]
+async_io = []
+default = ["mio_driver", "global", "driver_ext", "async_io"]
 driver_ext = []
 global = []
 mio_driver = ["mio"]

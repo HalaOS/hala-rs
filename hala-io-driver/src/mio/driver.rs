@@ -340,6 +340,30 @@ where
 
         Ok(())
     }
+
+    fn tcp_listener_local_addr(&self, handle: crate::Handle) -> io::Result<std::net::SocketAddr> {
+        handle.expect(Description::TcpListener)?;
+
+        TypedHandle::<mio::net::TcpListener>::new(handle).with(|socket| socket.local_addr())
+    }
+
+    fn tcp_stream_local_addr(&self, handle: crate::Handle) -> io::Result<std::net::SocketAddr> {
+        handle.expect(Description::TcpStream)?;
+
+        TypedHandle::<mio::net::TcpStream>::new(handle).with(|socket| socket.local_addr())
+    }
+
+    fn tcp_stream_remote_addr(&self, handle: crate::Handle) -> io::Result<std::net::SocketAddr> {
+        handle.expect(Description::TcpStream)?;
+
+        TypedHandle::<mio::net::TcpStream>::new(handle).with(|socket| socket.peer_addr())
+    }
+
+    fn udp_local_addr(&self, handle: crate::Handle) -> io::Result<std::net::SocketAddr> {
+        handle.expect(Description::UdpSocket)?;
+
+        TypedHandle::<mio::net::UdpSocket>::new(handle).with(|socket| socket.local_addr())
+    }
 }
 
 type STMioDriver = BasicMioDriver<STMioNotifier, STMioPoller>;

@@ -1,7 +1,6 @@
 use std::{
     io,
     net::{SocketAddr, ToSocketAddrs},
-    task::Poll,
 };
 
 use hala_io_driver::*;
@@ -26,26 +25,55 @@ impl UdpSocket {
 
     /// Returns the local address that this socket is bound to.
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
-        todo!()
+        self.driver
+            .fd_cntl(self.fd, Cmd::LocalAddr)?
+            .try_into_sockaddr()
     }
 
     /// Sends data on the socket to the given address. On success, returns the
     /// number of bytes written.
     pub async fn send_to<S: ToSocketAddrs>(&self, buf: &[u8], target: S) -> io::Result<usize> {
-        todo!()
+        let mut last_error = None;
+
+        for raddr in target.to_socket_addrs()? {
+            let result = async_io(|cx| {
+                self.driver
+                    .fd_cntl(
+                        self.fd,
+                        Cmd::SendTo {
+                            waker: cx.waker().clone(),
+                            buf,
+                            raddr,
+                        },
+                    )?
+                    .try_into_datalen()
+            })
+            .await;
+
+            if result.is_ok() {
+                return result;
+            }
+
+            last_error = Some(result);
+        }
+
+        last_error.unwrap()
     }
 
     /// Receives data from the socket. On success, returns the number of bytes
     /// read and the address from whence the data came.
     pub async fn recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
-        todo!()
-    }
-
-    pub fn poll_recv_from(
-        &self,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut [u8],
-    ) -> Poll<io::Result<(usize, SocketAddr)>> {
-        todo!()
+        async_io(|cx| {
+            self.driver
+                .fd_cntl(
+                    self.fd,
+                    Cmd::RecvFrom {
+                        waker: cx.waker().clone(),
+                        buf,
+                    },
+                )?
+                .try_into_recv_from()
+        })
+        .await
     }
 }

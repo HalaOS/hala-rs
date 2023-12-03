@@ -102,6 +102,14 @@ pub trait RawDriverExt {
 
     /// Close poller
     fn poller_close(&self, handle: Handle) -> io::Result<()>;
+
+    fn tcp_listener_local_addr(&self, handle: Handle) -> io::Result<SocketAddr>;
+
+    fn tcp_stream_local_addr(&self, handle: Handle) -> io::Result<SocketAddr>;
+
+    fn tcp_stream_remote_addr(&self, handle: Handle) -> io::Result<SocketAddr>;
+
+    fn udp_local_addr(&self, handle: Handle) -> io::Result<SocketAddr>;
 }
 
 /// Adapter `RawDriverExt` trait to `RawDriver` trait
@@ -163,11 +171,11 @@ impl<T: RawDriverExt + Clone> RawDriver for RawDriverExtProxy<T> {
                 Description::File => self
                     .inner
                     .file_read(waker, handle, buf)
-                    .map(|len| CmdResp::ReadData(len)),
+                    .map(|len| CmdResp::DataLen(len)),
                 Description::TcpStream => self
                     .inner
                     .tcp_stream_read(waker, handle, buf)
-                    .map(|len| CmdResp::ReadData(len)),
+                    .map(|len| CmdResp::DataLen(len)),
                 _ => {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidInput,
@@ -179,11 +187,11 @@ impl<T: RawDriverExt + Clone> RawDriver for RawDriverExtProxy<T> {
                 Description::File => self
                     .inner
                     .file_write(waker, handle, buf)
-                    .map(|len| CmdResp::WriteData(len)),
+                    .map(|len| CmdResp::DataLen(len)),
                 Description::TcpStream => self
                     .inner
                     .tcp_stream_write(waker, handle, buf)
-                    .map(|len| CmdResp::WriteData(len)),
+                    .map(|len| CmdResp::DataLen(len)),
                 _ => {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidInput,
@@ -196,7 +204,7 @@ impl<T: RawDriverExt + Clone> RawDriver for RawDriverExtProxy<T> {
 
                 self.inner
                     .udp_socket_sendto(waker, handle, buf, raddr)
-                    .map(|len| CmdResp::WriteData(len))
+                    .map(|len| CmdResp::DataLen(len))
             }
             crate::Cmd::RecvFrom { waker, buf } => {
                 handle.expect(Description::UdpSocket)?;
@@ -257,6 +265,38 @@ impl<T: RawDriverExt + Clone> RawDriver for RawDriverExtProxy<T> {
                     .tick_next(handle, current)
                     .map(|next| CmdResp::Tick(next))
             }
+            crate::Cmd::LocalAddr => match handle.desc {
+                Description::TcpListener => self
+                    .inner
+                    .tcp_listener_local_addr(handle)
+                    .map(|laddr| CmdResp::SockAddr(laddr)),
+                Description::TcpStream => self
+                    .inner
+                    .tcp_stream_local_addr(handle)
+                    .map(|laddr| CmdResp::SockAddr(laddr)),
+                Description::UdpSocket => self
+                    .inner
+                    .udp_local_addr(handle)
+                    .map(|laddr| CmdResp::SockAddr(laddr)),
+                _ => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("Expect File / TcpStream , but got {:?}", handle.desc),
+                    ));
+                }
+            },
+            crate::Cmd::RemoteAddr => match handle.desc {
+                Description::TcpStream => self
+                    .inner
+                    .tcp_stream_remote_addr(handle)
+                    .map(|laddr| CmdResp::SockAddr(laddr)),
+                _ => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("Expect File / TcpStream , but got {:?}", handle.desc),
+                    ));
+                }
+            },
         }
     }
 

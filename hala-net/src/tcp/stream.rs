@@ -1,9 +1,4 @@
-use std::{
-    fmt::Debug,
-    io::{self, Read, Write},
-    net::ToSocketAddrs,
-    task::Poll,
-};
+use std::{fmt::Debug, io, net::ToSocketAddrs, task::Poll};
 
 use futures::{AsyncRead, AsyncWrite};
 use hala_io_driver::*;
@@ -20,6 +15,9 @@ impl Debug for TcpStream {
 }
 
 impl TcpStream {
+    pub fn new(driver: Driver, fd: Handle) -> Self {
+        Self { fd, driver }
+    }
     /// Opens a TCP connection to a remote host.
     pub async fn connect<S: ToSocketAddrs>(raddrs: S) -> io::Result<Self> {
         let driver = get_driver()?;
@@ -38,21 +36,31 @@ impl AsyncWrite for TcpStream {
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<io::Result<usize>> {
-        todo!()
+        poll(|| {
+            self.driver
+                .fd_cntl(
+                    self.fd,
+                    Cmd::Write {
+                        waker: cx.waker().clone(),
+                        buf,
+                    },
+                )?
+                .try_into_datalen()
+        })
     }
 
     fn poll_flush(
         self: std::pin::Pin<&mut Self>,
         _cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<io::Result<()>> {
-        todo!()
+        Poll::Ready(Ok(()))
     }
 
     fn poll_close(
         self: std::pin::Pin<&mut Self>,
         _cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<io::Result<()>> {
-        todo!()
+        Poll::Ready(Ok(()))
     }
 }
 
@@ -62,6 +70,16 @@ impl AsyncRead for TcpStream {
         cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        todo!()
+        poll(|| {
+            self.driver
+                .fd_cntl(
+                    self.fd,
+                    Cmd::Read {
+                        waker: cx.waker().clone(),
+                        buf,
+                    },
+                )?
+                .try_into_datalen()
+        })
     }
 }

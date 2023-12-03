@@ -130,6 +130,9 @@ pub enum Cmd<'a> {
     TryClone,
 
     Tick(usize),
+
+    LocalAddr,
+    RemoteAddr,
 }
 
 /// The response of `fd_cntl` .
@@ -141,13 +144,53 @@ pub enum CmdResp {
     /// Command `Accept` response data.
     Incoming(Handle, SocketAddr),
     /// Command `Write` / `SendTo` response data
-    WriteData(usize),
-    /// Command `Read` response data.
-    ReadData(usize),
+    DataLen(usize),
     /// Command `TryClone` response data.
     Cloned(Handle),
-
     Tick(usize),
+    SockAddr(SocketAddr),
+}
+
+impl CmdResp {
+    pub fn try_into_incoming(self) -> io::Result<(Handle, SocketAddr)> {
+        match self {
+            Self::Incoming(handle, raddr) => Ok((handle, raddr)),
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("Expect Incoming, but got {:?}", self),
+            )),
+        }
+    }
+
+    pub fn try_into_recv_from(self) -> io::Result<(usize, SocketAddr)> {
+        match self {
+            Self::RecvFrom(len, raddr) => Ok((len, raddr)),
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("Expect Incoming, but got {:?}", self),
+            )),
+        }
+    }
+
+    pub fn try_into_sockaddr(self) -> io::Result<SocketAddr> {
+        match self {
+            Self::SockAddr(addr) => Ok(addr),
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("Expect SockAddr, but got {:?}", self),
+            )),
+        }
+    }
+
+    pub fn try_into_datalen(self) -> io::Result<usize> {
+        match self {
+            Self::DataLen(len) => Ok(len),
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("Expect SockAddr, but got {:?}", self),
+            )),
+        }
+    }
 }
 
 /// io driver must implement this trait.
