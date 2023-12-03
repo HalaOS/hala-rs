@@ -29,6 +29,22 @@ impl TcpListener {
 
         let fd = driver.fd_open(Description::TcpListener, OpenFlags::Bind(&laddrs))?;
 
+        let poller = current_poller()?;
+
+        match driver.fd_cntl(
+            poller,
+            Cmd::Register {
+                source: fd,
+                interests: Interest::Readable,
+            },
+        ) {
+            Err(err) => {
+                _ = driver.fd_close(fd);
+                return Err(err);
+            }
+            _ => {}
+        }
+
         Ok(Self { fd, driver })
     }
 
@@ -41,7 +57,7 @@ impl TcpListener {
         .await?
         .try_into_incoming()?;
 
-        Ok((TcpStream::new(self.driver.clone(), handle), raddr))
+        Ok((TcpStream::new(self.driver.clone(), handle)?, raddr))
     }
 
     /// Returns the local socket address of this listener.
@@ -49,5 +65,11 @@ impl TcpListener {
         self.driver
             .fd_cntl(self.fd, Cmd::LocalAddr)?
             .try_into_sockaddr()
+    }
+}
+
+impl Drop for TcpListener {
+    fn drop(&mut self) {
+        self.driver.fd_close(self.fd).unwrap()
     }
 }

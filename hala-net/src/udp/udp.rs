@@ -20,6 +20,22 @@ impl UdpSocket {
 
         let fd = driver.fd_open(Description::UdpSocket, OpenFlags::Bind(&laddrs))?;
 
+        let poller = current_poller()?;
+
+        match driver.fd_cntl(
+            poller,
+            Cmd::Register {
+                source: fd,
+                interests: Interest::Readable,
+            },
+        ) {
+            Err(err) => {
+                _ = driver.fd_close(fd);
+                return Err(err);
+            }
+            _ => {}
+        }
+
         Ok(Self { fd, driver })
     }
 
@@ -75,5 +91,11 @@ impl UdpSocket {
                 .try_into_recv_from()
         })
         .await
+    }
+}
+
+impl Drop for UdpSocket {
+    fn drop(&mut self) {
+        self.driver.fd_close(self.fd).unwrap()
     }
 }

@@ -236,9 +236,15 @@ impl DriverVTable {
             handle: Handle,
             cmd: Cmd,
         ) -> io::Result<CmdResp> {
+            log::trace!("[HalaIO] fd_cntl({:?}), {:?}", handle, cmd);
+
             let header = ptr.cast::<DriverHeader<R>>();
 
-            unsafe { header.as_ref().data.fd_cntl(handle, cmd) }
+            let result = unsafe { header.as_ref().data.fd_cntl(handle, cmd) };
+
+            log::trace!("[HalaIO] fd_cntl({:?}), {:?}", handle, result);
+
+            result
         }
 
         fn fd_close<R: RawDriver + Clone>(

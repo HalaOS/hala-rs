@@ -15,18 +15,34 @@ impl Debug for TcpStream {
 }
 
 impl TcpStream {
-    pub fn new(driver: Driver, fd: Handle) -> Self {
-        Self { fd, driver }
+    pub fn new(driver: Driver, fd: Handle) -> io::Result<Self> {
+        let poller = current_poller()?;
+
+        match driver.fd_cntl(
+            poller,
+            Cmd::Register {
+                source: fd,
+                interests: Interest::Readable,
+            },
+        ) {
+            Err(err) => {
+                _ = driver.fd_close(fd);
+                return Err(err);
+            }
+            _ => {}
+        }
+
+        Ok(Self { fd, driver })
     }
     /// Opens a TCP connection to a remote host.
-    pub async fn connect<S: ToSocketAddrs>(raddrs: S) -> io::Result<Self> {
+    pub fn connect<S: ToSocketAddrs>(raddrs: S) -> io::Result<Self> {
         let driver = get_driver()?;
 
         let raddrs = raddrs.to_socket_addrs()?.into_iter().collect::<Vec<_>>();
 
         let fd = driver.fd_open(Description::TcpStream, OpenFlags::Connect(&raddrs))?;
 
-        Ok(Self { fd, driver })
+        Self::new(driver, fd)
     }
 }
 
@@ -81,5 +97,11 @@ impl AsyncRead for TcpStream {
                 )?
                 .try_into_datalen()
         })
+    }
+}
+
+impl Drop for TcpStream {
+    fn drop(&mut self) {
+        self.driver.fd_close(self.fd).unwrap()
     }
 }

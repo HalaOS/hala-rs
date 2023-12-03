@@ -1,52 +1,31 @@
 use super::*;
 
-use std::{cell::RefCell, io, sync::OnceLock};
+use std::{
+    io,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, OnceLock,
+    },
+    thread::JoinHandle,
+    time::Duration,
+};
 
-thread_local! {
-    static LOCAL_INSTANCE:  RefCell<Option<Driver>> = RefCell::new(None);
-}
-
-static INSTANCE: OnceLock<Driver> = OnceLock::new();
+static INSTANCE_DRIVER: OnceLock<Driver> = OnceLock::new();
 
 /// Get the currently registered io driver, or return a NotFound error if it is not registered.
 pub fn get_driver() -> io::Result<Driver> {
-    let driver = LOCAL_INSTANCE.with_borrow(|driver| {
-        driver.clone().ok_or(io::Error::new(
+    return INSTANCE_DRIVER
+        .get()
+        .map(|driver| driver.clone())
+        .ok_or(io::Error::new(
             io::ErrorKind::NotFound,
             "[Hala-IO] call register_local_driver/register_driver first",
-        ))
-    });
-
-    if driver.is_err() {
-        return INSTANCE
-            .get()
-            .map(|driver| driver.clone())
-            .ok_or(io::Error::new(
-                io::ErrorKind::NotFound,
-                "[Hala-IO] call register_local_driver/register_driver first",
-            ));
-    }
-
-    driver
-}
-
-/// Register new local thread io driver
-pub fn register_local_driver<D: Into<Driver>>(driver: D) -> io::Result<()> {
-    if INSTANCE.get().is_some() {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            "[Hala-IO] call register_local_driver after call register_driver",
         ));
-    }
-
-    LOCAL_INSTANCE.replace(Some(driver.into()));
-
-    Ok(())
 }
 
 /// Register new io driver
 pub fn register_driver<D: Into<Driver>>(driver: D) -> io::Result<()> {
-    INSTANCE.set(driver.into()).map_err(|_| {
+    INSTANCE_DRIVER.set(driver.into()).map_err(|_| {
         io::Error::new(
             io::ErrorKind::PermissionDenied,
             "[Hala-IO] call register_driver twice",
@@ -54,63 +33,65 @@ pub fn register_driver<D: Into<Driver>>(driver: D) -> io::Result<()> {
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+struct Poll {
+    driver: Driver,
+    handle: Handle,
+}
 
-    #[derive(Clone)]
-    struct MockDriver {}
-
-    struct MockFile {}
-
-    impl RawDriver for MockDriver {
-        fn fd_open(
-            &self,
-            desc: crate::Description,
-            _open_flags: crate::OpenFlags,
-        ) -> std::io::Result<crate::Handle> {
-            Ok(Handle::from((desc, MockFile {})))
-        }
-
-        fn fd_cntl(
-            &self,
-            _handle: crate::Handle,
-            _cmd: crate::Cmd,
-        ) -> std::io::Result<crate::CmdResp> {
-            Ok(CmdResp::None)
-        }
-
-        fn fd_close(&self, handle: crate::Handle) -> std::io::Result<()> {
-            handle.drop_as::<MockFile>();
-
-            Ok(())
-        }
+impl Drop for Poll {
+    fn drop(&mut self) {
+        self.driver.fd_close(self.handle).unwrap();
     }
+}
 
-    #[test]
-    fn test_global() {
-        get_driver().expect_err("Not init");
+static INSTANCE_POLL: OnceLock<Poll> = OnceLock::new();
 
-        _ = register_local_driver(MockDriver {});
+pub fn current_poller() -> io::Result<Handle> {
+    let poll = INSTANCE_POLL.get_or_init(|| {
+        let driver = get_driver().unwrap();
 
-        get_driver().expect("Thread init");
+        let handle = driver
+            .fd_open(Description::Poller, OpenFlags::None)
+            .unwrap();
 
-        std::thread::spawn(|| {
-            get_driver().expect_err("Not init");
+        Poll { driver, handle }
+    });
 
-            _ = register_local_driver(MockDriver {});
+    Ok(poll.handle)
+}
+
+pub struct PollGuard {
+    drop: Arc<AtomicBool>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl PollGuard {
+    pub fn new(timeout: Option<Duration>) -> io::Result<Self> {
+        let drop = Arc::new(AtomicBool::new(false));
+
+        let drop_cloned = drop.clone();
+
+        let driver = get_driver().unwrap();
+        let poller = current_poller().unwrap();
+
+        let handle = std::thread::spawn(move || {
+            while !drop_cloned.load(Ordering::SeqCst) {
+                log::trace!("[PollGuard] poll_once");
+                driver.fd_cntl(poller, Cmd::PollOnce(timeout)).unwrap();
+            }
+        });
+
+        Ok(Self {
+            drop,
+            handle: Some(handle),
         })
-        .join()
-        .unwrap();
+    }
+}
 
-        register_driver(MockDriver {}).unwrap();
+impl Drop for PollGuard {
+    fn drop(&mut self) {
+        self.drop.store(true, Ordering::SeqCst);
 
-        std::thread::spawn(|| {
-            get_driver().expect("Global init");
-
-            register_local_driver(MockDriver {}).expect_err("Thread init prohibited");
-        })
-        .join()
-        .unwrap();
+        self.handle.take().unwrap().join().unwrap();
     }
 }

@@ -2,6 +2,7 @@ use std::{
     io::{self, Read, Write},
     marker::PhantomData,
     task::Waker,
+    time::Duration,
 };
 
 use crate::{Description, Driver, Interest, IntoRawDriver, RawDriverExt, Token, TypedHandle};
@@ -159,6 +160,8 @@ where
         waker: Waker,
         handle: crate::Handle,
     ) -> std::io::Result<(crate::Handle, std::net::SocketAddr)> {
+        log::trace!("[MioDriver] TcpListener accept, {:?}", handle);
+
         handle.expect(Description::TcpListener)?;
 
         let typed_handle = TypedHandle::<mio::net::TcpListener>::new(handle);
@@ -330,7 +333,8 @@ where
     ) -> std::io::Result<()> {
         poller.expect(Description::Poller)?;
 
-        TypedHandle::<P>::new(poller).with(|poller| poller.poll_once(timeout))
+        TypedHandle::<P>::new(poller)
+            .with(|poller| poller.poll_once(Some(timeout.unwrap_or(Duration::from_secs(1)))))
     }
 
     fn poller_close(&self, poller: crate::Handle) -> std::io::Result<()> {
