@@ -1,5 +1,5 @@
 [workspace]
-members = ["hala-mux", "hala-io-driver"]
+members = ["hala-mux", "hala-io-driver", "hala-net"]
 resolver = "2"
 
 [workspace.package]
@@ -27,7 +27,7 @@ serde_json = {version = "^1.0"}
 thiserror = "^1.0.50"
 thiserror-no-std = "^2.0"
 
-hala-io-context = {path = "./hala-io-context", default = false, version = "^0.1"}
+hala-io-driver = {path = "./hala-io-driver", default = false, version = "^0.1"}
 hala-io-test = {path = "./hala-io-test", default = false, version = "^0.1"}
 hala-mux = {path = "./hala-mux", version = "^0.1"}
 hala-net = {path = "./hala-net", default = false, version = "^0.1"}

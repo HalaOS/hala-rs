@@ -4,49 +4,41 @@ use std::{
     net::{SocketAddr, ToSocketAddrs},
 };
 
-use mio::Interest;
-
-use hala_reactor::{ContextIoDevice, IoDevice, IoObject, MioDevice, ThreadModelGuard};
+use hala_io_driver::*;
 
 use super::TcpStream;
 
 /// A structure representing a socket tcp server
-pub struct TcpListener<IO: IoDevice + ContextIoDevice + 'static = MioDevice> {
-    io: IoObject<IO, mio::net::TcpListener>,
+pub struct TcpListener {
+    fd: Handle,
+    driver: Driver,
 }
 
-impl<IO: IoDevice + ContextIoDevice> Debug for TcpListener<IO> {
+impl Debug for TcpListener {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "TcpListener(Token = {:?})", self.io.token)
+        write!(f, "TcpListener(Handle = {:?})", self.fd)
     }
 }
 
-impl<IO: IoDevice + ContextIoDevice> TcpListener<IO> {
+impl TcpListener {
     /// Create new tcp listener with calling underly bind method.
-    pub fn bind<S: ToSocketAddrs>(laddr: S) -> io::Result<Self> {
-        let std_listener = std::net::TcpListener::bind(laddr)?;
+    pub fn bind<S: ToSocketAddrs>(laddrs: S) -> io::Result<Self> {
+        let driver = get_driver()?;
 
-        std_listener.set_nonblocking(true)?;
+        let laddrs = laddrs.to_socket_addrs()?.into_iter().collect::<Vec<_>>();
 
-        let listener = mio::net::TcpListener::from_std(std_listener);
+        let fd = driver.fd_open(Description::TcpListener, OpenFlags::Bind(&laddrs))?;
 
-        Ok(Self {
-            io: IoObject::new(listener, Interest::READABLE)?,
-        })
+        Ok(Self { fd, driver })
     }
 
     /// Accepts a new incoming connection from this listener.
     pub async fn accept(&self) -> io::Result<(TcpStream, SocketAddr)> {
-        let (stream, addr) = self
-            .io
-            .async_io(Interest::READABLE, || self.io.holder.get().accept())
-            .await?;
-
-        Ok((TcpStream::from_mio(stream)?, addr))
+        todo!()
     }
 
     /// Returns the local socket address of this listener.
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
-        self.io.holder.get().local_addr()
+        todo!()
     }
 }

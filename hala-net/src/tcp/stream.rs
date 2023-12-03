@@ -6,76 +6,62 @@ use std::{
 };
 
 use futures::{AsyncRead, AsyncWrite};
-use hala_reactor::{ContextIoDevice, IoDevice, IoObject, MioDevice, ThreadModelGuard};
-use mio::Interest;
+use hala_io_driver::*;
 
-pub struct TcpStream<IO: IoDevice + ContextIoDevice + 'static = MioDevice> {
-    io: IoObject<IO, mio::net::TcpStream>,
+pub struct TcpStream {
+    fd: Handle,
+    driver: Driver,
 }
 
-impl<IO: IoDevice + ContextIoDevice + 'static> Debug for TcpStream<IO> {
+impl Debug for TcpStream {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "TcpStream({:?})", self.io.token)
+        write!(f, "TcpStream({:?})", self.fd)
     }
 }
 
-impl<IO: IoDevice + ContextIoDevice + 'static> TcpStream<IO> {
+impl TcpStream {
     /// Opens a TCP connection to a remote host.
-    pub async fn connect<S: ToSocketAddrs>(addr: S) -> io::Result<Self> {
-        let std_stream = std::net::TcpStream::connect(addr)?;
+    pub async fn connect<S: ToSocketAddrs>(raddrs: S) -> io::Result<Self> {
+        let driver = get_driver()?;
 
-        std_stream.set_nonblocking(true)?;
+        let raddrs = raddrs.to_socket_addrs()?.into_iter().collect::<Vec<_>>();
 
-        let io = IoObject::new(
-            mio::net::TcpStream::from_std(std_stream),
-            Interest::READABLE.add(Interest::WRITABLE),
-        )?;
+        let fd = driver.fd_open(Description::TcpStream, OpenFlags::Connect(&raddrs))?;
 
-        Ok(Self { io })
-    }
-
-    /// Create object from [`mio::net::TcpStream`]
-    pub(crate) fn from_mio(stream: mio::net::TcpStream) -> io::Result<Self> {
-        let io = IoObject::new(stream, Interest::READABLE.add(Interest::WRITABLE))?;
-
-        Ok(Self { io })
+        Ok(Self { fd, driver })
     }
 }
 
-impl<IO: IoDevice + ContextIoDevice + 'static> AsyncWrite for TcpStream<IO> {
+impl AsyncWrite for TcpStream {
     fn poll_write(
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<io::Result<usize>> {
-        self.io.poll_io_with_context(cx, Interest::WRITABLE, || {
-            self.io.holder.get_mut().write(buf)
-        })
+        todo!()
     }
 
     fn poll_flush(
         self: std::pin::Pin<&mut Self>,
         _cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<io::Result<()>> {
-        Poll::Ready(self.io.holder.get_mut().flush())
+        todo!()
     }
 
     fn poll_close(
         self: std::pin::Pin<&mut Self>,
         _cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<io::Result<()>> {
-        Poll::Ready(self.io.holder.get().shutdown(std::net::Shutdown::Both))
+        todo!()
     }
 }
 
-impl<IO: IoDevice + ContextIoDevice + 'static> AsyncRead for TcpStream<IO> {
+impl AsyncRead for TcpStream {
     fn poll_read(
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        self.io.poll_io_with_context(cx, Interest::READABLE, || {
-            self.io.holder.get_mut().read(buf)
-        })
+        todo!()
     }
 }
