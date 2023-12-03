@@ -13,7 +13,7 @@ pub struct UdpSocket {
 
 impl UdpSocket {
     /// This function will create a new UDP socket and attempt to bind it to the addr provided.
-    pub async fn bind<S: ToSocketAddrs>(laddrs: S) -> io::Result<Self> {
+    pub fn bind<S: ToSocketAddrs>(laddrs: S) -> io::Result<Self> {
         let driver = get_driver()?;
 
         let laddrs = laddrs.to_socket_addrs()?.into_iter().collect::<Vec<_>>();

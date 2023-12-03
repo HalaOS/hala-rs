@@ -16,6 +16,15 @@ rand = {workspace = true}
 
 [dev-dependencies]
 divan = {workspace = true}
+hala-io-test = {workspace = true}
 pretty_env_logger = {workspace = true}
 
 [features]
+
+[[bench]]
+harness = false
+name = "udp_bench"
+
+[[bench]]
+harness = false
+name = "tcp_bench"
