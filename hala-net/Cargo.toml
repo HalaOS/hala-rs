@@ -12,7 +12,7 @@ futures = {workspace = true}
 hala-io-driver = {workspace = true}
 log = {workspace = true}
 mio = {workspace = true}
-rand = {workspace = true}
+quiche = {workspace = true, optional = true}
 
 [dev-dependencies]
 divan = {workspace = true}
@@ -21,6 +21,8 @@ pretty_env_logger = {workspace = true}
 rand = {workspace = true}
 
 [features]
+default = ["quice"]
+quice = ["quiche"]
 
 [[bench]]
 harness = false
