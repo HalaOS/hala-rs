@@ -97,6 +97,14 @@ impl UdpGroup {
     }
 }
 
+impl Drop for UdpGroup {
+    fn drop(&mut self) {
+        for handle in &self.fds {
+            self.driver.fd_close(*handle).unwrap();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use futures::task::SpawnExt;
