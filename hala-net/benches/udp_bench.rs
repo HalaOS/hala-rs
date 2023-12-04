@@ -6,6 +6,7 @@ use futures::executor::LocalPool;
 use futures::task::*;
 use hala_io_driver::*;
 use hala_net::*;
+use rand::seq::SliceRandom;
 
 fn main() {
     divan::main();
@@ -13,7 +14,6 @@ fn main() {
 
 static INIT: Once = Once::new();
 
-// Define a `fibonacci` function and register it for benchmarking.
 #[divan::bench(sample_size = 1000)]
 fn async_udp_echo(bench: Bencher) {
     INIT.call_once(|| {
@@ -63,6 +63,64 @@ fn async_udp_echo(bench: Bencher) {
             assert_eq!(read_size, echo_data.len());
 
             assert_eq!(raddr, laddr);
+        })
+    });
+}
+
+#[divan::bench(sample_size = 1000)]
+fn async_udpgroup_echo(bench: Bencher) {
+    INIT.call_once(|| {
+        _ = register_driver(mio_driver());
+    });
+
+    let _guard = PollGuard::new(None).unwrap();
+
+    let mut local_pool = LocalPool::new();
+
+    let spawner = local_pool.spawner();
+
+    let echo_data = b"hello";
+
+    let ports = 10000..10100;
+
+    let udp_server = UdpGroup::bind("127.0.0.1".parse().unwrap(), ports.clone()).unwrap();
+
+    let udp_client = UdpSocket::bind("127.0.0.1:0").unwrap();
+
+    let ports = ports.into_iter().collect::<Vec<_>>();
+
+    spawner
+        .spawn_local(async move {
+            loop {
+                let mut buf = [0; 1024];
+
+                let (_, read_size, raddr) = udp_server.recv_from(&mut buf).await.unwrap();
+
+                assert_eq!(read_size, echo_data.len());
+
+                let (_, write_size) = udp_server.send_to(&buf[..read_size], raddr).await.unwrap();
+
+                assert_eq!(write_size, echo_data.len());
+            }
+        })
+        .unwrap();
+
+    bench.bench_local(|| {
+        local_pool.run_until(async {
+            let port = ports.choose(&mut rand::thread_rng()).clone().unwrap();
+
+            let write_size = udp_client
+                .send_to(echo_data, format!("127.0.0.1:{}", port))
+                .await
+                .unwrap();
+
+            assert_eq!(write_size, echo_data.len());
+
+            let mut buf = [0; 1024];
+
+            let (read_size, _) = udp_client.recv_from(&mut buf).await.unwrap();
+
+            assert_eq!(read_size, echo_data.len());
         })
     });
 }

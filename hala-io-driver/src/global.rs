@@ -76,7 +76,7 @@ impl PollGuard {
 
         let handle = std::thread::spawn(move || {
             while !drop_cloned.load(Ordering::SeqCst) {
-                log::trace!("[PollGuard] poll_once");
+                // log::trace!("[PollGuard] poll_once");
                 driver.fd_cntl(poller, Cmd::PollOnce(timeout)).unwrap();
             }
         });

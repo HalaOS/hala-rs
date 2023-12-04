@@ -26,7 +26,7 @@ impl UdpSocket {
             poller,
             Cmd::Register {
                 source: fd,
-                interests: Interest::Readable,
+                interests: Interest::Readable | Interest::Writable,
             },
         ) {
             Err(err) => {

@@ -63,7 +63,7 @@ impl MioNotifierInner {
     fn add_waker(&mut self, token: Token, interests: Interest, waker: Waker) {
         if interests.contains(Interest::Readable) {
             self.read_wakers.insert(token, waker.clone());
-        } else if interests.contains(Interest::Readable) {
+        } else if interests.contains(Interest::Writable) {
             self.write_wakers.insert(token, waker.clone());
         }
     }
@@ -71,7 +71,7 @@ impl MioNotifierInner {
     fn remove_waker(&mut self, token: Token, interests: Interest) -> io::Result<Option<Waker>> {
         if interests.contains(Interest::Readable) {
             Ok(self.read_wakers.remove(&token))
-        } else if interests.contains(Interest::Readable) {
+        } else if interests.contains(Interest::Writable) {
             Ok(self.write_wakers.remove(&token))
         } else {
             Ok(None)
