@@ -10,14 +10,30 @@ pub(crate) const MAX_DATAGRAM_SIZE: usize = 1350;
 
 #[cfg(test)]
 mod test {
+    use std::path::Path;
+
     use super::*;
 
     use futures::task::*;
 
-    fn config() -> Config {
+    fn config(is_server: bool) -> Config {
         let mut config = quiche::Config::new(quiche::PROTOCOL_VERSION).unwrap();
 
         config.verify_peer(false);
+
+        if is_server {
+            let root_path = Path::new(env!("CARGO_MANIFEST_DIR"));
+
+            log::debug!("test run dir {:?}", root_path);
+
+            config
+                .load_cert_chain_from_pem_file(root_path.join("cert/cert.crt").to_str().unwrap())
+                .unwrap();
+
+            config
+                .load_priv_key_from_pem_file(root_path.join("cert/cert.key").to_str().unwrap())
+                .unwrap();
+        }
 
         config
             .set_application_protos(&[b"hq-interop", b"hq-29", b"hq-28", b"hq-27", b"http/0.9"])
@@ -37,7 +53,7 @@ mod test {
     }
 
     fn test_server() -> Vec<std::net::SocketAddr> {
-        let server = QuicServer::bind("127.0.0.1:0", config()).unwrap();
+        let mut server = QuicServer::bind("127.0.0.1:0", config(true)).unwrap();
 
         let addrs = server.local_addrs().map(|addr| *addr).collect::<Vec<_>>();
 
@@ -58,7 +74,7 @@ mod test {
 
         let raddrs = test_server();
 
-        let mut client = QuicClient::bind("127.0.0.1:0", config()).unwrap();
+        let mut client = QuicClient::bind("127.0.0.1:0", config(false)).unwrap();
 
         client.connect(raddrs.as_slice()).await.unwrap();
     }

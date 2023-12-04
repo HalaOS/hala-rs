@@ -14,6 +14,7 @@ log = {workspace = true}
 mio = {workspace = true}
 quiche = {workspace = true, optional = true}
 rand = {workspace = true, optional = true}
+ring = {workspace = true, optional = true}
 
 [dev-dependencies]
 divan = {workspace = true}
@@ -23,7 +24,7 @@ rand = {workspace = true}
 
 [features]
 default = ["quice"]
-quice = ["quiche", "rand"]
+quice = ["quiche", "rand", "ring"]
 
 [[bench]]
 harness = false
