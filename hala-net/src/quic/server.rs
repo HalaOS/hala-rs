@@ -4,53 +4,139 @@ use std::{
     net::{SocketAddr, ToSocketAddrs},
 };
 
-use quiche::{Connection, ConnectionId, Header};
-use rand::{rngs::OsRng, RngCore};
+use futures::{
+    channel::mpsc::{channel, Receiver, Sender},
+    select, FutureExt, SinkExt, StreamExt,
+};
+use quiche::{Config, Connection, ConnectionId, Header};
+
 use ring::{hmac::Key, rand::SystemRandom};
 
 use crate::{quic::MAX_DATAGRAM_SIZE, UdpGroup};
 
-/// Client for quic protocol
-pub struct QuicServer {
+#[derive(Clone)]
+enum QuicServerEvent {
+    StreamData {
+        buf: Vec<u8>,
+        cid: ConnectionId<'static>,
+        stream_id: u64,
+    },
+}
+
+pub struct QuicServerEventLoop {
     udp_group: UdpGroup,
     config: quiche::Config,
     conn_id_seed: Key,
     clients: HashMap<ConnectionId<'static>, Connection>,
+    #[allow(unused)]
+    sender: Sender<QuicServerEvent>,
+    receiver: Receiver<QuicServerEvent>,
 }
 
-impl QuicServer {
-    /// Bind quic client peer to `laddrs`
-    pub fn bind<S: ToSocketAddrs>(laddrs: S, config: quiche::Config) -> io::Result<Self> {
-        let mut scid = vec![0; quiche::MAX_CONN_ID_LEN];
-
-        OsRng.fill_bytes(&mut scid);
-
+impl QuicServerEventLoop {
+    pub fn local_addrs(&self) -> impl Iterator<Item = &SocketAddr> {
+        self.udp_group.local_addrs()
+    }
+    fn bind<S: ToSocketAddrs>(
+        laddrs: S,
+        config: Config,
+        sender: Sender<QuicServerEvent>,
+        receiver: Receiver<QuicServerEvent>,
+    ) -> io::Result<Self> {
         let rng = SystemRandom::new();
 
-        let conn_id_seed = ring::hmac::Key::generate(ring::hmac::HMAC_SHA256, &rng).unwrap();
+        let conn_id_seed = ring::hmac::Key::generate(ring::hmac::HMAC_SHA256, &rng)
+            .map_err(|err| io::Error::new(io::ErrorKind::Other, format!("${err}")))?;
 
-        Ok(QuicServer {
+        Ok(Self {
             udp_group: UdpGroup::bind(laddrs)?,
             config: config,
             conn_id_seed,
             clients: Default::default(),
+            sender,
+            receiver,
         })
     }
-    pub async fn accept(&mut self) -> io::Result<()> {
+    #[allow(unused)]
+    pub async fn run_loop(&mut self) -> io::Result<()> {
         let mut buf = [0; MAX_DATAGRAM_SIZE];
 
-        #[allow(unused)]
         loop {
-            let (laddr, read_size, raddr) = self.udp_group.recv_from(&mut buf).await?;
+            self.select_event(&mut buf).await?;
 
-            if let Err(err) = self
-                .handle_package(&mut buf[..read_size], raddr, laddr)
-                .await
-            {
-                log::error!("{:?}", err);
+            self.loop_client_outgoing(&mut buf).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn loop_client_outgoing(&mut self, buf: &mut [u8]) -> io::Result<()> {
+        for conn in self.clients.values_mut() {
+            if conn.is_established() || conn.is_in_early_data() {
+                loop {
+                    let (write, send_info) = match conn.send(buf) {
+                        Ok(v) => v,
+
+                        Err(quiche::Error::Done) => {
+                            log::debug!("{} done writing", conn.trace_id());
+                            break;
+                        }
+
+                        Err(e) => {
+                            log::error!("{} send failed: {:?}", conn.trace_id(), e);
+
+                            conn.close(false, 0x1, b"fail").ok();
+                            break;
+                        }
+                    };
+
+                    self.udp_group.send_to(&buf[..write], send_info.to).await?;
+                }
             }
+        }
 
-            break;
+        Ok(())
+    }
+
+    async fn select_event(&mut self, buf: &mut [u8]) -> io::Result<()> {
+        select! {
+           event = self.receiver.next().fuse() => {
+                if let Some(event) = event {
+                    match event {
+                        QuicServerEvent::StreamData { buf, cid, stream_id } => {
+                            if let Some(conn) = self.clients.get_mut(&cid) {
+                                match conn.stream_send(stream_id, &buf, false) {
+                                    Ok(_) => {},
+
+                                    Err(quiche::Error::Done) => {},
+
+                                    Err(err) => {
+                                        log::error!("{} stream send failed {:?}", conn.trace_id(), err);
+                                    },
+                                }
+                            }
+                        },
+                    }
+                } else {
+                    return Ok(());
+                }
+           },
+           data = self.udp_group.recv_from(buf).fuse() => {
+                let (laddr,read_size, raddr) = data?;
+
+                match self.handle_package(&mut buf[..read_size], raddr, laddr).await {
+                    Err(err) => {
+                        log::error!("{}",err);
+
+                        if err.kind() != io::ErrorKind::Interrupted {
+                            log::error!("stop event_loop");
+                            return Err(err);
+                        }
+
+                    }
+                    _ => {}
+                }
+           }
         }
 
         Ok(())
@@ -91,14 +177,16 @@ impl QuicServer {
 
         client.recv(buf, recv_info).map_err(|err| {
             io::Error::new(
-                io::ErrorKind::InvalidData,
+                io::ErrorKind::Interrupted,
                 format!("{:?} incoming data error,{}", client.trace_id(), err),
             )
         })?;
 
-        let (send_size, _) = client.send(buf).map_err(|err| {
+        let mut buf = [0; MAX_DATAGRAM_SIZE];
+
+        let (send_size, _) = client.send(&mut buf).map_err(|err| {
             io::Error::new(
-                io::ErrorKind::InvalidData,
+                io::ErrorKind::Interrupted,
                 format!("{:?} send outgoing data error,{}", client.trace_id(), err),
             )
         })?;
@@ -117,7 +205,7 @@ impl QuicServer {
     ) -> io::Result<&mut Connection> {
         if header.ty != quiche::Type::Initial {
             return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
+                io::ErrorKind::Interrupted,
                 format!("Expect init package, but got {:?}", header.ty),
             ));
         }
@@ -126,7 +214,7 @@ impl QuicServer {
             self.negotiation_version(header, from).await?;
 
             return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
+                io::ErrorKind::Interrupted,
                 format!("Doing version negotiation"),
             ));
         }
@@ -152,7 +240,7 @@ impl QuicServer {
             self.udp_group.send_to(&buf[..len], from).await?;
 
             return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
+                io::ErrorKind::Interrupted,
                 format!("Doing stateless retry"),
             ));
         }
@@ -161,7 +249,7 @@ impl QuicServer {
 
         if conn_id.len() != header.dcid.len() {
             return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
+                io::ErrorKind::Interrupted,
                 format!(
                     "Invalid destination connection ID, expect len = {}",
                     conn_id.len()
@@ -176,7 +264,7 @@ impl QuicServer {
         let conn =
             quiche::accept(&scid, Some(&odcid), to, from, &mut self.config).map_err(|err| {
                 io::Error::new(
-                    io::ErrorKind::InvalidData,
+                    io::ErrorKind::Interrupted,
                     format!("Accept connection failed,{:?}", err),
                 )
             })?;
@@ -195,14 +283,14 @@ impl QuicServer {
     ) -> io::Result<quiche::ConnectionId<'a>> {
         if token.len() < 6 {
             return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
+                io::ErrorKind::Interrupted,
                 format!("Invalid token, token length < 6"),
             ));
         }
 
         if &token[..6] != b"quiche" {
             return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
+                io::ErrorKind::Interrupted,
                 format!("Invalid token, not start with 'quiche'"),
             ));
         }
@@ -216,7 +304,7 @@ impl QuicServer {
 
         if token.len() < addr.len() || &token[..addr.len()] != addr.as_slice() {
             return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
+                io::ErrorKind::Interrupted,
                 format!("Invalid token, address mismatch"),
             ));
         }
@@ -261,7 +349,7 @@ impl QuicServer {
 
             Err(e) => {
                 return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
+                    io::ErrorKind::Interrupted,
                     format!("parse received package header error, {:?}", e),
                 ));
             }
@@ -273,8 +361,39 @@ impl QuicServer {
 
         Ok((hdr, conn_id))
     }
+}
 
-    pub fn local_addrs(&self) -> impl Iterator<Item = &SocketAddr> {
-        self.udp_group.local_addrs()
+/// Client for quic protocol
+pub struct QuicServer {
+    sender: Sender<QuicServerEvent>,
+    receiver: Receiver<QuicServerEvent>,
+}
+
+impl QuicServer {
+    /// Bind quic client peer to `laddrs`
+    pub fn bind<S: ToSocketAddrs>(
+        laddrs: S,
+        config: quiche::Config,
+        event_loop_max_quene_len: usize,
+    ) -> io::Result<(Self, QuicServerEventLoop)> {
+        let (sx1, rx1) = channel::<QuicServerEvent>(event_loop_max_quene_len);
+
+        let (sx2, rx2) = channel::<QuicServerEvent>(event_loop_max_quene_len);
+
+        let event_loop = QuicServerEventLoop::bind(laddrs, config, sx2, rx1)?;
+
+        Ok((
+            QuicServer {
+                sender: sx1,
+                receiver: rx2,
+            },
+            event_loop,
+        ))
+    }
+
+    pub async fn accept(&mut self) -> io::Result<()> {
+        self.receiver.next().await;
+
+        Ok(())
     }
 }

@@ -53,16 +53,20 @@ mod test {
     }
 
     fn test_server() -> Vec<std::net::SocketAddr> {
-        let mut server = QuicServer::bind("127.0.0.1:0", config(true)).unwrap();
+        let (mut server, mut event_loop) =
+            QuicServer::bind("127.0.0.1:0", config(true), 1024).unwrap();
 
-        let addrs = server.local_addrs().map(|addr| *addr).collect::<Vec<_>>();
+        let addrs = event_loop
+            .local_addrs()
+            .map(|addr| *addr)
+            .collect::<Vec<_>>();
 
         hala_io_test::spawner()
-            .spawn(async move {
-                loop {
-                    server.accept().await.unwrap()
-                }
-            })
+            .spawn(async move { event_loop.run_loop().await.unwrap() })
+            .unwrap();
+
+        hala_io_test::spawner()
+            .spawn(async move { server.accept().await.unwrap() })
             .unwrap();
 
         addrs
