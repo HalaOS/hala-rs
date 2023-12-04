@@ -1,8 +1,7 @@
 use std::{
     collections::HashMap,
     io,
-    net::{IpAddr, SocketAddr, ToSocketAddrs},
-    ops::Range,
+    net::{SocketAddr, ToSocketAddrs},
 };
 
 use hala_io_driver::*;
@@ -16,16 +15,14 @@ pub struct UdpGroup {
 
 impl UdpGroup {
     /// This function will create a new UDP socket and attempt to bind it to the addr provided.
-    pub fn bind(ip: IpAddr, ports: Range<u16>) -> io::Result<Self> {
+    pub fn bind<S: ToSocketAddrs>(laddrs: S) -> io::Result<Self> {
         let driver = get_driver()?;
 
         let mut fds = vec![];
 
         let mut addrs = HashMap::new();
 
-        for port in ports {
-            let addr = SocketAddr::new(ip, port);
-
+        for addr in laddrs.to_socket_addrs()? {
             let fd = driver.fd_open(Description::UdpSocket, OpenFlags::Bind(&[addr]))?;
 
             let poller = current_poller()?;
@@ -43,6 +40,8 @@ impl UdpGroup {
                 }
                 _ => {}
             }
+
+            let addr = driver.fd_cntl(fd, Cmd::LocalAddr)?.try_into_sockaddr()?;
 
             addrs.insert(fd.token, addr);
 
@@ -95,6 +94,10 @@ impl UdpGroup {
         })
         .await
     }
+
+    pub fn local_addrs(&self) -> impl Iterator<Item = &SocketAddr> {
+        self.addrs.values()
+    }
 }
 
 impl Drop for UdpGroup {
@@ -118,9 +121,15 @@ mod tests {
     async fn udp_echo_test() {
         let echo_data = b"hello";
 
-        let ports = 10000..10100;
+        let ports = 10000u16..10100;
 
-        let udp_server = UdpGroup::bind("127.0.0.1".parse().unwrap(), ports.clone()).unwrap();
+        let addrs = ports
+            .clone()
+            .into_iter()
+            .map(|port| format!("127.0.0.1:{}", port).parse::<SocketAddr>().unwrap())
+            .collect::<Vec<_>>();
+
+        let udp_server = UdpGroup::bind(addrs.as_slice()).unwrap();
 
         let udp_client = UdpSocket::bind("127.0.0.1:0").unwrap();
 

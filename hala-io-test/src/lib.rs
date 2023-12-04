@@ -23,8 +23,8 @@ static START: Once = Once::new();
 
 pub fn socket_tester<T, Fut>(label: &'static str, test: T)
 where
-    T: FnOnce() -> Fut + Send + 'static,
-    Fut: Future<Output = ()> + Send + 'static,
+    T: FnOnce() -> Fut + 'static,
+    Fut: Future<Output = ()> + 'static,
 {
     START.call_once(|| {
         _ = register_driver(mio_driver());

@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use std::sync::Once;
 
 use divan::Bencher;
@@ -83,7 +84,13 @@ fn async_udpgroup_echo(bench: Bencher) {
 
     let ports = 10000..10100;
 
-    let udp_server = UdpGroup::bind("127.0.0.1".parse().unwrap(), ports.clone()).unwrap();
+    let addrs = ports
+        .clone()
+        .into_iter()
+        .map(|port| format!("127.0.0.1:{}", port).parse::<SocketAddr>().unwrap())
+        .collect::<Vec<_>>();
+
+    let udp_server = UdpGroup::bind(addrs.as_slice()).unwrap();
 
     let udp_client = UdpSocket::bind("127.0.0.1:0").unwrap();
 

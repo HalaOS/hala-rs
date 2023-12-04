@@ -13,6 +13,7 @@ hala-io-driver = {workspace = true}
 log = {workspace = true}
 mio = {workspace = true}
 quiche = {workspace = true, optional = true}
+rand = {workspace = true, optional = true}
 
 [dev-dependencies]
 divan = {workspace = true}
@@ -22,7 +23,7 @@ rand = {workspace = true}
 
 [features]
 default = ["quice"]
-quice = ["quiche"]
+quice = ["quiche", "rand"]
 
 [[bench]]
 harness = false
