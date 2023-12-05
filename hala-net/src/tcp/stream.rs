@@ -5,6 +5,7 @@ use hala_io_driver::*;
 
 pub struct TcpStream {
     fd: Handle,
+    poller: Handle,
     driver: Driver,
 }
 
@@ -32,7 +33,7 @@ impl TcpStream {
             _ => {}
         }
 
-        Ok(Self { fd, driver })
+        Ok(Self { fd, driver, poller })
     }
     /// Opens a TCP connection to a remote host.
     pub fn connect<S: ToSocketAddrs>(raddrs: S) -> io::Result<Self> {
@@ -102,6 +103,9 @@ impl AsyncRead for TcpStream {
 
 impl Drop for TcpStream {
     fn drop(&mut self) {
+        self.driver
+            .fd_cntl(self.poller, Cmd::Deregister(self.fd))
+            .unwrap();
         self.driver.fd_close(self.fd).unwrap()
     }
 }

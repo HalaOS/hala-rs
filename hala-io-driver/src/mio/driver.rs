@@ -2,7 +2,6 @@ use std::{
     io::{self, Read, Write},
     marker::PhantomData,
     task::Waker,
-    time::Duration,
 };
 
 use crate::{Description, Driver, Interest, IntoRawDriver, RawDriverExt, Token, TypedHandle};
@@ -133,16 +132,40 @@ where
         unimplemented!("Unimplement file_close")
     }
 
-    fn tick_open(&self, _duration: std::time::Duration) -> std::io::Result<crate::Handle> {
-        unimplemented!("Unimplement tick_open")
+    fn timeout_open(&self, duration: std::time::Duration) -> std::io::Result<crate::Handle> {
+        Ok((Description::Timeout, MioTimeout::new(duration)).into())
     }
 
-    fn tick_next(&self, _handle: crate::Handle, _current: usize) -> std::io::Result<usize> {
-        unimplemented!("Unimplement tick_next")
+    fn timeout(&self, waker: Waker, handle: crate::Handle) -> std::io::Result<bool> {
+        handle.expect(Description::Timeout)?;
+
+        TypedHandle::<MioTimeout>::new(handle).with(|timeout| {
+            if !timeout.is_register() {
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "Call fd_cntl/Register first",
+                ));
+            }
+
+            log::debug!("{:?}", timeout);
+
+            if timeout.is_expired() {
+                return Ok(true);
+            }
+
+            self.notifier
+                .add_waker(handle.token, Interest::Readable, waker);
+
+            Ok(false)
+        })
     }
 
-    fn tick_close(&self, _handle: crate::Handle) -> std::io::Result<()> {
-        unimplemented!("Unimplement tick_close")
+    fn timeout_close(&self, handle: crate::Handle) -> std::io::Result<()> {
+        handle.expect(Description::Timeout)?;
+
+        handle.drop_as::<MioTimeout>();
+
+        Ok(())
     }
 
     fn tcp_listener_bind(&self, laddrs: &[std::net::SocketAddr]) -> std::io::Result<crate::Handle> {
@@ -334,7 +357,7 @@ where
         poller.expect(Description::Poller)?;
 
         TypedHandle::<P>::new(poller).with(|poller| {
-            let events = poller.poll_once(Some(timeout.unwrap_or(Duration::from_millis(10))))?;
+            let events = poller.poll_once(timeout)?;
 
             for (token, interests) in events {
                 self.notifier.on(token, interests);

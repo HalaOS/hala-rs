@@ -128,9 +128,7 @@ pub enum Cmd<'a> {
 
     /// Try to clone the handle.
     TryClone,
-
-    Tick(usize),
-
+    Timeout(Waker),
     LocalAddr,
     RemoteAddr,
 }
@@ -145,9 +143,9 @@ pub enum CmdResp {
     Incoming(Handle, SocketAddr),
     /// Command `Write` / `SendTo` response data
     DataLen(usize),
+    Timeout(bool),
     /// Command `TryClone` response data.
     Cloned(Handle),
-    Tick(usize),
     SockAddr(SocketAddr),
 }
 
@@ -188,6 +186,16 @@ impl CmdResp {
             _ => Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!("Expect SockAddr, but got {:?}", self),
+            )),
+        }
+    }
+
+    pub fn try_into_timeout(self) -> io::Result<bool> {
+        match self {
+            Self::Timeout(status) => Ok(status),
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("Expect Timeout, but got {:?}", self),
             )),
         }
     }

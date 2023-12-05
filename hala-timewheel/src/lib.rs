@@ -12,22 +12,22 @@ use alloc::collections::{BTreeMap, VecDeque};
 use std::collections::{HashMap, VecDeque};
 
 struct Slot<T> {
-    round: u64,
+    round: u128,
     t: T,
 }
 
 pub struct TimeWheel<T> {
     #[cfg(not(feature = "std"))]
-    hashed: BTreeMap<u64, VecDeque<Slot<T>>>,
+    hashed: BTreeMap<u128, VecDeque<Slot<T>>>,
     #[cfg(feature = "std")]
-    hashed: HashMap<u64, VecDeque<Slot<T>>>,
-    steps: u64,
-    tick: u64,
+    hashed: HashMap<u128, VecDeque<Slot<T>>>,
+    steps: u128,
+    tick: u128,
 }
 
 impl<T> TimeWheel<T> {
     // create new hashed time wheel instance
-    pub fn new(steps: u64) -> Self {
+    pub fn new(steps: u128) -> Self {
         TimeWheel {
             steps: steps,
             hashed: Default::default(),
@@ -35,7 +35,7 @@ impl<T> TimeWheel<T> {
         }
     }
 
-    pub fn add(&mut self, timeout: u64, value: T) {
+    pub fn add(&mut self, timeout: u128, value: T) -> u128 {
         let slot = (timeout + self.tick) % self.steps;
 
         let slots = self.hashed.entry(slot).or_insert(Default::default());
@@ -44,6 +44,30 @@ impl<T> TimeWheel<T> {
             t: value,
             round: (timeout + self.tick) / self.steps,
         });
+
+        slot
+    }
+
+    pub fn remove(&mut self, slot: u128, value: T) -> bool
+    where
+        T: PartialEq,
+    {
+        if let Some(slots) = self.hashed.get_mut(&slot) {
+            let index =
+                slots
+                    .iter()
+                    .enumerate()
+                    .find_map(|(index, v)| if v.t == value { Some(index) } else { None });
+
+            if let Some(index) = index {
+                slots.remove(index);
+                return true;
+            } else {
+                return false;
+            }
+        }
+
+        false
     }
 
     pub fn tick(&mut self) -> Poll<VecDeque<T>> {
@@ -72,5 +96,21 @@ impl<T> TimeWheel<T> {
         }
 
         Poll::Pending
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::TimeWheel;
+
+    #[test]
+    fn test_remove() {
+        let mut time_wheel = TimeWheel::new(1024);
+
+        let slot = time_wheel.add(10, 1);
+
+        assert!(time_wheel.remove(slot, 1));
+
+        assert!(!time_wheel.remove(slot, 10));
     }
 }

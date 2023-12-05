@@ -22,11 +22,11 @@ pub trait RawDriverExt {
     /// Close file handle
     fn file_close(&self, handle: Handle) -> io::Result<()>;
 
-    fn tick_open(&self, duration: Duration) -> io::Result<Handle>;
+    fn timeout_open(&self, duration: Duration) -> io::Result<Handle>;
 
-    fn tick_next(&self, handle: Handle, current: usize) -> io::Result<usize>;
+    fn timeout(&self, waker: Waker, handle: Handle) -> io::Result<bool>;
 
-    fn tick_close(&self, handle: Handle) -> io::Result<()>;
+    fn timeout_close(&self, handle: Handle) -> io::Result<()>;
 
     /// Create new `TcpListener` socket and bound to `laddrs`
     fn tcp_listener_bind(&self, laddrs: &[SocketAddr]) -> io::Result<Handle>;
@@ -151,10 +151,10 @@ impl<T: RawDriverExt + Clone> RawDriver for RawDriverExtProxy<T> {
 
                 self.inner.udp_socket_bind(laddrs)
             }
-            crate::Description::Tick => {
+            crate::Description::Timeout => {
                 let duration = open_flags.try_into_duration()?;
 
-                self.inner.tick_open(duration)
+                self.inner.timeout_open(duration)
             }
             crate::Description::Poller => self.inner.poller_open(),
             crate::Description::External(id) => {
@@ -176,6 +176,7 @@ impl<T: RawDriverExt + Clone> RawDriver for RawDriverExtProxy<T> {
                     .inner
                     .tcp_stream_read(waker, handle, buf)
                     .map(|len| CmdResp::DataLen(len)),
+
                 _ => {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidInput,
@@ -258,12 +259,12 @@ impl<T: RawDriverExt + Clone> RawDriver for RawDriverExtProxy<T> {
                     .fd_user_define_clone(handle)
                     .map(|handle| CmdResp::Cloned(handle)),
             },
-            crate::Cmd::Tick(current) => {
-                handle.expect(Description::Tick)?;
+            crate::Cmd::Timeout(waker) => {
+                handle.expect(Description::Timeout)?;
 
                 self.inner
-                    .tick_next(handle, current)
-                    .map(|next| CmdResp::Tick(next))
+                    .timeout(waker, handle)
+                    .map(|next| CmdResp::Timeout(next))
             }
             crate::Cmd::LocalAddr => match handle.desc {
                 Description::TcpListener => self
@@ -306,7 +307,7 @@ impl<T: RawDriverExt + Clone> RawDriver for RawDriverExtProxy<T> {
             Description::TcpListener => self.inner.tcp_listener_close(handle),
             Description::TcpStream => self.inner.tcp_stream_close(handle),
             Description::UdpSocket => self.inner.udp_socket_close(handle),
-            Description::Tick => self.inner.tick_close(handle),
+            Description::Timeout => self.inner.timeout_close(handle),
             Description::Poller => self.inner.poller_close(handle),
             Description::External(id) => self.inner.fd_user_define_close(id, handle),
         }

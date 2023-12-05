@@ -8,6 +8,7 @@ use hala_io_driver::*;
 /// A UDP socket.
 pub struct UdpSocket {
     fd: Handle,
+    poller: Handle,
     driver: Driver,
 }
 
@@ -36,7 +37,7 @@ impl UdpSocket {
             _ => {}
         }
 
-        Ok(Self { fd, driver })
+        Ok(Self { fd, driver, poller })
     }
 
     /// Returns the local address that this socket is bound to.
@@ -96,6 +97,9 @@ impl UdpSocket {
 
 impl Drop for UdpSocket {
     fn drop(&mut self) {
+        self.driver
+            .fd_cntl(self.poller, Cmd::Deregister(self.fd))
+            .unwrap();
         self.driver.fd_close(self.fd).unwrap()
     }
 }

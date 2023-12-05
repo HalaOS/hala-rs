@@ -1,5 +1,5 @@
 [workspace]
-members = ["hala-mux", "hala-io-driver", "hala-net", "hala-io-test", "hala-timewheel"]
+members = ["hala-mux", "hala-io-driver", "hala-net", "hala-io-test", "hala-timewheel", "hala-io-timeout"]
 resolver = "2"
 
 [workspace.package]
@@ -30,6 +30,7 @@ thiserror-no-std = "^2.0"
 
 hala-io-driver = {path = "./hala-io-driver", default = false, version = "^0.1"}
 hala-io-test = {path = "./hala-io-test", default = false, version = "^0.1"}
+hala-io-timeout = {path = "./hala-io-timeout", version = "^0.1"}
 hala-mux = {path = "./hala-mux", version = "^0.1"}
 hala-net = {path = "./hala-net", default = false, version = "^0.1"}
 hala-timewheel = {path = "./hala-timewheel", version = "^0.1"}

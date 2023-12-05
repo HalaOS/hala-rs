@@ -30,8 +30,8 @@ pub enum Description {
     TcpStream,
     /// File description for generating `UdpSocket`
     UdpSocket,
-    /// File description for generating clock tick event
-    Tick,
+    /// File description for timeout event
+    Timeout,
     /// poller for io readiness events.
     Poller,
     /// Extended file description type defined by the implementation.

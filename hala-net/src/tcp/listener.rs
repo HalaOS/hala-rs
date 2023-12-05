@@ -11,6 +11,7 @@ use super::TcpStream;
 /// A structure representing a socket tcp server
 pub struct TcpListener {
     fd: Handle,
+    poller: Handle,
     driver: Driver,
 }
 
@@ -45,7 +46,7 @@ impl TcpListener {
             _ => {}
         }
 
-        Ok(Self { fd, driver })
+        Ok(Self { fd, driver, poller })
     }
 
     /// Accepts a new incoming connection from this listener.
@@ -70,6 +71,9 @@ impl TcpListener {
 
 impl Drop for TcpListener {
     fn drop(&mut self) {
+        self.driver
+            .fd_cntl(self.poller, Cmd::Deregister(self.fd))
+            .unwrap();
         self.driver.fd_close(self.fd).unwrap()
     }
 }
