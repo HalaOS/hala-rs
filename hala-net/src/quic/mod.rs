@@ -74,12 +74,14 @@ mod test {
 
     #[hala_io_test::test]
     async fn test_client() {
-        _ = pretty_env_logger::try_init();
+        // _ = pretty_env_logger::try_init();
 
         let raddrs = test_server();
 
-        let mut client = QuicClient::bind("127.0.0.1:0", config(false)).unwrap();
+        for _ in 0..1000 {
+            let mut client = QuicClient::bind("127.0.0.1:0", config(false)).unwrap();
 
-        client.connect(raddrs.as_slice()).await.unwrap();
+            client.connect(raddrs.as_slice()).await.unwrap();
+        }
     }
 }
