@@ -9,6 +9,7 @@ version.workspace = true
 
 [dependencies]
 bitmask-enum = {workspace = true}
+hala-timewheel = {workspace = true, optional = true}
 log = {workspace = true}
 mio = {workspace = true, optional = true}
 
@@ -22,7 +23,7 @@ async_io = []
 default = ["mio_driver", "global", "driver_ext", "async_io"]
 driver_ext = []
 global = []
-mio_driver = ["mio"]
+mio_driver = ["mio", "hala-timewheel"]
 
 [[bench]]
 harness = false

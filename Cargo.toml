@@ -1,5 +1,5 @@
 [workspace]
-members = ["hala-mux", "hala-io-driver", "hala-net", "hala-io-test"]
+members = ["hala-mux", "hala-io-driver", "hala-net", "hala-io-test", "hala-timewheel"]
 resolver = "2"
 
 [workspace.package]
@@ -32,3 +32,4 @@ hala-io-driver = {path = "./hala-io-driver", default = false, version = "^0.1"}
 hala-io-test = {path = "./hala-io-test", default = false, version = "^0.1"}
 hala-mux = {path = "./hala-mux", version = "^0.1"}
 hala-net = {path = "./hala-net", default = false, version = "^0.1"}
+hala-timewheel = {path = "./hala-timewheel", version = "^0.1"}
