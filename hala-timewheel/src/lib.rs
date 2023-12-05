@@ -1,9 +1,15 @@
-#![no_std]
+#![cfg_attr(not(feature = "std"), no_std)]
+
+#[cfg(not(feature = "std"))]
 extern crate alloc;
 
 use core::task::Poll;
 
+#[cfg(not(feature = "std"))]
 use alloc::collections::{BTreeMap, VecDeque};
+
+#[cfg(feature = "std")]
+use std::collections::{HashMap, VecDeque};
 
 struct Slot<T> {
     round: u64,
@@ -11,7 +17,10 @@ struct Slot<T> {
 }
 
 pub struct TimeWheel<T> {
+    #[cfg(not(feature = "std"))]
     hashed: BTreeMap<u64, VecDeque<Slot<T>>>,
+    #[cfg(feature = "std")]
+    hashed: HashMap<u64, VecDeque<Slot<T>>>,
     steps: u64,
     tick: u64,
 }
@@ -21,7 +30,7 @@ impl<T> TimeWheel<T> {
     pub fn new(steps: u64) -> Self {
         TimeWheel {
             steps: steps,
-            hashed: BTreeMap::new(),
+            hashed: Default::default(),
             tick: 0,
         }
     }

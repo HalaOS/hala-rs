@@ -10,6 +10,10 @@ version.workspace = true
 [dev-dependencies]
 divan = {workspace = true}
 
+[features]
+default = ["std"]
+std = []
+
 [[bench]]
 harness = false
 name = "timewheel"

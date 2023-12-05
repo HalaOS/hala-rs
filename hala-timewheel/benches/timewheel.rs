@@ -70,3 +70,39 @@ fn steps_32(bench: Bencher) {
         _ = time_wheel.tick();
     })
 }
+
+#[divan::bench(sample_size = 10000)]
+fn insert_steps_1024(bench: Bencher) {
+    let mut time_wheel = TimeWheel::<()>::new(1024);
+    let mut i = 0;
+
+    bench.bench_local(|| {
+        i += 1;
+
+        time_wheel.add(i, ());
+    })
+}
+
+#[divan::bench(sample_size = 10000)]
+fn insert_steps_2048(bench: Bencher) {
+    let mut time_wheel = TimeWheel::<()>::new(2048);
+    let mut i = 0;
+
+    bench.bench_local(|| {
+        i += 1;
+
+        time_wheel.add(i, ());
+    })
+}
+
+#[divan::bench(sample_size = 10000)]
+fn insert_steps_64(bench: Bencher) {
+    let mut time_wheel = TimeWheel::<()>::new(64);
+    let mut i = 0;
+
+    bench.bench_local(|| {
+        i += 1;
+
+        time_wheel.add(i, ());
+    })
+}
