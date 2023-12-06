@@ -15,7 +15,7 @@ fn main() {
 
 static INIT: Once = Once::new();
 
-#[divan::bench(sample_size = 1000)]
+#[divan::bench(sample_count = 1000000)]
 fn async_udp_echo(bench: Bencher) {
     INIT.call_once(|| {
         _ = register_driver(mio_driver());
@@ -68,7 +68,7 @@ fn async_udp_echo(bench: Bencher) {
     });
 }
 
-#[divan::bench(sample_size = 1000)]
+#[divan::bench(sample_count = 1000000)]
 fn async_udpgroup_echo(bench: Bencher) {
     INIT.call_once(|| {
         _ = register_driver(mio_driver());
@@ -132,7 +132,7 @@ fn async_udpgroup_echo(bench: Bencher) {
     });
 }
 
-#[divan::bench(sample_size = 1000)]
+#[divan::bench(sample_count = 1000000)]
 fn udp_echo(bench: Bencher) {
     let echo_data = b"hello";
 
