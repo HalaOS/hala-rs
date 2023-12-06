@@ -1,13 +1,24 @@
 use futures::channel::mpsc::{Receiver, Sender};
 
-use super::event::QuicEvent;
+use super::{event::QuicEvent, Incoming};
 
-pub(crate) struct Incoming {
-    pub(crate) id: quiche::ConnectionId<'static>,
+pub struct QuicConn {
+    id: quiche::ConnectionId<'static>,
     /// Quic connection instance.
-    pub(crate) conn: quiche::Connection,
+    conn: quiche::Connection,
     /// Quic connection recv data channel
-    pub(crate) data_receiver: Receiver<QuicEvent>,
+    data_receiver: Receiver<QuicEvent>,
     /// Quic connection send data channel
-    pub(crate) data_sender: Sender<QuicEvent>,
+    data_sender: Sender<QuicEvent>,
+}
+
+impl From<Incoming> for QuicConn {
+    fn from(value: Incoming) -> Self {
+        Self {
+            id: value.id,
+            conn: value.conn,
+            data_receiver: value.data_receiver,
+            data_sender: value.data_sender,
+        }
+    }
 }
