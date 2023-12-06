@@ -1,17 +1,20 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     io,
     net::{SocketAddr, ToSocketAddrs},
 };
 
 use hala_io_driver::*;
-use hala_io_util::select;
+use hala_io_util::{select, IoGroup};
 
 #[derive(Clone)]
 pub struct UdpGroup {
-    fds: Vec<Handle>,
+    io_group_read: IoGroup,
+    io_group_write: IoGroup,
+    fds: VecDeque<Handle>,
     addrs: HashMap<Token, SocketAddr>,
     driver: Driver,
+    poller: Handle,
 }
 
 impl UdpGroup {
@@ -19,14 +22,14 @@ impl UdpGroup {
     pub fn bind<S: ToSocketAddrs>(laddrs: S) -> io::Result<Self> {
         let driver = get_driver()?;
 
-        let mut fds = vec![];
+        let mut fds = VecDeque::new();
 
         let mut addrs = HashMap::new();
 
+        let poller = current_poller()?;
+
         for addr in laddrs.to_socket_addrs()? {
             let fd = driver.fd_open(Description::UdpSocket, OpenFlags::Bind(&[addr]))?;
-
-            let poller = current_poller()?;
 
             match driver.fd_cntl(
                 poller,
@@ -46,23 +49,30 @@ impl UdpGroup {
 
             addrs.insert(fd.token, addr);
 
-            fds.push(fd);
+            fds.push_back(fd);
         }
 
-        Ok(Self { fds, driver, addrs })
+        Ok(Self {
+            poller,
+            io_group_read: IoGroup::new(fds.clone()),
+            io_group_write: IoGroup::new(fds.clone()),
+            fds,
+            driver,
+            addrs,
+        })
     }
 
     /// Sends data on the socket to the given address. On success, returns the
     /// number of bytes written.
     pub async fn send_to<S: ToSocketAddrs>(
-        &self,
+        &mut self,
         buf: &[u8],
         target: S,
     ) -> io::Result<(SocketAddr, usize)> {
         let mut last_error = None;
 
         for raddr in target.to_socket_addrs()? {
-            let result = select(&self.fds, |handle, waker| {
+            let result = select(self.io_group_write.clone(), |handle, waker| {
                 let data_len = self
                     .driver
                     .fd_cntl(handle, Cmd::SendTo { waker, buf, raddr })?
@@ -84,8 +94,11 @@ impl UdpGroup {
 
     /// Receives data from the socket. On success, returns the number of bytes
     /// read and the address from whence the data came.
-    pub async fn recv_from(&self, buf: &mut [u8]) -> io::Result<(SocketAddr, usize, SocketAddr)> {
-        select(&self.fds, |handle, waker| {
+    pub async fn recv_from(
+        &mut self,
+        buf: &mut [u8],
+    ) -> io::Result<(SocketAddr, usize, SocketAddr)> {
+        select(self.io_group_read.clone(), |handle, waker| {
             let (data_len, raddr) = self
                 .driver
                 .fd_cntl(handle, Cmd::RecvFrom { waker, buf })?
@@ -104,6 +117,9 @@ impl UdpGroup {
 impl Drop for UdpGroup {
     fn drop(&mut self) {
         for handle in &self.fds {
+            self.driver
+                .fd_cntl(self.poller, Cmd::Deregister(*handle))
+                .unwrap();
             self.driver.fd_close(*handle).unwrap();
         }
     }
@@ -130,7 +146,7 @@ mod tests {
             .map(|port| format!("127.0.0.1:{}", port).parse::<SocketAddr>().unwrap())
             .collect::<Vec<_>>();
 
-        let udp_server = UdpGroup::bind(addrs.as_slice()).unwrap();
+        let mut udp_server = UdpGroup::bind(addrs.as_slice()).unwrap();
 
         let udp_client = UdpSocket::bind("127.0.0.1:0").unwrap();
 
