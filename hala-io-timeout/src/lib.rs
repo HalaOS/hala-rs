@@ -119,6 +119,7 @@ impl<Fut> Drop for Timeout<Fut> {
     }
 }
 
+/// Add timeout feature for exists `Fut`
 pub fn timeout<Fut>(fut: Fut, expired: Duration) -> io::Result<Timeout<Fut>> {
     Timeout::new(fut, expired)
 }
@@ -135,7 +136,7 @@ mod tests {
 
         let result = timeout(
             poll_fn(|_| -> Poll<io::Result<()>> { Poll::Pending }),
-            Duration::from_secs(1),
+            Duration::from_secs(10),
         )
         .unwrap()
         .await;
