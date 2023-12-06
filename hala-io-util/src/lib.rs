@@ -15,3 +15,9 @@ pub mod timeout;
 
 #[cfg(feature = "timeout")]
 pub use timeout::*;
+
+#[cfg(feature = "io_group")]
+pub mod io_group;
+
+#[cfg(feature = "io_group")]
+pub use io_group::*;

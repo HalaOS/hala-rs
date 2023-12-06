@@ -18,5 +18,6 @@ pretty_env_logger = {workspace = true}
 
 [features]
 async_io = []
+io_group = []
 mux = []
 timeout = []
