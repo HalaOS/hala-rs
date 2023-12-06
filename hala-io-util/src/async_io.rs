@@ -52,7 +52,7 @@ mod select {
         task::{Poll, RawWaker, RawWakerVTable, Waker},
     };
 
-    use crate::Handle;
+    use hala_io_driver::Handle;
 
     #[derive(Clone)]
     struct SelectorWaker {

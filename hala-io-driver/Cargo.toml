@@ -19,8 +19,7 @@ futures = {workspace = true}
 pretty_env_logger = {workspace = true}
 
 [features]
-async_io = []
-default = ["mio_driver", "global", "driver_ext", "async_io"]
+default = ["mio_driver", "global", "driver_ext"]
 driver_ext = []
 global = []
 mio_driver = ["mio", "hala-timewheel"]

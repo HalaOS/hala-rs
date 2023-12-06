@@ -4,6 +4,7 @@ use std::{
 };
 
 use hala_io_driver::*;
+use hala_io_util::async_io;
 
 /// A UDP socket.
 pub struct UdpSocket {

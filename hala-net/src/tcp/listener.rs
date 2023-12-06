@@ -5,6 +5,7 @@ use std::{
 };
 
 use hala_io_driver::*;
+use hala_io_util::async_io;
 
 use super::TcpStream;
 

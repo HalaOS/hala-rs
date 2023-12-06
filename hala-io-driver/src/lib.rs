@@ -23,8 +23,3 @@ pub use global::*;
 mod driver_ext;
 #[cfg(feature = "driver_ext")]
 pub use driver_ext::*;
-
-#[cfg(feature = "async_io")]
-mod async_io;
-#[cfg(feature = "async_io")]
-pub use async_io::*;
