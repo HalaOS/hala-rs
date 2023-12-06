@@ -5,7 +5,7 @@ use std::{
 };
 
 use hala_io_driver::*;
-use hala_io_util::{select, IoGroup};
+use hala_io_util::{async_io, select, IoGroup};
 
 #[derive(Clone)]
 pub struct UdpGroup {
@@ -13,6 +13,7 @@ pub struct UdpGroup {
     io_group_write: IoGroup,
     fds: VecDeque<Handle>,
     addrs: HashMap<Token, SocketAddr>,
+    addr_to_handle: HashMap<SocketAddr, Handle>,
     driver: Driver,
     poller: Handle,
 }
@@ -25,6 +26,8 @@ impl UdpGroup {
         let mut fds = VecDeque::new();
 
         let mut addrs = HashMap::new();
+
+        let mut addr_to_handle = HashMap::new();
 
         let poller = current_poller()?;
 
@@ -49,6 +52,8 @@ impl UdpGroup {
 
             addrs.insert(fd.token, addr);
 
+            addr_to_handle.insert(addr, fd);
+
             fds.push_back(fd);
         }
 
@@ -57,13 +62,14 @@ impl UdpGroup {
             io_group_read: IoGroup::new(fds.clone()),
             io_group_write: IoGroup::new(fds.clone()),
             fds,
+            addr_to_handle,
             driver,
             addrs,
         })
     }
 
-    /// Sends data on the socket to the given address. On success, returns the
-    /// number of bytes written.
+    /// Sends data on the socket group to the given address. On success, returns the
+    /// number of bytes written and send socket laddr.
     pub async fn send_to<S: ToSocketAddrs>(
         &mut self,
         buf: &[u8],
@@ -79,6 +85,48 @@ impl UdpGroup {
                     .try_into_datalen()?;
 
                 Ok((self.addrs[&handle.token], data_len))
+            })
+            .await;
+
+            if result.is_ok() {
+                return result;
+            }
+
+            last_error = Some(result);
+        }
+
+        last_error.unwrap()
+    }
+
+    pub async fn send_to_by<S: ToSocketAddrs>(
+        &mut self,
+        laddr: &SocketAddr,
+        buf: &[u8],
+        target: S,
+    ) -> io::Result<usize> {
+        let fd = self
+            .addr_to_handle
+            .get(&laddr)
+            .ok_or(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("UdpGroup local endpoint {:?} not found", laddr),
+            ))?
+            .clone();
+
+        let mut last_error = None;
+
+        for raddr in target.to_socket_addrs()? {
+            let result = async_io(|cx| {
+                self.driver
+                    .fd_cntl(
+                        fd,
+                        Cmd::SendTo {
+                            waker: cx.waker().clone(),
+                            buf,
+                            raddr,
+                        },
+                    )?
+                    .try_into_datalen()
             })
             .await;
 
