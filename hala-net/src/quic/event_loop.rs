@@ -350,7 +350,6 @@ impl QuicServerEventLoop {
     }
 }
 
-#[allow(unused)]
 /// Quic client event loop object
 pub struct QuicClientEventLoop {
     /// Quic client bound udp group
@@ -381,18 +380,57 @@ impl QuicClientEventLoop {
         loop {
             let mut buf = [0; MAX_DATAGRAM_SIZE];
 
-            let (laddr, read_size, raddr) = self.udp_group.recv_from(&mut buf).await?;
-
-            self.conn
-                .data_sender
-                .send(QuicEvent::UdpData {
-                    buf,
-                    data_len: read_size,
-                    from: raddr,
-                    to: laddr,
-                })
-                .await
-                .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
+            select! {
+                send_event = self.udp_data_receiver.next().fuse() => {
+                    self.handle_send(send_event).await?;
+                }
+                recv_from = self.udp_group.recv_from(&mut buf).fuse() => {
+                    self.handle_recv(buf, recv_from).await?;
+                }
+            }
         }
+    }
+
+    async fn handle_send(&mut self, event: Option<QuicEvent>) -> io::Result<()> {
+        let event = event.ok_or(io::Error::new(
+            io::ErrorKind::BrokenPipe,
+            "QuicClientEventLoop is disposed",
+        ))?;
+
+        match event {
+            QuicEvent::UdpData {
+                buf,
+                data_len,
+                from,
+                to,
+            } => {
+                self.udp_group
+                    .send_to_by(from, &buf[..data_len], to)
+                    .await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn handle_recv(
+        &mut self,
+        buf: [u8; MAX_DATAGRAM_SIZE],
+        recv_from: io::Result<(SocketAddr, usize, SocketAddr)>,
+    ) -> io::Result<()> {
+        let (laddr, read_size, raddr) = recv_from?;
+
+        self.conn
+            .data_sender
+            .send(QuicEvent::UdpData {
+                buf,
+                data_len: read_size,
+                from: raddr,
+                to: laddr,
+            })
+            .await
+            .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
+
+        Ok(())
     }
 }
