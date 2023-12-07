@@ -100,7 +100,7 @@ impl UdpGroup {
 
     pub async fn send_to_by<S: ToSocketAddrs>(
         &mut self,
-        laddr: &SocketAddr,
+        laddr: SocketAddr,
         buf: &[u8],
         target: S,
     ) -> io::Result<usize> {
