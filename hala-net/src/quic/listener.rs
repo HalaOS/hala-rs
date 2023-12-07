@@ -1,4 +1,7 @@
-use std::{io, net::ToSocketAddrs};
+use std::{
+    io,
+    net::{SocketAddr, ToSocketAddrs},
+};
 
 use futures::{channel::mpsc::Receiver, StreamExt};
 
@@ -10,6 +13,7 @@ use super::{Config, QuicConn, QuicServerEventLoop};
 
 /// A Quic server, listening for connections.
 pub struct QuicListener {
+    laddrs: Vec<SocketAddr>,
     /// New connection receiver.
     incoming_receiver: Receiver<QuicConn>,
 }
@@ -20,6 +24,10 @@ impl QuicListener {
         config: Config,
     ) -> io::Result<(Self, QuicServerEventLoop)> {
         let udp_group = UdpGroup::bind(laddrs)?;
+        let laddrs = udp_group
+            .local_addrs()
+            .map(|addr| *addr)
+            .collect::<Vec<_>>();
 
         let (incoming_sender, incoming_receiver) =
             futures::channel::mpsc::channel(config.incoming_conn_channel_len);
@@ -27,7 +35,10 @@ impl QuicListener {
         let (udp_data_sender, udp_data_receiver) =
             futures::channel::mpsc::channel(config.udp_data_channel_len);
 
-        let listener = Self { incoming_receiver };
+        let listener = Self {
+            laddrs,
+            incoming_receiver,
+        };
 
         let rng = SystemRandom::new();
 
@@ -56,5 +67,9 @@ impl QuicListener {
                 io::ErrorKind::UnexpectedEof,
                 "QuicListener shutdown",
             ))
+    }
+
+    pub fn local_addrs(&self) -> impl Iterator<Item = &SocketAddr> {
+        self.laddrs.iter()
     }
 }

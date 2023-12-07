@@ -3,7 +3,7 @@ use std::{
     net::{SocketAddr, ToSocketAddrs},
 };
 
-use futures::channel::mpsc::{Receiver, Sender};
+use futures::{channel::mpsc::*, SinkExt, StreamExt};
 use quiche::ConnectionId;
 use rand::seq::IteratorRandom;
 use ring::rand::{SecureRandom, SystemRandom};
@@ -35,6 +35,70 @@ impl QuicConn {
             data_receiver,
             data_sender,
         }
+    }
+
+    pub async fn event_loop(&mut self) -> io::Result<()> {
+        let event = self
+            .data_receiver
+            .next()
+            .await
+            .ok_or(io::Error::new(io::ErrorKind::Other, "QuicConn is shutdown"))?;
+
+        match event {
+            QuicEvent::UdpData {
+                mut buf,
+                data_len,
+                from,
+                to,
+            } => {
+                let recv_info = quiche::RecvInfo { to, from };
+
+                self.conn
+                    .recv(&mut buf[..data_len], recv_info)
+                    .map_err(|err| {
+                        io::Error::new(
+                            io::ErrorKind::Other,
+                            format!(
+                                "{:?} send outgoing data error,{}",
+                                self.conn.trace_id(),
+                                err
+                            ),
+                        )
+                    })?;
+
+                let (data_len, _) = self.conn.send(&mut buf).map_err(|err| {
+                    io::Error::new(
+                        io::ErrorKind::Other,
+                        format!(
+                            "{:?} send outgoing data error,{}",
+                            self.conn.trace_id(),
+                            err
+                        ),
+                    )
+                })?;
+
+                self.data_sender
+                    .send(QuicEvent::UdpData {
+                        buf,
+                        data_len,
+                        from: to,
+                        to: from,
+                    })
+                    .await
+                    .map_err(|err| {
+                        io::Error::new(
+                            io::ErrorKind::Other,
+                            format!(
+                                "{:?} send outgoing data error,{}",
+                                self.conn.trace_id(),
+                                err
+                            ),
+                        )
+                    })?;
+            }
+        }
+
+        Ok(())
     }
 
     /// Connect to remote peer
@@ -112,7 +176,7 @@ impl QuicConn {
 
             let (laddr, read_size, raddr) = udp_group.recv_from(&mut buf).await?;
 
-            log::trace!("read {:?} from {:?}", &buf[..read_size], raddr);
+            log::trace!("read data from {:?}, len={:?}", raddr, read_size);
 
             let recv_info = quiche::RecvInfo {
                 to: laddr,
@@ -130,6 +194,7 @@ impl QuicConn {
             }
 
             if conn.is_established() {
+                log::trace!("connection={}, is_established", conn.trace_id());
                 return Ok(conn);
             }
         }

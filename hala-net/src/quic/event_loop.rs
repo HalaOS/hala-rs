@@ -94,6 +94,7 @@ impl QuicServerEventLoop {
             match self.poll_event_once().await {
                 Err(err) => {
                     if err.kind() == io::ErrorKind::Interrupted {
+                        log::error!(target:"QuicServerEventLoop","{}", err);
                         continue;
                     }
 
@@ -158,11 +159,36 @@ impl QuicServerEventLoop {
             }
         };
 
-        let conn = if let Some(conn) = conn {
-            conn
-        } else {
-            self.client_hello(header, raddr, laddr, conn_id).await?
-        };
+        if conn.is_none() {
+            let (scid, mut conn) = self.client_hello(header, raddr, laddr, conn_id).await?;
+
+            let recv_info = quiche::RecvInfo {
+                to: laddr,
+                from: raddr,
+            };
+
+            conn.recv(&mut buf, recv_info).map_err(|err| {
+                io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    format!("{:?} incoming data error,{}", conn.trace_id(), err),
+                )
+            })?;
+
+            let (send_size, _) = conn.send(&mut buf).map_err(|err| {
+                io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    format!("{:?} send outgoing data error,{}", conn.trace_id(), err),
+                )
+            })?;
+
+            self.udp_group.send_to(&buf[..send_size], raddr).await?;
+
+            return self.on_incoming(scid.clone(), conn).await;
+        }
+
+        let conn = conn.unwrap();
+
+        log::trace!(target: "QuicServerEventLoop", "connection={:?} recv data",conn.trace_id);
 
         conn.data_sender
             .send(QuicEvent::UdpData {
@@ -175,7 +201,10 @@ impl QuicServerEventLoop {
             .map_err(|err| {
                 io::Error::new(
                     io::ErrorKind::Interrupted,
-                    format!("Send udp data to {:?} failed,{}", conn.trace_id, err),
+                    format!(
+                        "Send udp data to connection={:?} failed,{}",
+                        conn.trace_id, err
+                    ),
                 )
             })?;
 
@@ -188,7 +217,7 @@ impl QuicServerEventLoop {
         from: SocketAddr,
         to: SocketAddr,
         conn_id: ConnectionId<'a>,
-    ) -> io::Result<&mut QuicConnProxy> {
+    ) -> io::Result<(ConnectionId<'static>, quiche::Connection)> {
         if header.ty != quiche::Type::Initial {
             return Err(io::Error::new(
                 io::ErrorKind::Interrupted,
@@ -245,8 +274,6 @@ impl QuicServerEventLoop {
 
         let scid: ConnectionId<'_> = header.dcid.clone();
 
-        log::debug!("New connection: dcid={:?} scid={:?}", header.dcid, scid);
-
         let conn =
             quiche::accept(&scid, Some(&odcid), to, from, &mut self.config).map_err(|err| {
                 io::Error::new(
@@ -257,9 +284,9 @@ impl QuicServerEventLoop {
 
         let scid = scid.into_owned();
 
-        self.on_incoming(scid.clone(), conn).await?;
+        log::debug!("New connection: dcid={:?} scid={:?}", header.dcid, scid);
 
-        Ok(self.conns.get_mut(&scid).unwrap())
+        Ok((scid, conn))
     }
 
     fn validate_token<'a>(
@@ -382,7 +409,9 @@ impl QuicClientEventLoop {
 
             select! {
                 send_event = self.udp_data_receiver.next().fuse() => {
-                    self.handle_send(send_event).await?;
+                   if self.handle_send(send_event).await? {
+                        return Ok(());
+                   }
                 }
                 recv_from = self.udp_group.recv_from(&mut buf).fuse() => {
                     self.handle_recv(buf, recv_from).await?;
@@ -391,11 +420,12 @@ impl QuicClientEventLoop {
         }
     }
 
-    async fn handle_send(&mut self, event: Option<QuicEvent>) -> io::Result<()> {
-        let event = event.ok_or(io::Error::new(
-            io::ErrorKind::BrokenPipe,
-            "QuicClientEventLoop is disposed",
-        ))?;
+    async fn handle_send(&mut self, event: Option<QuicEvent>) -> io::Result<bool> {
+        if event.is_none() {
+            return Ok(true);
+        }
+
+        let event = event.unwrap();
 
         match event {
             QuicEvent::UdpData {
@@ -410,7 +440,7 @@ impl QuicClientEventLoop {
             }
         }
 
-        Ok(())
+        Ok(false)
     }
 
     async fn handle_recv(
