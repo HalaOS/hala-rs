@@ -14,11 +14,12 @@ pub(crate) const MAX_DATAGRAM_SIZE: usize = 1350;
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::{path::Path, time::Duration};
 
     use super::*;
 
     use futures::task::*;
+    use hala_io_util::sleep;
 
     fn config(is_server: bool) -> Config {
         let mut config = Config::new().unwrap();
@@ -56,8 +57,8 @@ mod tests {
         config
     }
 
-    async fn handle_incoming(mut conn: QuicConn) {
-        conn.event_loop().await.unwrap();
+    async fn handle_incoming(_: QuicConn) {
+        sleep(Duration::from_secs(10000)).await.unwrap();
     }
 
     fn test_server() -> Vec<std::net::SocketAddr> {
@@ -89,15 +90,21 @@ mod tests {
 
     #[hala_io_test::test]
     async fn test_quic() {
+        pretty_env_logger::init();
+
         let raddrs = test_server();
 
         log::debug!("connect to server");
 
-        let (_, mut event_loop) =
+        let (conn, mut event_loop) =
             QuicConn::connect("127.0.0.1:0", raddrs.as_slice(), config(false))
                 .await
                 .unwrap();
 
-        event_loop.event_loop().await.unwrap();
+        hala_io_test::spawner()
+            .spawn(async move {
+                event_loop.event_loop().await.unwrap();
+            })
+            .unwrap();
     }
 }

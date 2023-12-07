@@ -1,4 +1,4 @@
-use std::{collections::HashMap, io, net::SocketAddr};
+use std::{collections::HashMap, io, net::SocketAddr, ops};
 
 use futures::{channel::mpsc::*, select, FutureExt, SinkExt, StreamExt};
 use quiche::{ConnectionId, Header};
@@ -10,7 +10,8 @@ use super::{Config, QuicConn, MAX_DATAGRAM_SIZE};
 
 /// Inner quic event variant.
 pub(crate) enum QuicEvent {
-    UdpData {
+    #[allow(unused)]
+    Stream {
         buf: [u8; MAX_DATAGRAM_SIZE],
         data_len: usize,
         from: SocketAddr,
@@ -18,15 +19,34 @@ pub(crate) enum QuicEvent {
     },
 }
 
-pub(crate) struct QuicConnProxy {
-    pub trace_id: String,
+pub(crate) struct QuicInnerConn {
+    pub(crate) from: SocketAddr,
+
+    pub(crate) to: SocketAddr,
+
+    pub(crate) conn: quiche::Connection,
     /// Quic connection recv data channel
-    pub data_sender: Sender<QuicEvent>,
+    #[allow(unused)]
+    pub(crate) data_sender: Sender<QuicEvent>,
+}
+
+impl ops::Deref for QuicInnerConn {
+    type Target = quiche::Connection;
+
+    fn deref(&self) -> &Self::Target {
+        &self.conn
+    }
+}
+
+impl ops::DerefMut for QuicInnerConn {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.conn
+    }
 }
 
 pub struct QuicServerEventLoop {
     /// Mapping from ConnectionId => QuicConnProxy, shared with `QuicListener`
-    conns: HashMap<quiche::ConnectionId<'static>, QuicConnProxy>,
+    conns: HashMap<quiche::ConnectionId<'static>, QuicInnerConn>,
     /// Quic server config
     config: Config,
     /// data receiver for which needs to be sent via udp_group to remote peers
@@ -69,16 +89,20 @@ impl QuicServerEventLoop {
     async fn on_incoming(
         &mut self,
         id: quiche::ConnectionId<'static>,
+        from: SocketAddr,
+        to: SocketAddr,
         conn: quiche::Connection,
     ) -> io::Result<()> {
         let (sender, receiver) = futures::channel::mpsc::channel(1024);
 
-        let proxy = QuicConnProxy {
-            trace_id: conn.trace_id().to_owned(),
+        let proxy = QuicInnerConn {
+            from,
+            to,
+            conn,
             data_sender: sender,
         };
 
-        let incoming = QuicConn::new(conn, receiver, self.udp_data_sender.clone());
+        let incoming = QuicConn::new(id.clone(), receiver, self.udp_data_sender.clone(), false);
 
         self.conns.insert(id, proxy);
 
@@ -127,15 +151,17 @@ impl QuicServerEventLoop {
         ))?;
 
         match event {
-            QuicEvent::UdpData {
+            QuicEvent::Stream {
                 buf,
                 data_len,
                 from,
                 to,
             } => {
-                self.udp_group
-                    .send_to_by(from, &buf[..data_len], to)
-                    .await?;
+                // self.udp_group
+                //     .send_to_by(from, &buf[..data_len], to)
+                //     .await?;
+
+                todo!()
             }
         }
 
@@ -149,64 +175,46 @@ impl QuicServerEventLoop {
     ) -> io::Result<()> {
         let (laddr, read_size, raddr) = recv_from_result?;
 
-        let (header, conn_id) = self.parse_header(&mut buf[..read_size])?;
-
         let conn = {
-            if let Some(conn) = self.conns.get_mut(&header.dcid.clone().into_owned()) {
-                Some(conn)
+            let (header, conn_id) = self.parse_header(&mut buf[..read_size])?;
+
+            let conn = {
+                if let Some(conn) = self.conns.get_mut(&header.dcid.clone().into_owned()) {
+                    Some(conn)
+                } else {
+                    self.conns.get_mut(&conn_id.clone().into_owned())
+                }
+            };
+
+            if let Some(conn) = conn {
+                conn
             } else {
-                self.conns.get_mut(&conn_id.clone().into_owned())
+                self.client_hello(header, raddr, laddr, conn_id).await?
             }
         };
 
-        if conn.is_none() {
-            let (scid, mut conn) = self.client_hello(header, raddr, laddr, conn_id).await?;
+        log::trace!(target: "QuicServerEventLoop", "connection={:?} recv data",conn.conn.trace_id());
 
-            let recv_info = quiche::RecvInfo {
-                to: laddr,
-                from: raddr,
-            };
+        let recv_info = quiche::RecvInfo {
+            to: laddr,
+            from: raddr,
+        };
 
-            conn.recv(&mut buf, recv_info).map_err(|err| {
-                io::Error::new(
-                    io::ErrorKind::Interrupted,
-                    format!("{:?} incoming data error,{}", conn.trace_id(), err),
-                )
-            })?;
+        conn.recv(&mut buf[..read_size], recv_info).map_err(|err| {
+            io::Error::new(
+                io::ErrorKind::Interrupted,
+                format!("{:?} incoming data error,{}", conn.trace_id(), err),
+            )
+        })?;
 
-            let (send_size, _) = conn.send(&mut buf).map_err(|err| {
-                io::Error::new(
-                    io::ErrorKind::Interrupted,
-                    format!("{:?} send outgoing data error,{}", conn.trace_id(), err),
-                )
-            })?;
+        let (send_size, _) = conn.send(&mut buf).map_err(|err| {
+            io::Error::new(
+                io::ErrorKind::Interrupted,
+                format!("{:?} send outgoing data error,{}", conn.trace_id(), err),
+            )
+        })?;
 
-            self.udp_group.send_to(&buf[..send_size], raddr).await?;
-
-            return self.on_incoming(scid.clone(), conn).await;
-        }
-
-        let conn = conn.unwrap();
-
-        log::trace!(target: "QuicServerEventLoop", "connection={:?} recv data",conn.trace_id);
-
-        conn.data_sender
-            .send(QuicEvent::UdpData {
-                buf,
-                data_len: read_size,
-                from: raddr,
-                to: laddr,
-            })
-            .await
-            .map_err(|err| {
-                io::Error::new(
-                    io::ErrorKind::Interrupted,
-                    format!(
-                        "Send udp data to connection={:?} failed,{}",
-                        conn.trace_id, err
-                    ),
-                )
-            })?;
+        self.udp_group.send_to(&buf[..send_size], raddr).await?;
 
         Ok(())
     }
@@ -217,7 +225,7 @@ impl QuicServerEventLoop {
         from: SocketAddr,
         to: SocketAddr,
         conn_id: ConnectionId<'a>,
-    ) -> io::Result<(ConnectionId<'static>, quiche::Connection)> {
+    ) -> io::Result<&mut QuicInnerConn> {
         if header.ty != quiche::Type::Initial {
             return Err(io::Error::new(
                 io::ErrorKind::Interrupted,
@@ -284,9 +292,15 @@ impl QuicServerEventLoop {
 
         let scid = scid.into_owned();
 
-        log::debug!("New connection: dcid={:?} scid={:?}", header.dcid, scid);
+        log::debug!(
+            "New connection: dcid={:?} scid={:?}",
+            header.dcid,
+            header.scid
+        );
 
-        Ok((scid, conn))
+        self.on_incoming(scid.clone(), from, to, conn).await?;
+
+        Ok(self.conns.get_mut(&scid).unwrap())
     }
 
     fn validate_token<'a>(
@@ -382,7 +396,7 @@ pub struct QuicClientEventLoop {
     /// Quic client bound udp group
     udp_group: UdpGroup,
     /// Connect proxy
-    conn: QuicConnProxy,
+    conn: QuicInnerConn,
     /// data receiver for which needs to be sent via udp_group to remote peers
     udp_data_receiver: Receiver<QuicEvent>,
     // Quice listener sockets
@@ -392,7 +406,7 @@ impl QuicClientEventLoop {
     pub(crate) fn new(
         udp_group: UdpGroup,
 
-        conn: QuicConnProxy,
+        conn: QuicInnerConn,
 
         udp_data_receiver: Receiver<QuicEvent>,
     ) -> Self {
@@ -428,15 +442,17 @@ impl QuicClientEventLoop {
         let event = event.unwrap();
 
         match event {
-            QuicEvent::UdpData {
+            QuicEvent::Stream {
                 buf,
                 data_len,
                 from,
                 to,
             } => {
-                self.udp_group
-                    .send_to_by(from, &buf[..data_len], to)
-                    .await?;
+                // self.udp_group
+                //     .send_to_by(from, &buf[..data_len], to)
+                //     .await?;
+
+                todo!()
             }
         }
 
@@ -445,21 +461,37 @@ impl QuicClientEventLoop {
 
     async fn handle_recv(
         &mut self,
-        buf: [u8; MAX_DATAGRAM_SIZE],
+        mut buf: [u8; MAX_DATAGRAM_SIZE],
         recv_from: io::Result<(SocketAddr, usize, SocketAddr)>,
     ) -> io::Result<()> {
         let (laddr, read_size, raddr) = recv_from?;
 
+        let recv_info = quiche::RecvInfo {
+            to: laddr,
+            from: raddr,
+        };
+
         self.conn
-            .data_sender
-            .send(QuicEvent::UdpData {
-                buf,
-                data_len: read_size,
-                from: raddr,
-                to: laddr,
-            })
-            .await
-            .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
+            .recv(&mut buf[..read_size], recv_info)
+            .map_err(|err| {
+                io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    format!("{:?} incoming data error,{}", self.conn.trace_id(), err),
+                )
+            })?;
+
+        let (send_size, _) = self.conn.send(&mut buf).map_err(|err| {
+            io::Error::new(
+                io::ErrorKind::Interrupted,
+                format!(
+                    "{:?} send outgoing data error,{}",
+                    self.conn.trace_id(),
+                    err
+                ),
+            )
+        })?;
+
+        self.udp_group.send_to(&buf[..send_size], raddr).await?;
 
         Ok(())
     }

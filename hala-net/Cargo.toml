@@ -10,7 +10,7 @@ version.workspace = true
 [dependencies]
 futures = {workspace = true}
 hala-io-driver = {workspace = true}
-hala-io-util = {workspace = true, features = ["async_io", "io_group"]}
+hala-io-util = {workspace = true}
 log = {workspace = true}
 mio = {workspace = true}
 quiche = {workspace = true, optional = true}
