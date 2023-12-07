@@ -3,7 +3,6 @@ use hala_net::*;
 
 #[hala_io_test::test]
 async fn tcp_echo_test() {
-    _ = pretty_env_logger::try_init();
     let echo_data = b"hello";
 
     let tcp_listener = TcpListener::bind("127.0.0.1:0").unwrap();
