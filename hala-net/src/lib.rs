@@ -3,6 +3,8 @@ pub use tcp::*;
 mod udp;
 pub use udp::*;
 
+pub mod errors;
+
 #[cfg(feature = "quice")]
 pub mod quic;
 

@@ -4,8 +4,9 @@ use std::{
     net::{SocketAddr, ToSocketAddrs},
 };
 
+use bytes::BufMut;
 use hala_io_driver::*;
-use hala_io_util::{async_io, select, IoGroup};
+use hala_io_util::{as_bytes_mut, async_io, read_buf, select, IoGroup};
 
 #[derive(Clone)]
 pub struct UdpGroup {
@@ -155,6 +156,24 @@ impl UdpGroup {
             Ok((self.addrs[&handle.token], data_len, raddr))
         })
         .await
+    }
+
+    pub async fn recv_from_buf<B>(&mut self, buf: &mut B) -> io::Result<(SocketAddr, SocketAddr)>
+    where
+        B: BufMut,
+    {
+        let dst = as_bytes_mut(buf);
+
+        match self.recv_from(dst).await {
+            Ok((laddr, read_size, raddr)) => {
+                unsafe {
+                    buf.advance_mut(read_size);
+                }
+
+                Ok((laddr, raddr))
+            }
+            Err(err) => Err(err),
+        }
     }
 
     pub fn local_addrs(&self) -> impl Iterator<Item = &SocketAddr> {

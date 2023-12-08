@@ -37,7 +37,7 @@ impl<Fut> Timeout<Fut> {
 
 impl<'a, Fut, R> Future for Timeout<Fut>
 where
-    Fut: Future<Output = io::Result<R>> + Unpin + 'a,
+    Fut: Future<Output = io::Result<R>> + 'a,
     R: Debug,
 {
     type Output = io::Result<R>;
@@ -120,12 +120,16 @@ impl<Fut> Drop for Timeout<Fut> {
 }
 
 /// Add timeout feature for exists `Fut`
-pub async fn timeout<'a, Fut, R>(fut: Fut, expired: Duration) -> io::Result<R>
+pub async fn timeout<'a, Fut, R>(fut: Fut, expired: Option<Duration>) -> io::Result<R>
 where
-    Fut: Future<Output = io::Result<R>> + Unpin + 'a,
+    Fut: Future<Output = io::Result<R>> + 'a,
     R: Debug,
 {
-    Timeout::new(fut, expired)?.await
+    if let Some(expired) = expired {
+        Timeout::new(fut, expired)?.await
+    } else {
+        fut.await
+    }
 }
 
 /// Sleep for a while
@@ -134,7 +138,7 @@ pub async fn sleep(duration: Duration) -> io::Result<()> {
 
     timeout(
         poll_fn(|_| -> Poll<io::Result<()>> { Poll::Pending }),
-        duration,
+        Some(duration),
     )
     .await
 }
@@ -149,7 +153,7 @@ mod tests {
     async fn test_timeout() {
         let result = timeout(
             poll_fn(|_| -> Poll<io::Result<()>> { Poll::Pending }),
-            Duration::from_secs(1),
+            Some(Duration::from_secs(1)),
         )
         .await;
 

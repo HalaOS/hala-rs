@@ -7,6 +7,7 @@ version.workspace = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+bytes = {workspace = true, optional = true}
 futures = {workspace = true}
 hala-io-driver = {workspace = true}
 log = {workspace = true}
@@ -18,7 +19,8 @@ pretty_env_logger = {workspace = true}
 
 [features]
 async_io = []
-default = ["async_io", "io_group", "mux", "timeout"]
+default = ["async_io", "io_group", "mux", "timeout", "read_buf"]
 io_group = []
 mux = []
+read_buf = ["bytes"]
 timeout = []

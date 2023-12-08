@@ -1,193 +1,73 @@
 use std::{
     io,
-    net::{SocketAddr, ToSocketAddrs},
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
     },
 };
 
-use futures::{channel::mpsc::*, SinkExt, StreamExt};
+use futures::{
+    channel::mpsc::{channel, Receiver, Sender},
+    SinkExt, StreamExt,
+};
 use quiche::ConnectionId;
-use rand::seq::IteratorRandom;
-use ring::rand::{SecureRandom, SystemRandom};
 
-use crate::{quic::MAX_DATAGRAM_SIZE, UdpGroup};
+use crate::errors::to_io_error;
 
-use super::{Config, QuicClientEventLoop, QuicEvent, QuicInnerConn};
+use super::{CloseEvent, QuicConnEvent, QuicStream};
 
-pub struct QuicStream {
-    stream_id: u64,
-    data_sender: Sender<QuicEvent>,
-    data_receiver: Receiver<QuicEvent>,
-}
-
-#[allow(unused)]
+/// QuicConn represents a connected quic session.
 pub struct QuicConn {
+    /// The seed for stream id generator
     next_stream_id: Arc<AtomicU64>,
-
+    /// The stream incoming data chanel buffer size.
+    stream_channel_buffer: usize,
+    /// This connection id
     conn_id: ConnectionId<'static>,
-    /// Quic connection stream event receiver.
-    stream_receiver: Receiver<QuicStream>,
-
-    /// Streams shared data sender
-    data_sender: Sender<QuicEvent>,
+    /// Send create new stream event.
+    conn_data_sender: Sender<QuicConnEvent>,
+    /// Incoming `QuicStream` receiver.
+    stream_accept_receiver: Receiver<QuicStream>,
+    /// Send close event to event_loop
+    close_sender: Sender<CloseEvent>,
 }
 
 impl QuicConn {
-    pub(crate) fn new(
-        conn_id: ConnectionId<'static>,
-        stream_receiver: Receiver<QuicStream>,
-        data_sender: Sender<QuicEvent>,
-        is_client: bool,
-    ) -> Self {
-        Self {
-            next_stream_id: if is_client {
-                Arc::new(AtomicU64::new(1))
-            } else {
-                Arc::new(AtomicU64::new(2))
-            },
-            conn_id,
-            stream_receiver,
-            data_sender,
-        }
-    }
-
-    /// Accept new stream
+    /// Accept next quic stream.
     pub async fn accept(&mut self) -> Option<QuicStream> {
-        self.stream_receiver.next().await
+        self.stream_accept_receiver.next().await
     }
 
-    /// Open a new quic stream on this connection
+    /// Open new stream on this connection
     pub async fn open_stream(&mut self) -> io::Result<QuicStream> {
-        let stream_id = self.next_stream_id.fetch_add(2, Ordering::SeqCst);
+        // Open stream incoming data channel.
+        let (sx, rx) = channel(self.stream_channel_buffer);
 
-        let (data_sender, data_receiver) = channel(1024);
+        let stream_id = self.gen_next_stream_id();
 
-        self.data_sender
-            .send(QuicEvent::OpenStream {
+        // Send `QuicConnEvent::OpenStream` to event_loop
+        self.conn_data_sender
+            .send(QuicConnEvent::OpenStream {
                 conn_id: self.conn_id.clone(),
                 stream_id,
-                sender: data_sender,
+                sender: sx,
             })
             .await
-            .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
+            .map_err(to_io_error)?;
 
-        Ok(QuicStream {
-            stream_id,
-            data_receiver,
-            data_sender: self.data_sender.clone(),
-        })
+        Ok(QuicStream::new(rx, self.conn_data_sender.clone()))
     }
 
-    /// Create new QuicConn instance and connect to remote peer by `raddrs`
-    pub async fn connect<S: ToSocketAddrs, R: ToSocketAddrs>(
-        laddrs: S,
-        raddrs: R,
-        mut config: Config,
-    ) -> io::Result<(Self, QuicClientEventLoop)> {
-        let mut scid = [0; quiche::MAX_CONN_ID_LEN];
-        SystemRandom::new().fill(&mut scid[..]).unwrap();
-
-        let scid = quiche::ConnectionId::from_ref(&scid);
-
-        let mut udp_group = UdpGroup::bind(laddrs)?;
-
-        let raddrs = raddrs.to_socket_addrs()?.into_iter().collect::<Vec<_>>();
-
-        for raddr in &raddrs {
-            match Self::connect_to(&mut udp_group, &scid, *raddr, &mut config).await {
-                Ok((from, conn, to)) => {
-                    return Self::on_connected(udp_group, from, to, conn, config)
-                }
-                _ => {}
-            }
-        }
-
-        Err(io::Error::new(
-            io::ErrorKind::ConnectionRefused,
-            format!("[HalaQuic] can't connect to {:?}", raddrs),
-        ))
+    /// Create new stream id
+    fn gen_next_stream_id(&mut self) -> u64 {
+        self.next_stream_id.fetch_add(2, Ordering::SeqCst)
     }
+}
 
-    fn on_connected(
-        udp_group: UdpGroup,
-        from: SocketAddr,
-        to: SocketAddr,
-        conn: quiche::Connection,
-        config: Config,
-    ) -> io::Result<(Self, QuicClientEventLoop)> {
-        let (udp_data_sender, udp_data_receiver) =
-            futures::channel::mpsc::channel(config.udp_data_channel_len);
-
-        let (stream_sender, stream_receiver) =
-            futures::channel::mpsc::channel(config.udp_data_channel_len);
-
-        let conn_id = conn.source_id().clone().into_owned();
-
-        let conn_proxy = QuicInnerConn {
-            from,
-            to,
-            conn,
-            stream_sender,
-            streams: Default::default(),
-        };
-
-        let conn = Self::new(conn_id, stream_receiver, udp_data_sender.clone(), true);
-
-        let event_loop =
-            QuicClientEventLoop::new(udp_group, conn_proxy, udp_data_sender, udp_data_receiver);
-
-        Ok((conn, event_loop))
-    }
-
-    async fn connect_to<'a>(
-        udp_group: &mut UdpGroup,
-        scid: &ConnectionId<'a>,
-        raddr: SocketAddr,
-        config: &mut Config,
-    ) -> io::Result<(SocketAddr, quiche::Connection, SocketAddr)> {
-        let laddr = udp_group
-            .local_addrs()
-            .choose(&mut rand::thread_rng())
-            .unwrap()
-            .clone();
-
-        let mut conn = quiche::connect(None, &scid, laddr, raddr, config)
-            .map_err(|err| io::Error::new(io::ErrorKind::ConnectionRefused, err))?;
-
-        let mut buf = [0; MAX_DATAGRAM_SIZE];
-
-        loop {
-            let (write_size, send_info) = conn.send(&mut buf).expect("initial send failed");
-
-            udp_group
-                .send_to_by(laddr, &buf[..write_size], send_info.to)
-                .await?;
-
-            let (laddr, read_size, raddr) = udp_group.recv_from(&mut buf).await?;
-
-            log::trace!("read data from {:?}, len={:?}", raddr, read_size);
-
-            let recv_info = quiche::RecvInfo {
-                to: laddr,
-                from: raddr,
-            };
-
-            conn.recv(&mut buf[..read_size], recv_info)
-                .map_err(|err| io::Error::new(io::ErrorKind::ConnectionRefused, err))?;
-
-            if conn.is_closed() {
-                return Err(io::Error::new(
-                    io::ErrorKind::ConnectionRefused,
-                    "Early stage reject",
-                ));
-            }
-
-            if conn.is_established() {
-                log::trace!("connection={}, is_established", conn.trace_id());
-                return Ok((laddr, conn, raddr));
-            }
-        }
+impl Drop for QuicConn {
+    fn drop(&mut self) {
+        self.close_sender
+            .try_send(CloseEvent::Connection(self.conn_id.clone()))
+            .unwrap();
     }
 }
