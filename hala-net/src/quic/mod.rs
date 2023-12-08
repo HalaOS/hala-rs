@@ -90,8 +90,6 @@ mod tests {
 
     #[hala_io_test::test]
     async fn test_quic() {
-        pretty_env_logger::init();
-
         let raddrs = test_server();
 
         log::debug!("connect to server");

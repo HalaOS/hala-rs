@@ -6,7 +6,7 @@ use ring::hmac::Key;
 
 use crate::UdpGroup;
 
-use super::{Config, QuicConn, MAX_DATAGRAM_SIZE};
+use super::{Config, QuicConn, QuicStream, MAX_DATAGRAM_SIZE};
 
 /// Inner quic event variant.
 pub(crate) enum QuicEvent {
@@ -16,6 +16,10 @@ pub(crate) enum QuicEvent {
         data_len: usize,
         from: SocketAddr,
         to: SocketAddr,
+    },
+    OpenStream {
+        stream_id: u64,
+        sender: Sender<QuicEvent>,
     },
 }
 
@@ -27,7 +31,7 @@ pub(crate) struct QuicInnerConn {
     pub(crate) conn: quiche::Connection,
     /// Quic connection recv data channel
     #[allow(unused)]
-    pub(crate) data_sender: Sender<QuicEvent>,
+    pub(crate) stream_sender: Sender<QuicStream>,
 }
 
 impl ops::Deref for QuicInnerConn {
@@ -93,16 +97,21 @@ impl QuicServerEventLoop {
         to: SocketAddr,
         conn: quiche::Connection,
     ) -> io::Result<()> {
-        let (sender, receiver) = futures::channel::mpsc::channel(1024);
+        let (stream_sender, stream_receiver) = futures::channel::mpsc::channel(1024);
 
         let proxy = QuicInnerConn {
             from,
             to,
             conn,
-            data_sender: sender,
+            stream_sender,
         };
 
-        let incoming = QuicConn::new(id.clone(), receiver, self.udp_data_sender.clone(), false);
+        let incoming = QuicConn::new(
+            id.clone(),
+            stream_receiver,
+            self.udp_data_sender.clone(),
+            false,
+        );
 
         self.conns.insert(id, proxy);
 
@@ -151,18 +160,7 @@ impl QuicServerEventLoop {
         ))?;
 
         match event {
-            QuicEvent::Stream {
-                buf,
-                data_len,
-                from,
-                to,
-            } => {
-                // self.udp_group
-                //     .send_to_by(from, &buf[..data_len], to)
-                //     .await?;
-
-                todo!()
-            }
+            _ => {}
         }
 
         Ok(())
@@ -399,7 +397,8 @@ pub struct QuicClientEventLoop {
     conn: QuicInnerConn,
     /// data receiver for which needs to be sent via udp_group to remote peers
     udp_data_receiver: Receiver<QuicEvent>,
-    // Quice listener sockets
+    /// data receiver for which needs to be sent via udp_group to remote peers
+    udp_data_sender: Sender<QuicEvent>,
 }
 
 impl QuicClientEventLoop {
@@ -408,12 +407,16 @@ impl QuicClientEventLoop {
 
         conn: QuicInnerConn,
 
+        udp_data_sender: Sender<QuicEvent>,
+
         udp_data_receiver: Receiver<QuicEvent>,
     ) -> Self {
         Self {
             udp_group,
             conn,
             udp_data_receiver,
+
+            udp_data_sender,
         }
     }
 
@@ -442,18 +445,7 @@ impl QuicClientEventLoop {
         let event = event.unwrap();
 
         match event {
-            QuicEvent::Stream {
-                buf,
-                data_len,
-                from,
-                to,
-            } => {
-                // self.udp_group
-                //     .send_to_by(from, &buf[..data_len], to)
-                //     .await?;
-
-                todo!()
-            }
+            _ => {}
         }
 
         Ok(false)

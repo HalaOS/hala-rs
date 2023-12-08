@@ -58,15 +58,11 @@ impl QuicListener {
     }
 
     /// Accept one Quic incoming connection.
-    pub async fn accept(&mut self) -> io::Result<QuicConn> {
+    pub async fn accept(&mut self) -> Option<QuicConn> {
         self.incoming_receiver
             .next()
             .await
             .map(|incoming| incoming.into())
-            .ok_or(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "QuicListener shutdown",
-            ))
     }
 
     pub fn local_addrs(&self) -> impl Iterator<Item = &SocketAddr> {

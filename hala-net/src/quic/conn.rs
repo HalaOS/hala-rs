@@ -1,10 +1,13 @@
 use std::{
     io,
     net::{SocketAddr, ToSocketAddrs},
-    sync::{atomic::AtomicU64, Arc},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
 };
 
-use futures::channel::mpsc::*;
+use futures::{channel::mpsc::*, SinkExt, StreamExt};
 use quiche::ConnectionId;
 use rand::seq::IteratorRandom;
 use ring::rand::{SecureRandom, SystemRandom};
@@ -13,21 +16,28 @@ use crate::{quic::MAX_DATAGRAM_SIZE, UdpGroup};
 
 use super::{Config, QuicClientEventLoop, QuicEvent, QuicInnerConn};
 
+pub struct QuicStream {
+    stream_id: u64,
+    data_sender: Sender<QuicEvent>,
+    data_receiver: Receiver<QuicEvent>,
+}
+
 #[allow(unused)]
 pub struct QuicConn {
     next_stream_id: Arc<AtomicU64>,
 
     conn_id: ConnectionId<'static>,
-    /// Quic connection recv data channel
-    data_receiver: Receiver<QuicEvent>,
-    /// Quic connection send data channel
+    /// Quic connection stream event receiver.
+    stream_receiver: Receiver<QuicStream>,
+
+    /// Streams shared data sender
     data_sender: Sender<QuicEvent>,
 }
 
 impl QuicConn {
     pub(crate) fn new(
         conn_id: ConnectionId<'static>,
-        data_receiver: Receiver<QuicEvent>,
+        stream_receiver: Receiver<QuicStream>,
         data_sender: Sender<QuicEvent>,
         is_client: bool,
     ) -> Self {
@@ -38,9 +48,35 @@ impl QuicConn {
                 Arc::new(AtomicU64::new(2))
             },
             conn_id,
-            data_receiver,
+            stream_receiver,
             data_sender,
         }
+    }
+
+    /// Accept new stream
+    pub async fn accept(&mut self) -> Option<QuicStream> {
+        self.stream_receiver.next().await
+    }
+
+    /// Open a new quic stream on this connection
+    pub async fn open_stream(&mut self) -> io::Result<QuicStream> {
+        let stream_id = self.next_stream_id.fetch_add(2, Ordering::SeqCst);
+
+        let (data_sender, data_receiver) = channel(1024);
+
+        self.data_sender
+            .send(QuicEvent::OpenStream {
+                stream_id,
+                sender: data_sender,
+            })
+            .await
+            .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
+
+        Ok(QuicStream {
+            stream_id,
+            data_receiver,
+            data_sender: self.data_sender.clone(),
+        })
     }
 
     /// Create new QuicConn instance and connect to remote peer by `raddrs`
@@ -83,7 +119,7 @@ impl QuicConn {
         let (udp_data_sender, udp_data_receiver) =
             futures::channel::mpsc::channel(config.udp_data_channel_len);
 
-        let (conn_data_sender, conn_data_receiver) =
+        let (stream_sender, stream_receiver) =
             futures::channel::mpsc::channel(config.udp_data_channel_len);
 
         let conn_id = conn.source_id().clone().into_owned();
@@ -92,12 +128,13 @@ impl QuicConn {
             from,
             to,
             conn,
-            data_sender: conn_data_sender,
+            stream_sender,
         };
 
-        let conn = Self::new(conn_id, conn_data_receiver, udp_data_sender, true);
+        let conn = Self::new(conn_id, stream_receiver, udp_data_sender.clone(), true);
 
-        let event_loop = QuicClientEventLoop::new(udp_group, conn_proxy, udp_data_receiver);
+        let event_loop =
+            QuicClientEventLoop::new(udp_group, conn_proxy, udp_data_sender, udp_data_receiver);
 
         Ok((conn, event_loop))
     }
