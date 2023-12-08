@@ -66,6 +66,7 @@ impl QuicConn {
 
         self.data_sender
             .send(QuicEvent::OpenStream {
+                conn_id: self.conn_id.clone(),
                 stream_id,
                 sender: data_sender,
             })
@@ -129,6 +130,7 @@ impl QuicConn {
             to,
             conn,
             stream_sender,
+            streams: Default::default(),
         };
 
         let conn = Self::new(conn_id, stream_receiver, udp_data_sender.clone(), true);

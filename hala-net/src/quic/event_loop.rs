@@ -10,14 +10,17 @@ use super::{Config, QuicConn, QuicStream, MAX_DATAGRAM_SIZE};
 
 /// Inner quic event variant.
 pub(crate) enum QuicEvent {
-    #[allow(unused)]
     Stream {
+        conn_id: ConnectionId<'static>,
+        stream_id: u64,
         buf: [u8; MAX_DATAGRAM_SIZE],
         data_len: usize,
         from: SocketAddr,
         to: SocketAddr,
+        fin: bool,
     },
     OpenStream {
+        conn_id: ConnectionId<'static>,
         stream_id: u64,
         sender: Sender<QuicEvent>,
     },
@@ -32,6 +35,9 @@ pub(crate) struct QuicInnerConn {
     /// Quic connection recv data channel
     #[allow(unused)]
     pub(crate) stream_sender: Sender<QuicStream>,
+
+    /// Opened streams
+    pub(crate) streams: HashMap<u64, Sender<QuicEvent>>,
 }
 
 impl ops::Deref for QuicInnerConn {
@@ -104,6 +110,7 @@ impl QuicServerEventLoop {
             to,
             conn,
             stream_sender,
+            streams: Default::default(),
         };
 
         let incoming = QuicConn::new(
@@ -445,6 +452,37 @@ impl QuicClientEventLoop {
         let event = event.unwrap();
 
         match event {
+            QuicEvent::OpenStream {
+                conn_id,
+                stream_id,
+                sender,
+            } => {
+                assert_eq!(conn_id, self.conn.source_id(), "Check OpenStream conn_id");
+
+                self.conn.streams.insert(stream_id, sender);
+            }
+            QuicEvent::Stream {
+                conn_id,
+                stream_id,
+                buf,
+                data_len,
+                from,
+                to,
+                fin,
+            } => {
+                assert_eq!(conn_id, self.conn.source_id(), "Check Stream conn_id");
+
+                assert!(
+                    self.conn.streams.contains_key(&stream_id),
+                    "Call QuicEvent::OpenStream first"
+                );
+
+                self.conn
+                    .stream_send(stream_id, &buf[..data_len], fin)
+                    .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+
+                self.conn.send(out)
+            }
             _ => {}
         }
 
