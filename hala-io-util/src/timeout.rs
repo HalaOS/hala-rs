@@ -153,7 +153,7 @@ mod tests {
     async fn test_timeout() {
         let result = timeout(
             poll_fn(|_| -> Poll<io::Result<()>> { Poll::Pending }),
-            Some(Duration::from_secs(1)),
+            Some(Duration::from_millis(20)),
         )
         .await;
 

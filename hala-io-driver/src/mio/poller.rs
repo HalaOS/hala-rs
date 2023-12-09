@@ -4,7 +4,7 @@ use std::{
     io,
     sync::Arc,
     task::Poll,
-    time::{Duration, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 
 use hala_timewheel::TimeWheel;
@@ -32,7 +32,7 @@ fn ticks_to_duration(ticks: u128, tick_duration: Duration) -> Duration {
 
 pub(crate) struct MioTimeout {
     pub(crate) duration: Duration,
-    pub(crate) start_time: Option<SystemTime>,
+    pub(crate) start_time: Option<Instant>,
     pub(crate) slot: Option<u128>,
 }
 
@@ -43,7 +43,7 @@ impl Debug for MioTimeout {
                 f,
                 "timeout={:?},elapsed {:?}",
                 self.duration,
-                start_time.elapsed().unwrap()
+                start_time.elapsed()
             )
         } else {
             write!(f, "timeout={:?}", self.duration)
@@ -66,7 +66,7 @@ impl MioTimeout {
 
     pub(crate) fn is_expired(&self) -> bool {
         if let Some(start_time) = self.start_time {
-            start_time.elapsed().unwrap() > self.duration
+            start_time.elapsed() > self.duration
         } else {
             false
         }
@@ -227,7 +227,7 @@ where
 
                     let t = duration_to_ticks(timeout.duration, self.tick_duration, true);
 
-                    timeout.start_time = Some(SystemTime::now());
+                    timeout.start_time = Some(Instant::now());
 
                     log::trace!(
                         "{:?} {:?} register {:?}, tick duration={:?},ticks={}",
@@ -296,7 +296,7 @@ where
 
                     let slot = time_wheel.time_wheel.add(t, handle.token);
 
-                    timeout.start_time = Some(SystemTime::now());
+                    timeout.start_time = Some(Instant::now());
 
                     timeout.slot = Some(slot);
 
