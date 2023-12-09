@@ -24,12 +24,17 @@ pub struct QuicStream {
 
 impl QuicStream {
     /// Create new `Quic stream` instance.
-    pub(crate) fn new(receiver: Receiver<QuicConnEvent>, sender: Sender<QuicConnEvent>) -> Self {
+    pub(crate) fn new(
+        receiver: Receiver<QuicConnEvent>,
+        sender: Sender<QuicConnEvent>,
+        read_bytes: Option<Bytes>,
+        fin: bool,
+    ) -> Self {
         Self {
-            fin: false,
+            fin,
             receiver,
             sender,
-            read_bytes: None,
+            read_bytes,
         }
     }
 }

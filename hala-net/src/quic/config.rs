@@ -6,7 +6,7 @@ use std::{
 /// Hala quic peer config, Adds hala quic specific configuration options to [`quiche::Config`](quiche::Config)
 pub struct Config {
     pub(crate) udp_data_channel_len: usize,
-    pub(crate) incoming_conn_channel_len: usize,
+    pub(crate) stream_buffer: usize,
 
     quiche_config: quiche::Config,
 }
@@ -16,7 +16,7 @@ impl Config {
     pub fn new() -> io::Result<Self> {
         Ok(Self {
             udp_data_channel_len: 1024,
-            incoming_conn_channel_len: 1024,
+            stream_buffer: 1024,
             quiche_config: quiche::Config::new(quiche::PROTOCOL_VERSION)
                 .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?,
         })

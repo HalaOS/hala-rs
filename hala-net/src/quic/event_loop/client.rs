@@ -1,26 +1,34 @@
 use std::{collections::HashMap, io, net::SocketAddr};
 
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 use futures::{
-    channel::mpsc::{Receiver, Sender},
-    select, FutureExt, StreamExt,
+    channel::mpsc::{channel, Receiver, Sender},
+    select, FutureExt, SinkExt, StreamExt,
 };
-use hala_io_util::{sleep, timeout};
+use hala_io_util::{timeout, ReadBuf};
 use quiche::RecvInfo;
 
 use crate::{
     errors::to_io_error,
-    quic::{QuicConnEvent, QuicStream, MAX_DATAGRAM_SIZE},
+    quic::{CloseEvent, Config, QuicConnEvent, QuicStream, MAX_DATAGRAM_SIZE},
     UdpGroup,
 };
 
 /// Event loop for quic client.
 pub struct QuicClientEventLoop {
+    /// Hala quic config
+    config: Config,
     /// The client bound udp group.
     udp_group: UdpGroup,
     /// The client underly connection
     quiche_conn: quiche::Connection,
-    // Receive connect event.
+    /// Receive connection/stream close event.
+    close_event_receiver: Receiver<CloseEvent>,
+    /// Send connection/stream close event.
+    close_event_sender: Sender<CloseEvent>,
+    // Send data from connection objects.
+    conn_data_sender: Sender<QuicConnEvent>,
+    // Receive data from connection objects.
     conn_data_receiver: Receiver<QuicConnEvent>,
     /// New incoming stream sender.
     stream_accept_sender: Sender<QuicStream>,
@@ -51,8 +59,20 @@ impl QuicClientEventLoop {
                         return Ok(())
                     }
                 }
+                close_event = self.close_event_receiver.next().fuse() => {
+                    if let Some(event) = close_event {
+                        self.handle_close_event(event).await?;
+                    } else {
+                        // No more living conn instance.
+                        return Ok(())
+                    }
+                }
             }
         }
+    }
+
+    async fn handle_close_event(&mut self, _event: CloseEvent) -> io::Result<bool> {
+        todo!()
     }
 
     async fn handle_timeout(&mut self) -> io::Result<bool> {
@@ -86,14 +106,74 @@ impl QuicClientEventLoop {
         }
 
         for stream_id in self.quiche_conn.readable() {
-            let mut buf = BytesMut::with_capacity(MAX_DATAGRAM_SIZE);
+            let mut is_closed = false;
+
+            let mut buf = ReadBuf::with_capacity(MAX_DATAGRAM_SIZE);
 
             loop {
-                match self.quiche_conn.stream_recv(stream_id, out) {
-                    Ok((read_size, fin)) => {}
-                    Err(quiche::Error::Done) => {}
-                    Err(err) => {}
+                match self.quiche_conn.stream_recv(stream_id, buf.as_mut()) {
+                    Ok((read_size, fin)) => {
+                        buf.filled(read_size);
+
+                        is_closed = fin;
+
+                        if is_closed {
+                            break;
+                        }
+                    }
+                    Err(quiche::Error::Done) => {
+                        break;
+                    }
+                    Err(err) => {
+                        return Err(err).map_err(to_io_error);
+                    }
                 }
+            }
+
+            let bytes = buf.into_bytes_mut(None);
+
+            if let Some(stream_sender) = self.stream_senders.get_mut(&stream_id) {
+                // already created
+
+                if let Err(err) = stream_sender
+                    .send(QuicConnEvent::StreamData {
+                        bytes: bytes.into(),
+                        fin: is_closed,
+                    })
+                    .await
+                {
+                    // stream endpoint disconnected.
+                    if err.is_disconnected() {
+                        // remove stream data sender from map
+                        self.stream_senders.remove(&stream_id);
+                        continue;
+                    }
+
+                    return Err(to_io_error(err));
+                };
+            } else {
+                // create new stream
+                let (sx, rx) = channel(self.config.stream_buffer);
+
+                // Send new `QuicStream` object to accept channel
+                if let Err(err) = self
+                    .stream_accept_sender
+                    .send(QuicStream::new(
+                        rx,
+                        self.conn_data_sender.clone(),
+                        Some(bytes.into()),
+                        is_closed,
+                    ))
+                    .await
+                {
+                    if err.is_disconnected() {
+                        return Ok(false);
+                    }
+
+                    return Err(to_io_error(err));
+                }
+
+                self.stream_senders.insert(stream_id, sx);
             }
         }
 
@@ -101,6 +181,14 @@ impl QuicClientEventLoop {
     }
 
     async fn handle_conn_event(&mut self, event: QuicConnEvent) -> io::Result<()> {
+        match event {
+            QuicConnEvent::OpenStream {
+                conn_id,
+                stream_id,
+                sender,
+            } => todo!(),
+            QuicConnEvent::StreamData { bytes, fin } => todo!(),
+        }
         todo!()
     }
 }
