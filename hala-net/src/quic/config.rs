@@ -5,6 +5,7 @@ use std::{
 
 /// Hala quic peer config, Adds hala quic specific configuration options to [`quiche::Config`](quiche::Config)
 pub struct Config {
+    #[allow(unused)]
     pub(crate) udp_data_channel_len: usize,
     pub(crate) stream_buffer: usize,
 

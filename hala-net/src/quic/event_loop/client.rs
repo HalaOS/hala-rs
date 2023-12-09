@@ -24,6 +24,7 @@ pub struct QuicClientEventLoop {
     quiche_conn: quiche::Connection,
     /// Receive connection/stream close event.
     close_event_receiver: Receiver<CloseEvent>,
+    #[allow(unused)]
     /// Send connection/stream close event.
     close_event_sender: Sender<CloseEvent>,
     // Send data from connection objects.
@@ -105,6 +106,8 @@ impl QuicClientEventLoop {
             return Ok(false);
         }
 
+        let conn_id = self.quiche_conn.source_id().into_owned().clone();
+
         for stream_id in self.quiche_conn.readable() {
             let mut is_closed = false;
 
@@ -139,6 +142,8 @@ impl QuicClientEventLoop {
                     .send(QuicConnEvent::StreamData {
                         bytes: bytes.into(),
                         fin: is_closed,
+                        conn_id: conn_id.clone(),
+                        stream_id,
                     })
                     .await
                 {
@@ -159,6 +164,8 @@ impl QuicClientEventLoop {
                 if let Err(err) = self
                     .stream_accept_sender
                     .send(QuicStream::new(
+                        conn_id.clone(),
+                        stream_id,
                         rx,
                         self.conn_data_sender.clone(),
                         Some(bytes.into()),
@@ -183,11 +190,20 @@ impl QuicClientEventLoop {
     async fn handle_conn_event(&mut self, event: QuicConnEvent) -> io::Result<()> {
         match event {
             QuicConnEvent::OpenStream {
-                conn_id,
+                conn_id: _,
                 stream_id,
                 sender,
-            } => todo!(),
-            QuicConnEvent::StreamData { bytes, fin } => todo!(),
+            } => {
+                self.stream_senders.insert(stream_id, sender);
+            }
+            QuicConnEvent::StreamData {
+                conn_id: _,
+                stream_id,
+                bytes,
+                fin: _,
+            } => {
+                _ = self.quiche_conn.stream_writable(stream_id, bytes.len());
+            }
         }
         todo!()
     }

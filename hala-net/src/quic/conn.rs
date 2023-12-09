@@ -56,6 +56,8 @@ impl QuicConn {
             .map_err(to_io_error)?;
 
         Ok(QuicStream::new(
+            self.conn_id.clone(),
+            stream_id,
             rx,
             self.conn_data_sender.clone(),
             None,

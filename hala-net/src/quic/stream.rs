@@ -5,6 +5,7 @@ use futures::{
     channel::mpsc::{Receiver, Sender},
     AsyncRead, AsyncWrite, SinkExt, StreamExt,
 };
+use quiche::ConnectionId;
 
 use crate::errors::HalaIoError;
 
@@ -12,6 +13,8 @@ use super::QuicConnEvent;
 
 /// Quic stream of one connection.
 pub struct QuicStream {
+    conn_id: ConnectionId<'static>,
+    stream_id: u64,
     /// close status
     fin: bool,
     /// Cached read bytes
@@ -25,12 +28,16 @@ pub struct QuicStream {
 impl QuicStream {
     /// Create new `Quic stream` instance.
     pub(crate) fn new(
+        conn_id: ConnectionId<'static>,
+        stream_id: u64,
         receiver: Receiver<QuicConnEvent>,
         sender: Sender<QuicConnEvent>,
         read_bytes: Option<Bytes>,
         fin: bool,
     ) -> Self {
         Self {
+            conn_id,
+            stream_id,
             fin,
             receiver,
             sender,
@@ -57,11 +64,16 @@ impl AsyncWrite for QuicStream {
             Poll::Pending => return Poll::Pending,
         }
 
+        let conn_id = self.conn_id.clone();
+        let stream_id = self.stream_id;
+
         Poll::Ready(
             self.sender
                 .start_send(QuicConnEvent::StreamData {
                     bytes: Bytes::from(buf.to_vec()),
                     fin: false,
+                    conn_id: conn_id.into_owned(),
+                    stream_id: stream_id,
                 })
                 .map(|_| buf.len())
                 .map_err(|err| {
@@ -118,7 +130,12 @@ impl AsyncRead for QuicStream {
         match self.receiver.poll_next_unpin(cx) {
             Poll::Pending => return Poll::Pending,
             Poll::Ready(Some(event)) => match event {
-                QuicConnEvent::StreamData { bytes, fin } => {
+                QuicConnEvent::StreamData {
+                    bytes,
+                    fin,
+                    conn_id: _,
+                    stream_id: _,
+                } => {
                     self.fin = fin;
 
                     return self.copy_to_slice(bytes, buf);
