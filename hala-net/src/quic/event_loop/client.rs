@@ -38,7 +38,10 @@ impl QuicClientEventLoop {
 
             select! {
                 recv_from = timeout(self.udp_group.recv_from_buf(&mut buf),expired).fuse() => {
-                    self.handle_recv_from(buf,recv_from).await?;
+                    // conn closed or timeout
+                    if !self.handle_recv_from(buf,recv_from).await? {
+                        return Ok(())
+                    }
                 }
                 event = self.conn_data_receiver.next().fuse() => {
                     if let Some(event) = event {
@@ -52,7 +55,7 @@ impl QuicClientEventLoop {
         }
     }
 
-    async fn handle_timeout(&mut self) -> io::Result<()> {
+    async fn handle_timeout(&mut self) -> io::Result<bool> {
         todo!()
     }
 
@@ -60,7 +63,7 @@ impl QuicClientEventLoop {
         &mut self,
         mut buf: BytesMut,
         recv_from: io::Result<(SocketAddr, SocketAddr)>,
-    ) -> io::Result<()> {
+    ) -> io::Result<bool> {
         let (laddr, raddr) = match recv_from {
             Ok(r) => r,
             Err(err) if err.kind() == io::ErrorKind::TimedOut => {
@@ -78,7 +81,23 @@ impl QuicClientEventLoop {
             .recv(&mut buf[..], recv_info)
             .map_err(to_io_error)?;
 
-        todo!()
+        if self.quiche_conn.is_closed() {
+            return Ok(false);
+        }
+
+        for stream_id in self.quiche_conn.readable() {
+            let mut buf = BytesMut::with_capacity(MAX_DATAGRAM_SIZE);
+
+            loop {
+                match self.quiche_conn.stream_recv(stream_id, out) {
+                    Ok((read_size, fin)) => {}
+                    Err(quiche::Error::Done) => {}
+                    Err(err) => {}
+                }
+            }
+        }
+
+        Ok(true)
     }
 
     async fn handle_conn_event(&mut self, event: QuicConnEvent) -> io::Result<()> {
