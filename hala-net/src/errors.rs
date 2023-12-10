@@ -23,12 +23,17 @@ impl From<HalaIoError> for std::io::Error {
             }
             HalaIoError::StdIoError(io_error) => io_error,
             #[cfg(feature = "quice")]
-            HalaIoError::QuicheError(err) => std::io::Error::new(std::io::ErrorKind::Other, err),
+            HalaIoError::QuicheError(err) => match err {
+                quiche::Error::StreamStopped(_) | quiche::Error::InvalidStreamState(_) => {
+                    std::io::Error::new(std::io::ErrorKind::BrokenPipe, err)
+                }
+                _ => std::io::Error::new(std::io::ErrorKind::Other, err),
+            },
         }
     }
 }
 
-pub fn to_io_error<E: Into<HalaIoError>>(error: E) -> io::Error {
+pub fn into_io_error<E: Into<HalaIoError>>(error: E) -> io::Error {
     let err: HalaIoError = error.into();
 
     err.into()

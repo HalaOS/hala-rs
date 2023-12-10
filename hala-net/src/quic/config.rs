@@ -7,6 +7,7 @@ use std::{
 pub struct Config {
     #[allow(unused)]
     pub(crate) udp_data_channel_len: usize,
+    #[allow(unused)]
     pub(crate) stream_buffer: usize,
 
     quiche_config: quiche::Config,
