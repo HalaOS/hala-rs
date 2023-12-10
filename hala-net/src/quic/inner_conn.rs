@@ -54,12 +54,13 @@ impl QuicConnState {
 
 /// Quic connection instance created by `connect` / `accept` methods.
 #[derive(Debug, Clone)]
-pub struct QuicConn {
+pub struct QuicInnerConn {
     /// Mutex protected quiche connection instance.
     state: Arc<Mutex<QuicConnState>>,
 }
 
-impl QuicConn {
+#[allow(unused)]
+impl QuicInnerConn {
     /// Create new future for send connection data
     pub fn send<'a>(&self, buf: &'a mut [u8]) -> QuicConnSend<'a> {
         QuicConnSend {
@@ -97,7 +98,7 @@ impl QuicConn {
     }
 }
 
-/// Future created by [`send`](QuicConn::send) method
+/// Future created by [`send`](QuicInnerConn::send) method
 pub struct QuicConnSend<'a> {
     buf: &'a mut [u8],
     state: Arc<Mutex<QuicConnState>>,
@@ -131,7 +132,7 @@ impl<'a> Future for QuicConnSend<'a> {
     }
 }
 
-/// Future created by [`recv`](QuicConn::recv) method
+/// Future created by [`recv`](QuicInnerConn::recv) method
 pub struct QuicConnRecv<'a> {
     buf: &'a mut [u8],
     recv_info: RecvInfo,
@@ -168,8 +169,7 @@ impl<'a> Future for QuicConnRecv<'a> {
     }
 }
 
-/// Future created by [`stream_send`](QuicConn::stream_send) method
-#[allow(unused)]
+/// Future created by [`stream_send`](QuicInnerConn::stream_send) method
 pub struct QuicStreamSend<'a> {
     buf: &'a [u8],
     stream_id: u64,
@@ -210,8 +210,7 @@ impl<'a> Future for QuicStreamSend<'a> {
     }
 }
 
-/// Future created by [`stream_recv`](QuicConn::stream_recv) method
-#[allow(unused)]
+/// Future created by [`stream_recv`](QuicInnerConn::stream_recv) method
 pub struct QuicStreamRecv<'a> {
     buf: &'a mut [u8],
     stream_id: u64,
