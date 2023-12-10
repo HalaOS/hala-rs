@@ -7,8 +7,7 @@ use notifier::*;
 mod poller;
 use poller::*;
 
-mod thread_model;
-use thread_model::*;
+pub use crate::thread_model::*;
 
 #[cfg(test)]
 mod tests {

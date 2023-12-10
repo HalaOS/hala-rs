@@ -5,224 +5,245 @@ use std::{
     task::{Poll, Waker},
 };
 
-use bytes::Bytes;
-use futures::{channel::mpsc::Sender, lock::Mutex, Future, FutureExt};
-use hala_io_util::ReadBuf;
-use quiche::SendInfo;
+use futures::{lock::Mutex, Future, FutureExt};
+use quiche::{RecvInfo, SendInfo};
 
 use crate::errors::into_io_error;
 
-use super::MAX_DATAGRAM_SIZE;
-
-pub struct QuicConn {
-    /// Mutex protected quiche connection instance.
-    state: Arc<Mutex<QuicConnState>>,
-
-    conn_data_sender: Sender<(Bytes, SendInfo)>,
-}
-
-impl QuicConn {
-    /// Create new future to send data via stream by `stream_d`
-    pub async fn stream_send<'a>(
-        &'a mut self,
-        stream_id: u64,
-        mut buf: &'a [u8],
-        fin: bool,
-    ) -> StreamSend<'a> {
-        if buf.len() > MAX_DATAGRAM_SIZE {
-            buf = &buf[..MAX_DATAGRAM_SIZE];
-        }
-
-        StreamSend {
-            conn: self,
-            stream_id,
-            buf,
-            fin,
-            conn_data_send_buf: None,
-        }
-    }
-
-    /// Create new future to recv data from stream by `stream_d`
-    pub async fn stream_recv<'a>(&'a self, stream_id: u64, buf: &'a mut [u8]) -> StreamRecv<'a> {
-        StreamRecv {
-            conn: self,
-            stream_id,
-            buf,
-        }
-    }
-}
-
+#[allow(unused)]
 struct QuicConnState {
+    /// quiche connection instance.
     quiche_conn: quiche::Connection,
+    /// Waker for connection send operation.
+    send_waker: Option<Waker>,
+    /// Waker for connection recv operation.
+    recv_waker: Option<Waker>,
+    /// Wakers for stream send
     stream_send_wakers: HashMap<u64, Waker>,
+    /// Wakers for stream recv
     stream_recv_wakers: HashMap<u64, Waker>,
 }
 
 impl QuicConnState {
-    fn register_stream_send_waker(&mut self, stream_id: u64, waker: Waker) {
-        self.stream_send_wakers.insert(stream_id, waker);
+    fn try_stream_wake(&mut self) {
+        for stream_id in self.quiche_conn.readable() {
+            if let Some(waker) = self.stream_recv_wakers.remove(&stream_id) {
+                waker.wake();
+            }
+        }
+
+        for stream_id in self.quiche_conn.writable() {
+            if let Some(waker) = self.stream_send_wakers.remove(&stream_id) {
+                waker.wake();
+            }
+        }
     }
 
-    fn register_stream_recv_waker(&mut self, stream_id: u64, waker: Waker) {
-        self.stream_recv_wakers.insert(stream_id, waker);
+    fn try_conn_send_wake(&mut self) {
+        if let Some(waker) = self.send_waker.take() {
+            waker.wake();
+        }
     }
 
-    fn poll_send(
-        &mut self,
+    fn try_conn_recv_wake(&mut self) {
+        if let Some(waker) = self.recv_waker.take() {
+            waker.wake();
+        }
+    }
+}
+
+/// Quic connection instance created by `connect` / `accept` methods.
+#[derive(Debug, Clone)]
+pub struct QuicConn {
+    /// Mutex protected quiche connection instance.
+    state: Arc<Mutex<QuicConnState>>,
+}
+
+impl QuicConn {
+    /// Create new future for send connection data
+    pub fn send<'a>(&self, buf: &'a mut [u8]) -> QuicConnSend<'a> {
+        QuicConnSend {
+            buf,
+            state: self.state.clone(),
+        }
+    }
+
+    /// Create new future for recv connection data
+    pub fn recv<'a>(&self, buf: &'a mut [u8], recv_info: RecvInfo) -> QuicConnRecv<'a> {
+        QuicConnRecv {
+            buf,
+            recv_info,
+            state: self.state.clone(),
+        }
+    }
+
+    /// Create new future for send stream data
+    pub fn stream_send<'a>(&self, stream_id: u64, buf: &'a [u8], fin: bool) -> QuicStreamSend<'a> {
+        QuicStreamSend {
+            buf,
+            stream_id,
+            fin,
+            state: self.state.clone(),
+        }
+    }
+
+    /// Create new future for recv stream data
+    pub fn stream_recv<'a>(&self, stream_id: u64, buf: &'a mut [u8]) -> QuicStreamRecv<'a> {
+        QuicStreamRecv {
+            buf,
+            stream_id,
+            state: self.state.clone(),
+        }
+    }
+}
+
+/// Future created by [`send`](QuicConn::send) method
+pub struct QuicConnSend<'a> {
+    buf: &'a mut [u8],
+    state: Arc<Mutex<QuicConnState>>,
+}
+
+impl<'a> Future for QuicConnSend<'a> {
+    type Output = io::Result<(usize, SendInfo)>;
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
-        stream_id: u64,
-        buf: &[u8],
-        fin: bool,
-    ) -> Poll<io::Result<usize>> {
-        match self.quiche_conn.stream_writable(stream_id, buf.len()) {
-            Ok(true) => match self.quiche_conn.stream_send(stream_id, buf, fin) {
-                Ok(len) => {
-                    return Poll::Ready(Ok(len));
-                }
-                Err(quiche::Error::Done) => {
-                    panic!("not here, quiche stream_writable check inner error");
-                }
-                Err(err) => return Poll::Ready(Err(into_io_error(err))),
-            },
-            Ok(false) => {
-                self.register_stream_recv_waker(stream_id, cx.waker().clone());
+    ) -> std::task::Poll<Self::Output> {
+        let state = self.state.clone();
+        let mut state = match state.lock().poll_unpin(cx) {
+            Poll::Ready(guard) => guard,
+            _ => return Poll::Pending,
+        };
+
+        match state.quiche_conn.send(self.buf) {
+            Ok((send_size, send_info)) => {
+                state.try_stream_wake();
+
+                return Poll::Ready(Ok((send_size, send_info)));
+            }
+            Err(quiche::Error::Done) => {
+                state.send_waker = Some(cx.waker().clone());
                 return Poll::Pending;
             }
             Err(err) => return Poll::Ready(Err(into_io_error(err))),
         }
     }
-
-    fn conn_send(&mut self) -> io::Result<(Bytes, SendInfo)> {
-        let mut buf = ReadBuf::with_capacity(MAX_DATAGRAM_SIZE);
-
-        match self.quiche_conn.send(buf.as_mut()) {
-            Ok((len, send_info)) => Ok((buf.into_bytes_mut(Some(len)).into(), send_info)),
-            Err(quiche::Error::Done) => {
-                panic!("Call poll_send first");
-            }
-            Err(err) => {
-                return Err(into_io_error(err));
-            }
-        }
-    }
 }
 
-pub struct StreamSend<'a> {
-    conn: &'a mut QuicConn,
-    stream_id: u64,
-    buf: &'a [u8],
-    fin: bool,
-    conn_data_send_buf: Option<(Bytes, usize, SendInfo)>,
-}
-
-impl<'a> StreamSend<'a> {
-    fn poll_send_conn_data(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<io::Result<usize>> {
-        assert!(
-            self.conn_data_send_buf.is_some(),
-            "conn_data_send_buf is None"
-        );
-
-        match self.conn.conn_data_sender.poll_ready(cx) {
-            Poll::Ready(Ok(_)) => {}
-            Poll::Ready(Err(err)) => {
-                return Poll::Ready(Err(into_io_error(err)));
-            }
-            Poll::Pending => return Poll::Pending,
-        }
-
-        let buf = self
-            .conn_data_send_buf
-            .take()
-            .expect("conn_data_send_buf is None");
-
-        let result = self
-            .conn
-            .conn_data_sender
-            .start_send((buf.0, buf.2))
-            .map_err(into_io_error);
-
-        if let Err(err) = result {
-            return Poll::Ready(Err(err));
-        }
-
-        // match self
-        //     .conn
-        //     .conn_data_sender
-        //     .poll_flush_unpin(cx)
-        //     .map_err(into_io_error)? {}
-
-        Poll::Ready(Ok(buf.1))
-    }
-}
-
-impl<'a> Future for StreamSend<'a> {
-    type Output = io::Result<usize>;
-    fn poll(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
-        // Stream data already send.
-        if self.conn_data_send_buf.is_some() {
-            return self.poll_send_conn_data(cx);
-        }
-
-        let data = {
-            // get quiche connection state
-            let mut state = match self.conn.state.lock().poll_unpin(cx) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(state) => state,
-            };
-
-            // send stream data.
-            match state.poll_send(cx, self.stream_id, self.buf, self.fin) {
-                Poll::Ready(Ok(len)) => {
-                    // get connection send data
-                    let (bytes, send_info) = state.conn_send()?;
-
-                    Some((bytes, len, send_info))
-                }
-                poll => return poll,
-            }
-        };
-
-        self.conn_data_send_buf = data;
-
-        // try send connd data.
-        return self.poll_send_conn_data(cx);
-    }
-}
-
-pub struct StreamRecv<'a> {
-    conn: &'a QuicConn,
-    stream_id: u64,
+/// Future created by [`recv`](QuicConn::recv) method
+pub struct QuicConnRecv<'a> {
     buf: &'a mut [u8],
+    recv_info: RecvInfo,
+    state: Arc<Mutex<QuicConnState>>,
 }
 
-impl<'a> Future for StreamRecv<'a> {
-    type Output = io::Result<(usize, bool)>;
+impl<'a> Future for QuicConnRecv<'a> {
+    type Output = io::Result<usize>;
+
     fn poll(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
-        let mut state = match self.conn.state.lock().poll_unpin(cx) {
-            Poll::Pending => return Poll::Pending,
-            Poll::Ready(state) => state,
+        let state = self.state.clone();
+        let mut state = match state.lock().poll_unpin(cx) {
+            Poll::Ready(guard) => guard,
+            _ => return Poll::Pending,
         };
 
-        if state.quiche_conn.stream_readable(self.stream_id) {
-            match state.quiche_conn.stream_recv(self.stream_id, self.buf) {
-                Ok((read_size, fin)) => return Poll::Ready(Ok((read_size, fin))),
-                Err(quiche::Error::Done) => {
-                    panic!("not here, quiche stream_writable check inner error");
-                }
-                Err(err) => return Poll::Ready(Err(into_io_error(err))),
+        let recv_info = self.recv_info;
+
+        match state.quiche_conn.recv(self.buf, recv_info) {
+            Ok(recv_size) => {
+                state.try_stream_wake();
+
+                return Poll::Ready(Ok(recv_size));
             }
-        } else {
-            state.register_stream_send_waker(self.stream_id, cx.waker().clone());
-            return Poll::Pending;
+            Err(quiche::Error::Done) => {
+                state.recv_waker = Some(cx.waker().clone());
+                return Poll::Pending;
+            }
+            Err(err) => return Poll::Ready(Err(into_io_error(err))),
+        }
+    }
+}
+
+/// Future created by [`stream_send`](QuicConn::stream_send) method
+#[allow(unused)]
+pub struct QuicStreamSend<'a> {
+    buf: &'a [u8],
+    stream_id: u64,
+    fin: bool,
+    state: Arc<Mutex<QuicConnState>>,
+}
+
+impl<'a> Future for QuicStreamSend<'a> {
+    type Output = io::Result<usize>;
+
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        let state = self.state.clone();
+        let mut state = match state.lock().poll_unpin(cx) {
+            Poll::Ready(guard) => guard,
+            _ => return Poll::Pending,
+        };
+
+        match state
+            .quiche_conn
+            .stream_send(self.stream_id, self.buf, self.fin)
+        {
+            Ok(recv_size) => {
+                state.try_conn_send_wake();
+
+                return Poll::Ready(Ok(recv_size));
+            }
+            Err(quiche::Error::Done) => {
+                state
+                    .stream_send_wakers
+                    .insert(self.stream_id, cx.waker().clone());
+                return Poll::Pending;
+            }
+            Err(err) => return Poll::Ready(Err(into_io_error(err))),
+        }
+    }
+}
+
+/// Future created by [`stream_recv`](QuicConn::stream_recv) method
+#[allow(unused)]
+pub struct QuicStreamRecv<'a> {
+    buf: &'a mut [u8],
+    stream_id: u64,
+    state: Arc<Mutex<QuicConnState>>,
+}
+
+impl<'a> Future for QuicStreamRecv<'a> {
+    type Output = io::Result<(usize, bool)>;
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        let state = self.state.clone();
+        let mut state = match state.lock().poll_unpin(cx) {
+            Poll::Ready(guard) => guard,
+            _ => return Poll::Pending,
+        };
+
+        match state.quiche_conn.stream_recv(self.stream_id, self.buf) {
+            Ok(recv_size) => {
+                state.try_conn_recv_wake();
+
+                return Poll::Ready(Ok(recv_size));
+            }
+            Err(quiche::Error::Done) => {
+                state
+                    .stream_recv_wakers
+                    .insert(self.stream_id, cx.waker().clone());
+                return Poll::Pending;
+            }
+            Err(err) => return Poll::Ready(Err(into_io_error(err))),
         }
     }
 }
