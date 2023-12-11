@@ -5,12 +5,12 @@ use ring::rand::{SecureRandom, SystemRandom};
 
 use crate::errors::into_io_error;
 
-use super::Config;
+use super::{inner_conn::QuicInnerConn, Config};
 
 /// Quic client connector
 pub struct Connector {
     /// source connection id.
-    quiche_conn: quiche::Connection,
+    pub(super) quiche_conn: quiche::Connection,
 }
 
 impl Connector {
@@ -21,6 +21,8 @@ impl Connector {
         SystemRandom::new().fill(&mut scid).map_err(into_io_error)?;
 
         let scid = quiche::ConnectionId::from_vec(scid);
+
+        log::trace!("Connector {:?}", scid);
 
         let quiche_conn = quiche::connect(None, &scid, laddr, raddr, &mut config)
             .map_err(|err| io::Error::new(io::ErrorKind::ConnectionRefused, err))?;
@@ -56,8 +58,8 @@ impl Connector {
     }
 }
 
-impl From<Connector> for quiche::Connection {
+impl From<Connector> for QuicInnerConn {
     fn from(value: Connector) -> Self {
-        value.quiche_conn
+        QuicInnerConn::new(value.quiche_conn)
     }
 }
