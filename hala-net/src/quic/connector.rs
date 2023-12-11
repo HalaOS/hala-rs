@@ -30,14 +30,15 @@ impl Connector {
         Ok(Self { quiche_conn })
     }
 
-    ///
+    /// Generate send data.
     pub fn send(&mut self, buf: &mut [u8]) -> io::Result<(usize, SendInfo)> {
         self.quiche_conn
             .send(buf)
             .map_err(|err| io::Error::new(io::ErrorKind::ConnectionRefused, err))
     }
 
-    pub fn recv(&mut self, buf: &mut [u8], recv_info: RecvInfo) -> io::Result<(usize, bool)> {
+    /// Accept remote peer data.
+    pub fn recv(&mut self, buf: &mut [u8], recv_info: RecvInfo) -> io::Result<usize> {
         let len = self
             .quiche_conn
             .recv(buf, recv_info)
@@ -50,11 +51,12 @@ impl Connector {
             ));
         }
 
-        if self.quiche_conn.is_established() {
-            Ok((len, true))
-        } else {
-            Ok((len, false))
-        }
+        Ok(len)
+    }
+
+    /// Check if underly connection is established.
+    pub fn is_established(&self) -> bool {
+        self.quiche_conn.is_established()
     }
 }
 

@@ -24,13 +24,12 @@ pub(crate) const MAX_DATAGRAM_SIZE: usize = 1350;
 
 #[cfg(test)]
 mod tests {
+
     use std::path::Path;
 
     use quiche::RecvInfo;
 
-    use crate::quic::{inner_conn::QuicInnerConn, ServerHello};
-
-    use super::{Acceptor, Config, Connector, MAX_DATAGRAM_SIZE};
+    use super::{Accept, Acceptor, Config, Connector, MAX_DATAGRAM_SIZE};
 
     fn config(is_server: bool) -> Config {
         let mut config = Config::new().unwrap();
@@ -79,101 +78,33 @@ mod tests {
 
         let mut acceptor = Acceptor::new(config(true)).unwrap();
 
-        let mut i = 0;
-
         loop {
-            let mut client_buf = [0; MAX_DATAGRAM_SIZE];
+            let mut buf = [0; MAX_DATAGRAM_SIZE];
 
-            let (send_size, _) = connector.send(&mut client_buf).unwrap();
+            let (send_size, send_info) = connector.send(&mut buf).unwrap();
 
-            log::debug!(
-                "handle shake {}, is_established={}",
-                i,
-                connector.quiche_conn.is_established()
-            );
+            assert_eq!(send_info.from, laddr);
+            assert_eq!(send_info.to, raddr);
 
-            i += 1;
+            match acceptor.recv(laddr, raddr, &mut buf[..send_size]).unwrap() {
+                Accept::Bypass(_) => {}
+                Accept::Handling(mut bytes) => {
+                    let read_size = connector
+                        .recv(
+                            &mut bytes,
+                            RecvInfo {
+                                from: raddr,
+                                to: laddr,
+                            },
+                        )
+                        .unwrap();
 
-            let header =
-                quiche::Header::from_slice(&mut client_buf[..send_size], quiche::MAX_CONN_ID_LEN)
-                    .unwrap();
-
-            let mut server_buf = [0; MAX_DATAGRAM_SIZE];
-
-            let ServerHello {
-                read_size,
-                write_size,
-                conn,
-            } = acceptor
-                .client_hello(
-                    header,
-                    &mut client_buf[..send_size],
-                    &mut server_buf,
-                    laddr,
-                    raddr,
-                )
-                .unwrap();
-
-            assert_eq!(read_size, send_size);
-
-            if conn.is_some() {
-                break;
-            }
-
-            let (read_size, connected) = connector
-                .recv(
-                    &mut server_buf[..write_size],
-                    RecvInfo {
-                        from: raddr,
-                        to: laddr,
-                    },
-                )
-                .unwrap();
-
-            assert_eq!(read_size, write_size);
-
-            if connected {
-                let conn: QuicInnerConn = connector.into();
-
-                conn.stream_send(4, b"Hello", false).await.unwrap();
-
-                let mut client_buf = [0; MAX_DATAGRAM_SIZE];
-
-                let (send_size, _) = conn.send(&mut client_buf).await.unwrap();
-
-                let mut server_buf = [0; MAX_DATAGRAM_SIZE];
-
-                let header = quiche::Header::from_slice(
-                    &mut client_buf[..send_size],
-                    quiche::MAX_CONN_ID_LEN,
-                )
-                .unwrap();
-
-                let server_hello = acceptor
-                    .client_hello(
-                        header,
-                        &mut client_buf[..send_size],
-                        &mut server_buf,
-                        laddr,
-                        raddr,
-                    )
-                    .unwrap();
-
-                assert_eq!(server_hello.read_size, send_size);
-
-                assert!(server_hello.conn.is_some());
-
-                conn.recv(
-                    &mut server_buf[..server_hello.write_size],
-                    RecvInfo {
-                        from: raddr,
-                        to: laddr,
-                    },
-                )
-                .await
-                .unwrap();
-
-                break;
+                    assert_eq!(read_size, bytes.len());
+                }
+                Accept::Incoming(_) => {
+                    assert!(connector.is_established());
+                    break;
+                }
             }
         }
     }

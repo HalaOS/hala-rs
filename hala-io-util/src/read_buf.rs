@@ -1,4 +1,4 @@
-use bytes::{BufMut, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 
 pub fn as_bytes_mut<B>(buf: &mut B) -> &mut [u8]
 where
@@ -38,5 +38,9 @@ impl ReadBuf {
         }
 
         self.bytes
+    }
+
+    pub fn into_bytes(self, advance: Option<usize>) -> Bytes {
+        self.into_bytes_mut(advance).into()
     }
 }
