@@ -25,6 +25,15 @@ struct QuicConnState {
 }
 
 impl QuicConnState {
+    fn new(quiche_conn: quiche::Connection) -> Self {
+        QuicConnState {
+            quiche_conn,
+            send_waker: Default::default(),
+            recv_waker: Default::default(),
+            stream_send_wakers: Default::default(),
+            stream_recv_wakers: Default::default(),
+        }
+    }
     fn try_stream_wake(&mut self) {
         for stream_id in self.quiche_conn.readable() {
             if let Some(waker) = self.stream_recv_wakers.remove(&stream_id) {
@@ -61,6 +70,11 @@ pub struct QuicInnerConn {
 
 #[allow(unused)]
 impl QuicInnerConn {
+    pub fn new(quiche_conn: quiche::Connection) -> Self {
+        Self {
+            state: Arc::new(Mutex::new(QuicConnState::new(quiche_conn))),
+        }
+    }
     /// Create new future for send connection data
     pub fn send<'a>(&self, buf: &'a mut [u8]) -> QuicConnSend<'a> {
         QuicConnSend {

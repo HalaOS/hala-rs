@@ -13,5 +13,11 @@ pub use conn::*;
 mod stream;
 pub use stream::*;
 
+mod connector;
+pub use connector::*;
+
+mod acceptor;
+pub use acceptor::*;
+
 #[allow(unused)]
 pub(crate) const MAX_DATAGRAM_SIZE: usize = 1350;

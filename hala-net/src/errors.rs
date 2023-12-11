@@ -13,6 +13,10 @@ pub enum HalaIoError {
     #[cfg(feature = "quice")]
     #[error("{0}")]
     QuicheError(#[from] quiche::Error),
+
+    #[cfg(feature = "quice")]
+    #[error("{0}")]
+    Unspecified(#[from] ring::error::Unspecified),
 }
 
 impl From<HalaIoError> for std::io::Error {
@@ -29,6 +33,8 @@ impl From<HalaIoError> for std::io::Error {
                 }
                 _ => std::io::Error::new(std::io::ErrorKind::Other, err),
             },
+            #[cfg(feature = "quice")]
+            HalaIoError::Unspecified(err) => std::io::Error::new(std::io::ErrorKind::Other, err),
         }
     }
 }
