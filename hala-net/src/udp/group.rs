@@ -8,7 +8,6 @@ use bytes::BufMut;
 use hala_io_driver::*;
 use hala_io_util::{as_bytes_mut, async_io, select, IoGroup};
 
-#[derive(Clone)]
 pub struct UdpGroup {
     io_group_read: IoGroup,
     io_group_write: IoGroup,

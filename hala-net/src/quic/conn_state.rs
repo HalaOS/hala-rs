@@ -11,7 +11,7 @@ use quiche::{RecvInfo, SendInfo};
 use crate::errors::into_io_error;
 
 #[allow(unused)]
-struct QuicConnState {
+struct RawConnState {
     /// quiche connection instance.
     quiche_conn: quiche::Connection,
     /// Waker for connection send operation.
@@ -24,9 +24,9 @@ struct QuicConnState {
     stream_recv_wakers: HashMap<u64, Waker>,
 }
 
-impl QuicConnState {
+impl RawConnState {
     fn new(quiche_conn: quiche::Connection) -> Self {
-        QuicConnState {
+        RawConnState {
             quiche_conn,
             send_waker: Default::default(),
             recv_waker: Default::default(),
@@ -63,16 +63,16 @@ impl QuicConnState {
 
 /// Quic connection instance created by `connect` / `accept` methods.
 #[derive(Debug, Clone)]
-pub struct QuicInnerConn {
+pub struct QuicConnState {
     /// Mutex protected quiche connection instance.
-    state: Arc<Mutex<QuicConnState>>,
+    state: Arc<Mutex<RawConnState>>,
 }
 
 #[allow(unused)]
-impl QuicInnerConn {
+impl QuicConnState {
     pub fn new(quiche_conn: quiche::Connection) -> Self {
         Self {
-            state: Arc::new(Mutex::new(QuicConnState::new(quiche_conn))),
+            state: Arc::new(Mutex::new(RawConnState::new(quiche_conn))),
         }
     }
     /// Create new future for send connection data
@@ -115,7 +115,7 @@ impl QuicInnerConn {
 /// Future created by [`send`](QuicInnerConn::send) method
 pub struct QuicConnSend<'a> {
     buf: &'a mut [u8],
-    state: Arc<Mutex<QuicConnState>>,
+    state: Arc<Mutex<RawConnState>>,
 }
 
 impl<'a> Future for QuicConnSend<'a> {
@@ -150,7 +150,7 @@ impl<'a> Future for QuicConnSend<'a> {
 pub struct QuicConnRecv<'a> {
     buf: &'a mut [u8],
     recv_info: RecvInfo,
-    state: Arc<Mutex<QuicConnState>>,
+    state: Arc<Mutex<RawConnState>>,
 }
 
 impl<'a> Future for QuicConnRecv<'a> {
@@ -188,7 +188,7 @@ pub struct QuicStreamSend<'a> {
     buf: &'a [u8],
     stream_id: u64,
     fin: bool,
-    state: Arc<Mutex<QuicConnState>>,
+    state: Arc<Mutex<RawConnState>>,
 }
 
 impl<'a> Future for QuicStreamSend<'a> {
@@ -228,7 +228,7 @@ impl<'a> Future for QuicStreamSend<'a> {
 pub struct QuicStreamRecv<'a> {
     buf: &'a mut [u8],
     stream_id: u64,
-    state: Arc<Mutex<QuicConnState>>,
+    state: Arc<Mutex<RawConnState>>,
 }
 
 impl<'a> Future for QuicStreamRecv<'a> {

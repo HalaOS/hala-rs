@@ -1,8 +1,8 @@
 mod config;
 pub use config::*;
 
-mod inner_conn;
-use inner_conn::*;
+mod conn_state;
+use conn_state::*;
 
 mod listener;
 pub use listener::*;

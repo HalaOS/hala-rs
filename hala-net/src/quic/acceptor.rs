@@ -11,7 +11,7 @@ use ring::{hmac::Key, rand::SystemRandom};
 
 use crate::errors::into_io_error;
 
-use super::{inner_conn::QuicInnerConn, Config};
+use super::{conn_state::QuicConnState, Config};
 
 enum InitAck {
     NegotiationVersion {
@@ -53,7 +53,7 @@ impl Acceptor {
         })
     }
 
-    pub fn accept(&mut self) -> io::Result<Vec<QuicInnerConn>> {
+    pub fn accept(&mut self) -> io::Result<Vec<QuicConnState>> {
         let ids = self
             .conns
             .values()
@@ -64,7 +64,7 @@ impl Acceptor {
         let mut conns = vec![];
 
         for id in ids {
-            conns.push(QuicInnerConn::new(self.conns.remove(&id).unwrap()))
+            conns.push(QuicConnState::new(self.conns.remove(&id).unwrap()))
         }
 
         if conns.is_empty() {

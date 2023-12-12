@@ -1,12 +1,12 @@
 use std::{io, net::ToSocketAddrs};
 
-use super::inner_conn::QuicInnerConn;
+use super::conn_state::QuicConnState;
 
 /// Quic connection between a local and a remote.
 #[derive(Clone)]
 pub struct QuicConn {
     #[allow(unused)]
-    inner: QuicInnerConn,
+    inner: QuicConnState,
 }
 
 impl QuicConn {

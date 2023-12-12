@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 use quiche::ConnectionId;
 
-use super::QuicInnerConn;
+use super::QuicConnState;
 
 #[allow(unused)]
 pub struct QuicListener {
-    conns: HashMap<ConnectionId<'static>, QuicInnerConn>,
+    conns: HashMap<ConnectionId<'static>, QuicConnState>,
 }

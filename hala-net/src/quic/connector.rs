@@ -5,7 +5,7 @@ use ring::rand::{SecureRandom, SystemRandom};
 
 use crate::errors::into_io_error;
 
-use super::{inner_conn::QuicInnerConn, Config};
+use super::{conn_state::QuicConnState, Config};
 
 /// Quic client connector
 pub struct Connector {
@@ -82,8 +82,8 @@ impl Connector {
     }
 }
 
-impl From<Connector> for QuicInnerConn {
+impl From<Connector> for QuicConnState {
     fn from(value: Connector) -> Self {
-        QuicInnerConn::new(value.quiche_conn)
+        QuicConnState::new(value.quiche_conn)
     }
 }
