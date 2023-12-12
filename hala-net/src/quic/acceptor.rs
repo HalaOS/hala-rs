@@ -1,4 +1,4 @@
-use std::{collections::HashMap, io, net::SocketAddr};
+use std::{collections::HashMap, io, net::SocketAddr, time::Duration};
 
 use bytes::BytesMut;
 use hala_io_util::ReadBuf;
@@ -17,6 +17,12 @@ pub struct ServerHello {
 
 pub enum Accept<'a> {
     Handling(BytesMut),
+
+    HandlingWithTimeout {
+        conn_id: ConnectionId<'static>,
+        send_buf: BytesMut,
+        timeout: Option<Duration>,
+    },
     Bypass(Header<'a>),
     Incoming(QuicInnerConn),
 }
@@ -44,6 +50,7 @@ impl Acceptor {
     }
 
     fn conn_handshake(
+        &mut self,
         conn: &mut quiche::Connection,
         from: SocketAddr,
         to: SocketAddr,
@@ -61,9 +68,30 @@ impl Acceptor {
             Err(err) => return Err(into_io_error(err)),
         };
 
-        log::trace!("conn_handshake timeout: {:?}", conn.timeout());
-
         Ok(buf.into_bytes_mut(Some(write_size)))
+    }
+
+    pub fn conn_timeout(
+        &mut self,
+        conn_id: &ConnectionId<'static>,
+    ) -> io::Result<(BytesMut, Option<Duration>)> {
+        let conn = self.conns.get_mut(conn_id).ok_or(io::Error::new(
+            io::ErrorKind::NotFound,
+            "Connection not found or removed by time expired",
+        ))?;
+
+        // raise timeout event.
+        conn.on_timeout();
+
+        let mut buf = ReadBuf::with_capacity(MAX_DATAGRAM_SIZE);
+
+        let write_size = match conn.send(buf.as_mut()) {
+            Ok((len, _)) => len,
+            Err(quiche::Error::Done) => 0,
+            Err(err) => return Err(into_io_error(err)),
+        };
+
+        Ok((buf.into_bytes_mut(Some(write_size)), conn.timeout()))
     }
 
     /// Recv new data.
@@ -93,18 +121,35 @@ impl Acceptor {
 
                     _ = self.validate_token(token, &from)?;
 
-                    let send_bytes = Self::conn_handshake(&mut conn, from, to, buf)?;
+                    let send_bytes = self.conn_handshake(&mut conn, from, to, buf)?;
 
                     if conn.is_established() {
                         return Ok(Accept::Incoming(QuicInnerConn::new(conn)));
                     } else {
+                        let timeout = conn.timeout();
+                        let conn_id = conn.source_id().into_owned();
+
                         self.conns.insert(header.dcid, conn);
-                        return Ok(Accept::Handling(send_bytes));
+                        return Ok(Accept::HandlingWithTimeout {
+                            conn_id,
+                            send_buf: send_bytes,
+                            timeout,
+                        });
                     }
                 } else {
+                    let conn_id = header.dcid.clone().into_owned();
+
                     let send_bytes = self.client_hello(from, to, header, buf)?;
 
-                    return Ok(Accept::Handling(send_bytes));
+                    if let Some(conn) = self.conns.get_mut(&conn_id) {
+                        return Ok(Accept::HandlingWithTimeout {
+                            conn_id,
+                            send_buf: send_bytes,
+                            timeout: conn.timeout(),
+                        });
+                    } else {
+                        return Ok(Accept::Handling(send_bytes));
+                    }
                 }
             }
             quiche::Type::Handshake => {
@@ -113,13 +158,21 @@ impl Acceptor {
                     format!("Quic connection not found, decid={:?}", header.dcid),
                 ))?;
 
-                let send_bytes = Self::conn_handshake(&mut conn, from, to, buf)?;
+                let send_bytes = self.conn_handshake(&mut conn, from, to, buf)?;
 
                 if conn.is_established() {
                     return Ok(Accept::Incoming(QuicInnerConn::new(conn)));
                 } else {
+                    let timeout = conn.timeout();
+
+                    let conn_id = conn.source_id().into_owned();
+
                     self.conns.insert(header.dcid, conn);
-                    return Ok(Accept::Handling(send_bytes));
+                    return Ok(Accept::HandlingWithTimeout {
+                        conn_id,
+                        send_buf: send_bytes,
+                        timeout,
+                    });
                 }
             }
             _ => {
@@ -161,7 +214,7 @@ impl Acceptor {
         let mut conn = quiche::accept(&scid, Some(&odcid), to, from, &mut self.config)
             .map_err(into_io_error)?;
 
-        let bytes = Self::conn_handshake(&mut conn, from, to, buf)?;
+        let bytes = self.conn_handshake(&mut conn, from, to, buf)?;
 
         log::trace!(
             "Create new incoming conn, scid={:?},dcid={:?},handshake={}",

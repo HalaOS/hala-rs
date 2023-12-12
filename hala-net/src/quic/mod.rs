@@ -25,7 +25,7 @@ pub(crate) const MAX_DATAGRAM_SIZE: usize = 1350;
 #[cfg(test)]
 mod tests {
 
-    use std::path::Path;
+    use std::{path::Path, thread::sleep};
 
     use quiche::RecvInfo;
 
@@ -67,10 +67,8 @@ mod tests {
         config
     }
 
-    #[hala_io_test::test]
-    async fn test_connect_accept() {
-        pretty_env_logger::init();
-
+    #[test]
+    fn test_connect_accept() {
         let laddr = "127.0.0.1:10234".parse().unwrap();
         let raddr = "127.0.0.1:20234".parse().unwrap();
 
@@ -88,6 +86,23 @@ mod tests {
 
             match acceptor.recv(laddr, raddr, &mut buf[..send_size]).unwrap() {
                 Accept::Bypass(_) => {}
+                Accept::HandlingWithTimeout {
+                    conn_id: _,
+                    mut send_buf,
+                    timeout: _,
+                } => {
+                    let read_size = connector
+                        .recv(
+                            &mut send_buf,
+                            RecvInfo {
+                                from: raddr,
+                                to: laddr,
+                            },
+                        )
+                        .unwrap();
+
+                    assert_eq!(read_size, send_buf.len());
+                }
                 Accept::Handling(mut bytes) => {
                     let read_size = connector
                         .recv(
@@ -105,6 +120,80 @@ mod tests {
                     assert!(connector.is_established());
                     break;
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn test_accept_timeout() {
+        pretty_env_logger::init();
+
+        let laddr = "127.0.0.1:10234".parse().unwrap();
+        let raddr = "127.0.0.1:20234".parse().unwrap();
+
+        let mut connector = Connector::new(config(false), laddr, raddr).unwrap();
+
+        let mut acceptor = Acceptor::new(config(true)).unwrap();
+
+        let mut server_conn_id = None;
+
+        let mut server_conn_timeout = None;
+
+        loop {
+            let mut buf = [0; MAX_DATAGRAM_SIZE];
+
+            let (send_size, send_info) = connector.send(&mut buf).unwrap();
+
+            assert_eq!(send_info.from, laddr);
+            assert_eq!(send_info.to, raddr);
+
+            match acceptor.recv(laddr, raddr, &mut buf[..send_size]).unwrap() {
+                Accept::Bypass(_) => {}
+                Accept::HandlingWithTimeout {
+                    conn_id,
+                    send_buf: _,
+                    timeout,
+                } => {
+                    server_conn_id = Some(conn_id);
+                    server_conn_timeout = timeout;
+                    break;
+                }
+                Accept::Handling(mut bytes) => {
+                    let read_size = connector
+                        .recv(
+                            &mut bytes,
+                            RecvInfo {
+                                from: raddr,
+                                to: laddr,
+                            },
+                        )
+                        .unwrap();
+
+                    assert_eq!(read_size, bytes.len());
+                }
+                Accept::Incoming(_) => {
+                    assert!(connector.is_established());
+                    break;
+                }
+            }
+        }
+
+        let server_conn_id = server_conn_id.unwrap();
+        let mut server_conn_timeout = server_conn_timeout.unwrap();
+
+        loop {
+            sleep(server_conn_timeout);
+
+            let (buf, timeout) = acceptor.conn_timeout(&server_conn_id).unwrap();
+
+            log::trace!("{:?}", buf.to_vec());
+
+            log::trace!("next {:?}", timeout);
+
+            if let Some(timeout) = timeout {
+                server_conn_timeout = timeout;
+            } else {
+                break;
             }
         }
     }
