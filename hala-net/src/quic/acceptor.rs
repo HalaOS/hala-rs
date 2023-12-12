@@ -1,30 +1,32 @@
-use std::{collections::HashMap, io, net::SocketAddr, time::Duration};
+use std::{
+    collections::{HashMap, VecDeque},
+    io,
+    net::SocketAddr,
+    time::Instant,
+};
 
-use bytes::BytesMut;
-use hala_io_util::ReadBuf;
-use quiche::{ConnectionId, Header};
+use quiche::{ConnectionId, Header, RecvInfo, SendInfo};
+use rand::seq::IteratorRandom;
 use ring::{hmac::Key, rand::SystemRandom};
 
 use crate::errors::into_io_error;
 
-use super::{inner_conn::QuicInnerConn, Config, MAX_DATAGRAM_SIZE};
+use super::{inner_conn::QuicInnerConn, Config};
 
-pub struct ServerHello {
-    pub read_size: usize,
-    pub write_size: usize,
-    pub conn: Option<QuicInnerConn>,
-}
-
-pub enum Accept<'a> {
-    Handling(BytesMut),
-
-    HandlingWithTimeout {
-        conn_id: ConnectionId<'static>,
-        send_buf: BytesMut,
-        timeout: Option<Duration>,
+enum InitAck {
+    NegotiationVersion {
+        scid: ConnectionId<'static>,
+        dcid: ConnectionId<'static>,
+        send_info: SendInfo,
     },
-    Bypass(Header<'a>),
-    Incoming(QuicInnerConn),
+    Retry {
+        scid: ConnectionId<'static>,
+        dcid: ConnectionId<'static>,
+        new_scid: ConnectionId<'static>,
+        token: Vec<u8>,
+        version: u32,
+        send_info: SendInfo,
+    },
 }
 
 /// Quic server connection acceptor
@@ -32,6 +34,7 @@ pub struct Acceptor {
     config: Config,
     conn_id_seed: Key,
     conns: HashMap<ConnectionId<'static>, quiche::Connection>,
+    init_acks: VecDeque<InitAck>,
 }
 
 impl Acceptor {
@@ -46,61 +49,91 @@ impl Acceptor {
             config,
             conn_id_seed,
             conns: Default::default(),
+            init_acks: Default::default(),
         })
     }
 
-    fn conn_handshake(
-        &mut self,
-        conn: &mut quiche::Connection,
-        from: SocketAddr,
-        to: SocketAddr,
-        buf: &mut [u8],
-    ) -> io::Result<BytesMut> {
-        _ = conn
-            .recv(buf, quiche::RecvInfo { from, to })
-            .map_err(into_io_error)?;
+    pub fn accept(&mut self) -> io::Result<Vec<QuicInnerConn>> {
+        let ids = self
+            .conns
+            .values()
+            .filter(|conn| conn.is_established())
+            .map(|conn| conn.source_id().clone().into_owned())
+            .collect::<Vec<_>>();
 
-        let mut buf = ReadBuf::with_capacity(MAX_DATAGRAM_SIZE);
+        let mut conns = vec![];
 
-        let write_size = match conn.send(buf.as_mut()) {
-            Ok((len, _)) => len,
-            Err(quiche::Error::Done) => 0,
-            Err(err) => return Err(into_io_error(err)),
-        };
+        for id in ids {
+            conns.push(QuicInnerConn::new(self.conns.remove(&id).unwrap()))
+        }
 
-        Ok(buf.into_bytes_mut(Some(write_size)))
+        if conns.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::WouldBlock,
+                "No more incoming connection valid",
+            ));
+        }
+
+        Ok(conns)
     }
 
-    pub fn conn_timeout(
-        &mut self,
-        conn_id: &ConnectionId<'static>,
-    ) -> io::Result<(BytesMut, Option<Duration>)> {
-        let conn = self.conns.get_mut(conn_id).ok_or(io::Error::new(
-            io::ErrorKind::NotFound,
-            "Connection not found or removed by time expired",
-        ))?;
+    pub fn send(&mut self, buf: &mut [u8]) -> io::Result<(usize, SendInfo)> {
+        // first handle init acks
+        if let Some(ack) = self.init_acks.pop_front() {
+            match ack {
+                InitAck::NegotiationVersion {
+                    scid,
+                    dcid,
+                    send_info,
+                } => {
+                    let send_size =
+                        quiche::negotiate_version(&scid, &dcid, buf).map_err(into_io_error)?;
 
-        // raise timeout event.
-        conn.on_timeout();
+                    return Ok((send_size, send_info));
+                }
+                InitAck::Retry {
+                    scid,
+                    dcid,
+                    new_scid,
+                    token,
+                    version,
+                    send_info,
+                } => {
+                    let send_size = quiche::retry(&scid, &dcid, &new_scid, &token, version, buf)
+                        .map_err(into_io_error)?;
 
-        let mut buf = ReadBuf::with_capacity(MAX_DATAGRAM_SIZE);
+                    return Ok((send_size, send_info));
+                }
+            }
+        }
 
-        let write_size = match conn.send(buf.as_mut()) {
-            Ok((len, _)) => len,
-            Err(quiche::Error::Done) => 0,
-            Err(err) => return Err(into_io_error(err)),
-        };
+        // secondary, handle conn send
 
-        Ok((buf.into_bytes_mut(Some(write_size)), conn.timeout()))
+        let len = self.conns.len();
+
+        let conns = self
+            .conns
+            .values_mut()
+            .choose_multiple(&mut rand::thread_rng(), len);
+
+        for conn in conns {
+            match conn.send(buf) {
+                Ok((send_size, send_info)) => {
+                    return Ok((send_size, send_info));
+                }
+                Err(quiche::Error::Done) => {}
+                Err(_) => todo!(),
+            }
+        }
+
+        return Err(io::Error::new(
+            io::ErrorKind::WouldBlock,
+            "No more data to send",
+        ));
     }
 
-    /// Recv new data.
-    pub fn recv(
-        &mut self,
-        from: SocketAddr,
-        to: SocketAddr,
-        buf: &mut [u8],
-    ) -> io::Result<Accept<'_>> {
+    /// Recv new from remote.
+    pub fn recv(&mut self, buf: &mut [u8], recv_info: RecvInfo) -> io::Result<(usize, Header<'_>)> {
         let header =
             quiche::Header::from_slice(buf, quiche::MAX_CONN_ID_LEN).map_err(into_io_error)?;
 
@@ -108,7 +141,7 @@ impl Acceptor {
 
         match header.ty {
             quiche::Type::Initial => {
-                if let Some(mut conn) = self.conns.remove(&header.dcid) {
+                if let Some(conn) = self.conns.get_mut(&header.dcid) {
                     let token = header.token.as_ref().unwrap();
 
                     // generate new token and retry
@@ -119,88 +152,57 @@ impl Acceptor {
                         ));
                     }
 
-                    _ = self.validate_token(token, &from)?;
+                    _ = Self::validate_token(token, &recv_info.from)?;
 
-                    let send_bytes = self.conn_handshake(&mut conn, from, to, buf)?;
+                    let read_size = conn.recv(buf, recv_info).map_err(into_io_error)?;
 
-                    if conn.is_established() {
-                        return Ok(Accept::Incoming(QuicInnerConn::new(conn)));
-                    } else {
-                        let timeout = conn.timeout();
-                        let conn_id = conn.source_id().into_owned();
-
-                        self.conns.insert(header.dcid, conn);
-                        return Ok(Accept::HandlingWithTimeout {
-                            conn_id,
-                            send_buf: send_bytes,
-                            timeout,
-                        });
-                    }
+                    return Ok((read_size, header));
                 } else {
-                    let conn_id = header.dcid.clone().into_owned();
+                    let len = self.client_hello(&header, buf, recv_info)?;
 
-                    let send_bytes = self.client_hello(from, to, header, buf)?;
-
-                    if let Some(conn) = self.conns.get_mut(&conn_id) {
-                        return Ok(Accept::HandlingWithTimeout {
-                            conn_id,
-                            send_buf: send_bytes,
-                            timeout: conn.timeout(),
-                        });
-                    } else {
-                        return Ok(Accept::Handling(send_bytes));
-                    }
+                    return Ok((len, header));
                 }
             }
             quiche::Type::Handshake => {
-                let mut conn = self.conns.remove(&header.dcid).ok_or(io::Error::new(
+                let conn = self.conns.get_mut(&header.dcid).ok_or(io::Error::new(
                     io::ErrorKind::ConnectionRefused,
                     format!("Quic connection not found, decid={:?}", header.dcid),
                 ))?;
 
-                let send_bytes = self.conn_handshake(&mut conn, from, to, buf)?;
-
-                if conn.is_established() {
-                    return Ok(Accept::Incoming(QuicInnerConn::new(conn)));
-                } else {
-                    let timeout = conn.timeout();
-
-                    let conn_id = conn.source_id().into_owned();
-
-                    self.conns.insert(header.dcid, conn);
-                    return Ok(Accept::HandlingWithTimeout {
-                        conn_id,
-                        send_buf: send_bytes,
-                        timeout,
-                    });
-                }
+                return conn
+                    .recv(buf, recv_info)
+                    .map_err(into_io_error)
+                    .map(|len| (len, header));
             }
             _ => {
-                return Ok(Accept::Bypass(header));
+                return Ok((0, header));
             }
         }
     }
 
     fn client_hello(
         &mut self,
-        from: SocketAddr,
-        to: SocketAddr,
-        header: Header<'_>,
+        header: &Header<'_>,
         buf: &mut [u8],
-    ) -> io::Result<BytesMut> {
+        recv_info: RecvInfo,
+    ) -> io::Result<usize> {
         if !quiche::version_is_supported(header.version) {
-            return self.negotiation_version(header);
+            self.negotiation_version(header, recv_info)?;
+
+            return Ok(buf.len());
         }
 
         let token = header.token.as_ref().unwrap();
 
         // generate new token and retry
         if token.is_empty() {
-            return self.retry(from, header);
+            self.retry(header, recv_info)?;
+
+            return Ok(buf.len());
         }
 
         // check token .
-        let odcid = self.validate_token(token, &from)?;
+        let odcid = Self::validate_token(token, &recv_info.from)?;
 
         let scid: ConnectionId<'_> = header.dcid.clone();
 
@@ -211,48 +213,54 @@ impl Acceptor {
             ));
         }
 
-        let mut conn = quiche::accept(&scid, Some(&odcid), to, from, &mut self.config)
-            .map_err(into_io_error)?;
+        let mut conn = quiche::accept(
+            &scid,
+            Some(&odcid),
+            recv_info.to,
+            recv_info.from,
+            &mut self.config,
+        )
+        .map_err(into_io_error)?;
 
-        let bytes = self.conn_handshake(&mut conn, from, to, buf)?;
+        let read_size = conn.recv(buf, recv_info).map_err(into_io_error)?;
 
         log::trace!(
             "Create new incoming conn, scid={:?},dcid={:?},handshake={}",
             conn.source_id(),
             conn.destination_id(),
-            bytes.len(),
+            read_size,
         );
 
         self.conns.insert(scid.into_owned(), conn);
 
-        Ok(bytes)
+        Ok(read_size)
     }
 
     /// Generate retry package
-    fn retry(&self, from: SocketAddr, header: Header<'_>) -> io::Result<BytesMut> {
-        let new_token = self.mint_token(&header, &from);
+    fn retry(&mut self, header: &Header<'_>, recv_info: RecvInfo) -> io::Result<()> {
+        let token = self.mint_token(&header, &recv_info.from);
 
-        let mut buf = ReadBuf::with_capacity(MAX_DATAGRAM_SIZE);
+        let new_scid = ring::hmac::sign(&self.conn_id_seed, &header.dcid);
+        let new_scid = &new_scid.as_ref()[..quiche::MAX_CONN_ID_LEN];
+        let new_scid = ConnectionId::from_vec(new_scid.to_vec());
 
-        let conn_id = ring::hmac::sign(&self.conn_id_seed, &header.dcid);
-        let conn_id = &conn_id.as_ref()[..quiche::MAX_CONN_ID_LEN];
-        let conn_id = ConnectionId::from_vec(conn_id.to_vec());
+        self.init_acks.push_back(InitAck::Retry {
+            scid: header.scid.clone().into_owned(),
+            dcid: header.dcid.clone().into_owned(),
+            new_scid,
+            token,
+            version: header.version,
+            send_info: SendInfo {
+                from: recv_info.to,
+                to: recv_info.from,
+                at: Instant::now(),
+            },
+        });
 
-        let len = quiche::retry(
-            &header.scid,
-            &header.dcid,
-            &conn_id,
-            &new_token,
-            header.version,
-            buf.as_mut(),
-        )
-        .map_err(into_io_error)?;
-
-        Ok(buf.into_bytes_mut(Some(len)))
+        Ok(())
     }
 
     fn validate_token<'a>(
-        &self,
         token: &'a [u8],
         src: &SocketAddr,
     ) -> io::Result<quiche::ConnectionId<'a>> {
@@ -303,12 +311,17 @@ impl Acceptor {
         token
     }
 
-    fn negotiation_version<'a>(&self, header: Header<'a>) -> io::Result<BytesMut> {
-        let mut buf = ReadBuf::with_capacity(MAX_DATAGRAM_SIZE);
+    fn negotiation_version(&mut self, header: &Header<'_>, recv_info: RecvInfo) -> io::Result<()> {
+        self.init_acks.push_back(InitAck::NegotiationVersion {
+            scid: header.scid.clone().into_owned(),
+            dcid: header.dcid.clone().into_owned(),
+            send_info: SendInfo {
+                from: recv_info.to,
+                to: recv_info.from,
+                at: Instant::now(),
+            },
+        });
 
-        let len = quiche::negotiate_version(&header.scid, &header.dcid, buf.as_mut())
-            .map_err(into_io_error)?;
-
-        Ok(buf.into_bytes_mut(Some(len)))
+        Ok(())
     }
 }
