@@ -16,8 +16,8 @@ pub use stream::*;
 mod connector;
 pub use connector::*;
 
-mod acceptor;
-pub use acceptor::*;
+mod listener_state;
+pub use listener_state::*;
 
 #[allow(unused)]
 pub(crate) const MAX_DATAGRAM_SIZE: usize = 1350;
@@ -31,7 +31,7 @@ mod tests {
 
     use quiche::RecvInfo;
 
-    use super::{Acceptor, Config, Connector, MAX_DATAGRAM_SIZE};
+    use super::{Config, Connector, QuicListenerState, MAX_DATAGRAM_SIZE};
 
     fn config(is_server: bool) -> Config {
         let mut config = Config::new().unwrap();
@@ -76,7 +76,7 @@ mod tests {
 
         let mut connector = Connector::new(config(false), laddr, raddr).unwrap();
 
-        let mut acceptor = Acceptor::new(config(true)).unwrap();
+        let mut acceptor = QuicListenerState::new(config(true)).unwrap();
 
         loop {
             let mut buf = [0; MAX_DATAGRAM_SIZE];
