@@ -11,8 +11,8 @@ use super::{conn_state::QuicConnState, Config, Connector};
 
 /// Quic connection between a local and a remote.
 pub struct QuicConn {
-    state: Option<QuicConnState>,
-    udp_group: Arc<UdpGroup>,
+    pub(super) state: Option<QuicConnState>,
+    pub(super) udp_group: Option<UdpGroup>,
 }
 
 impl QuicConn {
@@ -21,7 +21,7 @@ impl QuicConn {
 
         Ok(Self {
             state: None,
-            udp_group: Arc::new(udp_group),
+            udp_group: Some(udp_group),
         })
     }
 
@@ -38,8 +38,9 @@ impl QuicConn {
     {
         assert!(self.state.is_none(), "Call connect twice");
 
-        let laddr = self
-            .udp_group
+        let udp_group = self.udp_group.take().expect("Call bind first");
+
+        let laddr = udp_group
             .local_addrs()
             .choose(&mut rand::thread_rng())
             .unwrap()
@@ -57,13 +58,13 @@ impl QuicConn {
                 }
             };
 
-            match self.connect_once(connector).await {
+            match self.connect_once(&udp_group, connector).await {
                 Ok(state) => {
                     self.state = Some(state);
 
                     let event_loop = QuicConnEventLoop {
                         state: self.state.clone().unwrap(),
-                        udp_group: self.udp_group.clone(),
+                        udp_group: Arc::new(udp_group),
                     };
 
                     event_loop.run_loop(spawner)?;
@@ -80,20 +81,22 @@ impl QuicConn {
         return Err(last_error.unwrap());
     }
 
-    async fn connect_once(&mut self, mut connector: Connector) -> io::Result<QuicConnState> {
+    async fn connect_once(
+        &mut self,
+        udp_group: &UdpGroup,
+        mut connector: Connector,
+    ) -> io::Result<QuicConnState> {
         let mut buf = [0; MAX_DATAGRAM_SIZE];
 
         loop {
             let (send_size, send_info) = connector.send(&mut buf)?;
 
-            self.udp_group
-                .send_to(&buf[..send_size], send_info.to)
-                .await?;
+            udp_group.send_to(&buf[..send_size], send_info.to).await?;
 
             let recv_timeout = connector.timeout();
 
             let (laddr, read_size, raddr) =
-                timeout(self.udp_group.recv_from(&mut buf), recv_timeout).await?;
+                timeout(udp_group.recv_from(&mut buf), recv_timeout).await?;
 
             connector.recv(
                 &mut buf[..read_size],
@@ -111,9 +114,9 @@ impl QuicConn {
 }
 
 #[derive(Clone)]
-struct QuicConnEventLoop {
-    state: QuicConnState,
-    udp_group: Arc<UdpGroup>,
+pub(super) struct QuicConnEventLoop {
+    pub(super) state: QuicConnState,
+    pub(super) udp_group: Arc<UdpGroup>,
 }
 
 impl QuicConnEventLoop {
@@ -166,7 +169,7 @@ impl QuicConnEventLoop {
         }
     }
 
-    async fn send_loop(&self) -> io::Result<()> {
+    pub(super) async fn send_loop(&self) -> io::Result<()> {
         let mut buf = [0; MAX_DATAGRAM_SIZE];
 
         loop {

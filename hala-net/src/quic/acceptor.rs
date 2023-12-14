@@ -53,7 +53,7 @@ impl QuicAcceptor {
         })
     }
 
-    pub fn accept(&mut self) -> io::Result<Vec<QuicConnState>> {
+    pub fn accept(&mut self) -> io::Result<Vec<(ConnectionId<'static>, QuicConnState)>> {
         let ids = self
             .conns
             .values()
@@ -64,7 +64,8 @@ impl QuicAcceptor {
         let mut conns = vec![];
 
         for id in ids {
-            conns.push(QuicConnState::new(self.conns.remove(&id).unwrap(), 4))
+            let state = QuicConnState::new(self.conns.remove(&id).unwrap(), 4);
+            conns.push((id, state));
         }
 
         if conns.is_empty() {
@@ -133,7 +134,11 @@ impl QuicAcceptor {
     }
 
     /// Recv new from remote.
-    pub fn recv(&mut self, buf: &mut [u8], recv_info: RecvInfo) -> io::Result<(usize, Header<'_>)> {
+    pub fn recv<'a>(
+        &mut self,
+        buf: &'a mut [u8],
+        recv_info: RecvInfo,
+    ) -> io::Result<(usize, Header<'a>)> {
         let header =
             quiche::Header::from_slice(buf, quiche::MAX_CONN_ID_LEN).map_err(into_io_error)?;
 
