@@ -1,70 +1,60 @@
-use std::{collections::HashMap, io, net::ToSocketAddrs, sync::Arc};
+use std::{collections::HashMap, net::ToSocketAddrs, sync::Arc};
 
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
-    future::BoxFuture,
-    SinkExt,
+    io, SinkExt, StreamExt,
 };
+use hala_io_util::io_spawn;
 use quiche::{ConnectionId, Header, RecvInfo};
 
-use crate::{quic::MAX_DATAGRAM_SIZE, UdpGroup};
+use crate::UdpGroup;
 
-use super::{Config, QuicAcceptor, QuicConn, QuicConnEventLoop, QuicConnState};
+use super::{Config, QuicAcceptor, QuicConn, QuicConnEventLoop, MAX_DATAGRAM_SIZE};
 
-#[allow(unused)]
 pub struct QuicListener {
     incoming: Receiver<QuicConn>,
 }
 
 impl QuicListener {
-    pub async fn listen<Spawner, S: ToSocketAddrs>(
-        laddrs: S,
-        config: Config,
-        mut spawner: Spawner,
-    ) -> io::Result<Self>
-    where
-        Spawner: FnMut(BoxFuture<'static, ()>) + Clone + Send + 'static,
-    {
+    /// Create new quic server listener and bind to `laddrs`
+    pub async fn listen<S: ToSocketAddrs>(laddrs: S, config: Config) -> io::Result<Self> {
         let udp_group = UdpGroup::bind(laddrs)?;
 
         let (s, r) = channel(1024);
 
-        let mut acceptor_loop = QuicAcceptorLoop::new(udp_group, s, spawner.clone(), config)?;
+        let mut acceptor_loop = QuicListenerEventLoop::new(udp_group, s, config)?;
 
-        spawner(Box::pin(async move {
-            acceptor_loop.run_loop().await.unwrap();
-        }));
+        io_spawn(async move { acceptor_loop.run_loop().await })?;
 
         Ok(Self { incoming: r })
+    }
+
+    /// Accept next incoming `QuicConn`
+    pub async fn accept(&mut self) -> Option<QuicConn> {
+        self.incoming.next().await
     }
 }
 
 #[allow(unused)]
-struct QuicAcceptorLoop<Spawner> {
+struct QuicListenerEventLoop {
     udp_group: Arc<UdpGroup>,
     incoming_sender: Sender<QuicConn>,
-    spawner: Spawner,
     acceptor: QuicAcceptor,
     /// incoming connection states
-    states: HashMap<ConnectionId<'static>, QuicConnState>,
+    conns: HashMap<ConnectionId<'static>, QuicConn>,
 }
 
-impl<Spawner> QuicAcceptorLoop<Spawner>
-where
-    Spawner: FnMut(BoxFuture<'static, ()>) + Clone,
-{
+impl QuicListenerEventLoop {
     fn new(
         udp_group: UdpGroup,
         incoming_sender: Sender<QuicConn>,
-        spawner: Spawner,
         config: Config,
     ) -> io::Result<Self> {
         Ok(Self {
             udp_group: Arc::new(udp_group),
             incoming_sender,
-            spawner: spawner.clone(),
             acceptor: QuicAcceptor::new(config)?,
-            states: Default::default(),
+            conns: Default::default(),
         })
     }
 
@@ -94,8 +84,8 @@ where
                 header.dcid.into_owned()
             };
 
-            if let Some(state) = self.states.get(&conn_id) {
-                match state.recv(&mut buf[..read_size], recv_info).await {
+            if let Some(conn) = self.conns.get(&conn_id) {
+                match conn.state.recv(&mut buf[..read_size], recv_info).await {
                     Ok(_) => {}
                     Err(err) => {
                         log::error!(
@@ -104,6 +94,8 @@ where
                             conn_id,
                             err
                         );
+
+                        self.conns.remove(&conn_id);
                     }
                 }
             }
@@ -125,34 +117,26 @@ where
         };
 
         if read_size != 0 {
-            match self.acceptor.accept() {
+            match self.acceptor.pop_established() {
                 Ok(states) => {
-                    for (id, state) in states {
-                        let conn = QuicConn {
-                            state: Some(state.clone()),
-                            udp_group: None,
-                        };
-
+                    for (id, conn) in states {
                         // try send incoming connection.
-                        match self.incoming_sender.send(conn).await {
+                        match self.incoming_sender.send(conn.clone()).await {
                             // listener already disposed
                             Err(_) => return Ok((None, true)),
                             _ => {}
                         }
 
                         // crate event loop
-
                         let event_loop = QuicConnEventLoop {
-                            state: state.clone(),
+                            conn: conn.clone(),
                             udp_group: self.udp_group.clone(),
                         };
 
-                        (self.spawner)(Box::pin(async move {
-                            event_loop.send_loop().await.unwrap();
-                        }));
+                        io_spawn(async move { event_loop.send_loop().await })?;
 
-                        // register conn state.
-                        self.states.insert(id, state);
+                        // register conn
+                        self.conns.insert(id, conn);
                     }
                 }
                 Err(err) if err.kind() == io::ErrorKind::WouldBlock => {}
