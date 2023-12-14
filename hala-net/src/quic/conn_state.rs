@@ -30,7 +30,7 @@ struct RawConnState {
     /// Opened stream id set
     opened_streams: HashSet<u64>,
     /// Incoming stream deque.
-    incoming_streams: VecDeque<QuicStream>,
+    incoming_streams: VecDeque<u64>,
 }
 
 impl RawConnState {
@@ -49,13 +49,28 @@ impl RawConnState {
     }
     fn try_stream_wake(&mut self) {
         for stream_id in self.quiche_conn.readable() {
+            self.try_accept_wake(stream_id);
+
             if let Some(waker) = self.stream_recv_wakers.remove(&stream_id) {
                 waker.wake();
             }
         }
 
         for stream_id in self.quiche_conn.writable() {
+            self.try_accept_wake(stream_id);
+
             if let Some(waker) = self.stream_send_wakers.remove(&stream_id) {
+                waker.wake();
+            }
+        }
+    }
+
+    fn try_accept_wake(&mut self, stream_id: u64) {
+        if !self.opened_streams.contains(&stream_id) {
+            self.opened_streams.insert(stream_id);
+            self.incoming_streams.push_back(stream_id);
+
+            if let Some(waker) = self.accept_waker.take() {
                 waker.wake();
             }
         }
@@ -315,8 +330,13 @@ impl Future for QuicConnAccept {
             _ => return Poll::Pending,
         };
 
-        if let Some(stream) = state.incoming_streams.pop_front() {
-            return Poll::Ready(Ok(stream));
+        if let Some(stream_id) = state.incoming_streams.pop_front() {
+            return Poll::Ready(Ok(QuicStream::new(
+                stream_id,
+                QuicConnState {
+                    state: self.state.clone(),
+                },
+            )));
         } else {
             state.accept_waker = Some(cx.waker().clone());
 
