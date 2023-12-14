@@ -94,12 +94,12 @@ impl From<InnerConnector> for QuicConn {
 }
 
 /// Quic client connector instance.
-pub struct Connector {
+pub struct QuicConnector {
     config: Config,
     udp_group: Arc<UdpGroup>,
 }
 
-impl Connector {
+impl QuicConnector {
     /// Create a new connector and bind to `laddrs`
     pub fn bind<L: ToSocketAddrs>(laddrs: L, config: Config) -> io::Result<Self> {
         let udp_group = UdpGroup::bind(laddrs)?;

@@ -16,8 +16,18 @@ pub struct QuicListener {
 }
 
 impl QuicListener {
+    pub fn new(udp_group: UdpGroup, config: Config) -> io::Result<Self> {
+        let (s, r) = channel(1024);
+
+        let mut acceptor_loop = QuicListenerEventLoop::new(udp_group, s, config)?;
+
+        io_spawn(async move { acceptor_loop.run_loop().await })?;
+
+        Ok(Self { incoming: r })
+    }
+
     /// Create new quic server listener and bind to `laddrs`
-    pub async fn listen<S: ToSocketAddrs>(laddrs: S, config: Config) -> io::Result<Self> {
+    pub fn bind<S: ToSocketAddrs>(laddrs: S, config: Config) -> io::Result<Self> {
         let udp_group = UdpGroup::bind(laddrs)?;
 
         let (s, r) = channel(1024);

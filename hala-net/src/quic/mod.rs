@@ -21,8 +21,9 @@ const MAX_DATAGRAM_SIZE: usize = 1350;
 #[cfg(test)]
 mod tests {
 
-    use std::path::Path;
+    use std::{net::SocketAddr, path::Path};
 
+    use hala_io_util::io_spawn;
     use quiche::RecvInfo;
 
     use super::*;
@@ -117,5 +118,26 @@ mod tests {
     }
 
     #[hala_io_test::test]
-    async fn test_async_quic() {}
+    async fn test_async_quic() {
+        let ports = 10200u16..10300;
+
+        let laddrs = ports
+            .clone()
+            .into_iter()
+            .map(|port| format!("127.0.0.1:{}", port).parse::<SocketAddr>().unwrap())
+            .collect::<Vec<_>>();
+
+        let mut listener = QuicListener::bind(laddrs.as_slice(), config(true)).unwrap();
+
+        io_spawn(async move {
+            let mut connector = QuicConnector::bind("127.0.0.1:0", config(false)).unwrap();
+
+            connector.connect(laddrs.as_slice()).await.unwrap();
+
+            Ok(())
+        })
+        .unwrap();
+
+        listener.accept().await;
+    }
 }
