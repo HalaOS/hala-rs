@@ -193,7 +193,8 @@ impl Drop for UdpGroup {
 
 #[cfg(test)]
 mod tests {
-    use futures::task::SpawnExt;
+
+    use hala_io_util::io_spawn;
     use rand::seq::SliceRandom;
 
     use crate::UdpSocket;
@@ -220,22 +221,22 @@ mod tests {
 
         let loop_n = 1000;
 
-        hala_io_test::spawner()
-            .spawn(async move {
-                for _ in 0..loop_n {
-                    let mut buf = [0; 1024];
+        io_spawn(async move {
+            for _ in 0..loop_n {
+                let mut buf = [0; 1024];
 
-                    let (_, read_size, raddr) = udp_server.recv_from(&mut buf).await.unwrap();
+                let (_, read_size, raddr) = udp_server.recv_from(&mut buf).await.unwrap();
 
-                    assert_eq!(read_size, echo_data.len());
+                assert_eq!(read_size, echo_data.len());
 
-                    let (_, write_size) =
-                        udp_server.send_to(&buf[..read_size], raddr).await.unwrap();
+                let (_, write_size) = udp_server.send_to(&buf[..read_size], raddr).await.unwrap();
 
-                    assert_eq!(write_size, echo_data.len());
-                }
-            })
-            .unwrap();
+                assert_eq!(write_size, echo_data.len());
+            }
+
+            Ok(())
+        })
+        .unwrap();
 
         for _ in 0..loop_n {
             let port = ports.choose(&mut rand::thread_rng()).clone().unwrap();

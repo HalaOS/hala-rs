@@ -1,7 +1,8 @@
-use std::{cell::RefCell, sync::Once};
+use std::{io, sync::Once};
 
 use futures::{
     executor::{LocalPool, LocalSpawner},
+    future::BoxFuture,
     Future,
 };
 
@@ -10,14 +11,7 @@ use hala_io_driver::*;
 pub use futures;
 
 pub use hala_io_test_derive::*;
-
-thread_local! {
-    static SPAWNER: RefCell<Option<LocalSpawner>> = RefCell::new(None);
-}
-
-pub fn spawner() -> LocalSpawner {
-    SPAWNER.with_borrow(|spawner| spawner.clone().unwrap())
-}
+use hala_io_util::{register_local_io_spawner, IoSpawner};
 
 static START: Once = Once::new();
 
@@ -34,11 +28,32 @@ where
 
     let mut local_pool = LocalPool::new();
 
-    let spawner = local_pool.spawner();
-
-    SPAWNER.set(Some(spawner));
+    register_local_io_spawner(TesterIoSpawner {
+        spawner: local_pool.spawner(),
+    });
 
     log::trace!("start io test(st,{})", label);
 
     local_pool.run_until(test());
+}
+
+struct TesterIoSpawner {
+    spawner: LocalSpawner,
+}
+
+impl IoSpawner for TesterIoSpawner {
+    fn spawn(&self, fut: BoxFuture<'static, std::io::Result<()>>) -> std::io::Result<()> {
+        use futures::task::SpawnExt;
+
+        self.spawner
+            .spawn(async move {
+                match fut.await {
+                    Ok(_) => {}
+                    Err(err) => {
+                        log::error!("IoSpawner catch err={}", err);
+                    }
+                }
+            })
+            .map_err(|err| io::Error::new(io::ErrorKind::Other, err))
+    }
 }

@@ -1,31 +1,24 @@
 use std::{cell::RefCell, io, sync::OnceLock};
 
-use futures::{
-    future::{BoxFuture, LocalBoxFuture},
-    Future,
-};
+use futures::{future::BoxFuture, Future};
 
-pub trait LocalSpawner {
-    fn spawn(&self, fut: LocalBoxFuture<'static, io::Result<()>>) -> io::Result<()>;
-}
-
-pub trait Spawner {
+pub trait IoSpawner {
     fn spawn(&self, fut: BoxFuture<'static, io::Result<()>>) -> io::Result<()>;
 }
 
 thread_local! {
-    static LOCAL_SPAWNER: RefCell<Option<Box<dyn LocalSpawner>>> = RefCell::new(None);
+    static LOCAL_SPAWNER: RefCell<Option<Box<dyn IoSpawner>>> = RefCell::new(None);
 }
 
-static SPAWNER: OnceLock<Box<dyn Spawner + Send + Sync>> = OnceLock::new();
+static SPAWNER: OnceLock<Box<dyn IoSpawner + Send + Sync>> = OnceLock::new();
 
 /// Register local thread `Spawner`
-pub fn register_local_io_spawner<S: LocalSpawner + 'static>(spawner: S) {
+pub fn register_local_io_spawner<S: IoSpawner + 'static>(spawner: S) {
     LOCAL_SPAWNER.set(Some(Box::new(spawner)));
 }
 
 /// Register local thread `Spawner`
-pub fn register_io_spawner<S: Spawner + Send + Sync + 'static>(spawner: S) {
+pub fn register_io_spawner<S: IoSpawner + Send + Sync + 'static>(spawner: S) {
     if let Err(_) = SPAWNER.set(Box::new(spawner)) {
         panic!("Call register_spawner more than once.");
     }

@@ -363,7 +363,7 @@ mod tests {
 
     use futures::lock::Mutex;
 
-    use futures::task::SpawnExt;
+    use hala_io_util::io_spawn;
 
     #[hala_io_test::test]
     async fn test_future_lock() {
@@ -371,11 +371,12 @@ mod tests {
 
         let a_cloned = a.clone();
 
-        hala_io_test::spawner()
-            .spawn(async move {
-                *a_cloned.lock().await = 2;
-            })
-            .unwrap();
+        io_spawn(async move {
+            *a_cloned.lock().await = 2;
+
+            Ok(())
+        })
+        .unwrap();
 
         loop {
             let state = a.try_lock();
