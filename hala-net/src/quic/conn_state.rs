@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet, VecDeque},
     io,
     sync::Arc,
     task::{Poll, Waker},
@@ -10,28 +10,41 @@ use quiche::{RecvInfo, SendInfo};
 
 use crate::errors::into_io_error;
 
-#[allow(unused)]
+use super::QuicStream;
+
 struct RawConnState {
+    /// The stream id seed
+    stream_id_seed: u64,
     /// quiche connection instance.
     quiche_conn: quiche::Connection,
     /// Waker for connection send operation.
     send_waker: Option<Waker>,
     /// Waker for connection recv operation.
     recv_waker: Option<Waker>,
+    /// Accept stream waker
+    accept_waker: Option<Waker>,
     /// Wakers for stream send
     stream_send_wakers: HashMap<u64, Waker>,
     /// Wakers for stream recv
     stream_recv_wakers: HashMap<u64, Waker>,
+    /// Opened stream id set
+    opened_streams: HashSet<u64>,
+    /// Incoming stream deque.
+    incoming_streams: VecDeque<QuicStream>,
 }
 
 impl RawConnState {
-    fn new(quiche_conn: quiche::Connection) -> Self {
+    fn new(quiche_conn: quiche::Connection, stream_id_seed: u64) -> Self {
         RawConnState {
+            stream_id_seed,
             quiche_conn,
             send_waker: Default::default(),
             recv_waker: Default::default(),
+            accept_waker: Default::default(),
             stream_send_wakers: Default::default(),
             stream_recv_wakers: Default::default(),
+            opened_streams: Default::default(),
+            incoming_streams: Default::default(),
         }
     }
     fn try_stream_wake(&mut self) {
@@ -68,11 +81,10 @@ pub struct QuicConnState {
     state: Arc<Mutex<RawConnState>>,
 }
 
-#[allow(unused)]
 impl QuicConnState {
-    pub fn new(quiche_conn: quiche::Connection) -> Self {
+    pub fn new(quiche_conn: quiche::Connection, stream_id_seed: u64) -> Self {
         Self {
-            state: Arc::new(Mutex::new(RawConnState::new(quiche_conn))),
+            state: Arc::new(Mutex::new(RawConnState::new(quiche_conn, stream_id_seed))),
         }
     }
     /// Create new future for send connection data
@@ -107,6 +119,25 @@ impl QuicConnState {
         QuicStreamRecv {
             buf,
             stream_id,
+            state: self.state.clone(),
+        }
+    }
+
+    /// Open new stream to communicate with remote peer.
+    pub async fn open_stream(&self) -> QuicStream {
+        let mut state = self.state.lock().await;
+
+        let stream_id = state.stream_id_seed;
+
+        state.stream_id_seed += 2;
+
+        state.opened_streams.insert(stream_id);
+
+        QuicStream::new(stream_id, self.clone())
+    }
+
+    pub async fn accept(&self) -> QuicConnAccept {
+        QuicConnAccept {
             state: self.state.clone(),
         }
     }
@@ -257,6 +288,34 @@ impl<'a> Future for QuicStreamRecv<'a> {
                 return Poll::Pending;
             }
             Err(err) => return Poll::Ready(Err(into_io_error(err))),
+        }
+    }
+}
+
+/// Future created by [`accept`](QuicInnerConn::accept) method
+pub struct QuicConnAccept {
+    state: Arc<Mutex<RawConnState>>,
+}
+
+impl Future for QuicConnAccept {
+    type Output = io::Result<QuicStream>;
+
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        let state = self.state.clone();
+        let mut state = match state.lock().poll_unpin(cx) {
+            Poll::Ready(guard) => guard,
+            _ => return Poll::Pending,
+        };
+
+        if let Some(stream) = state.incoming_streams.pop_front() {
+            return Poll::Ready(Ok(stream));
+        } else {
+            state.accept_waker = Some(cx.waker().clone());
+
+            return Poll::Pending;
         }
     }
 }

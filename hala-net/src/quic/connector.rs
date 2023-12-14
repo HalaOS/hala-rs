@@ -84,6 +84,6 @@ impl Connector {
 
 impl From<Connector> for QuicConnState {
     fn from(value: Connector) -> Self {
-        QuicConnState::new(value.quiche_conn)
+        QuicConnState::new(value.quiche_conn, 5)
     }
 }
