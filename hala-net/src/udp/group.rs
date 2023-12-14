@@ -71,7 +71,7 @@ impl UdpGroup {
     /// Sends data on the socket group to the given address. On success, returns the
     /// number of bytes written and send socket laddr.
     pub async fn send_to<S: ToSocketAddrs>(
-        &mut self,
+        &self,
         buf: &[u8],
         target: S,
     ) -> io::Result<(SocketAddr, usize)> {
@@ -99,7 +99,7 @@ impl UdpGroup {
     }
 
     pub async fn send_to_by<S: ToSocketAddrs>(
-        &mut self,
+        &self,
         laddr: SocketAddr,
         buf: &[u8],
         target: S,
@@ -142,10 +142,7 @@ impl UdpGroup {
 
     /// Receives data from the socket. On success, returns the number of bytes
     /// read and the address from whence the data came.
-    pub async fn recv_from(
-        &mut self,
-        buf: &mut [u8],
-    ) -> io::Result<(SocketAddr, usize, SocketAddr)> {
+    pub async fn recv_from(&self, buf: &mut [u8]) -> io::Result<(SocketAddr, usize, SocketAddr)> {
         select(self.io_group_read.clone(), |handle, waker| {
             let (data_len, raddr) = self
                 .driver
@@ -157,7 +154,7 @@ impl UdpGroup {
         .await
     }
 
-    pub async fn recv_from_buf<B>(&mut self, buf: &mut B) -> io::Result<(SocketAddr, SocketAddr)>
+    pub async fn recv_from_buf<B>(&self, buf: &mut B) -> io::Result<(SocketAddr, SocketAddr)>
     where
         B: BufMut,
     {
@@ -212,7 +209,7 @@ mod tests {
             .map(|port| format!("127.0.0.1:{}", port).parse::<SocketAddr>().unwrap())
             .collect::<Vec<_>>();
 
-        let mut udp_server = UdpGroup::bind(addrs.as_slice()).unwrap();
+        let udp_server = UdpGroup::bind(addrs.as_slice()).unwrap();
 
         let udp_client = UdpSocket::bind("127.0.0.1:0").unwrap();
 

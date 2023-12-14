@@ -15,7 +15,7 @@ pub struct Connector {
 
 impl Connector {
     /// Create new quic connector
-    pub fn new(mut config: Config, laddr: SocketAddr, raddr: SocketAddr) -> io::Result<Connector> {
+    pub fn new(config: &mut Config, laddr: SocketAddr, raddr: SocketAddr) -> io::Result<Connector> {
         let mut scid = vec![0; quiche::MAX_CONN_ID_LEN];
 
         SystemRandom::new().fill(&mut scid).map_err(into_io_error)?;
@@ -24,7 +24,7 @@ impl Connector {
 
         log::trace!("Connector {:?}", scid);
 
-        let quiche_conn = quiche::connect(None, &scid, laddr, raddr, &mut config)
+        let quiche_conn = quiche::connect(None, &scid, laddr, raddr, config)
             .map_err(|err| io::Error::new(io::ErrorKind::ConnectionRefused, err))?;
 
         Ok(Self { quiche_conn })

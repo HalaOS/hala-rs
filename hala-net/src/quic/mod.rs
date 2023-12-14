@@ -2,7 +2,7 @@ mod config;
 pub use config::*;
 
 mod conn_state;
-use conn_state::*;
+pub use conn_state::*;
 
 mod listener;
 pub use listener::*;
@@ -27,11 +27,12 @@ pub use quiche::{RecvInfo, SendInfo};
 #[cfg(test)]
 mod tests {
 
-    use std::{io, path::Path};
+    use std::{io, net::SocketAddr, path::Path};
 
+    use futures::task::SpawnExt;
     use quiche::RecvInfo;
 
-    use super::{Config, Connector, QuicListenerState, MAX_DATAGRAM_SIZE};
+    use super::*;
 
     fn config(is_server: bool) -> Config {
         let mut config = Config::new().unwrap();
@@ -74,9 +75,9 @@ mod tests {
         let laddr = "127.0.0.1:10234".parse().unwrap();
         let raddr = "127.0.0.1:20234".parse().unwrap();
 
-        let mut connector = Connector::new(config(false), laddr, raddr).unwrap();
+        let mut connector = Connector::new(&mut config(false), laddr, raddr).unwrap();
 
-        let mut acceptor = QuicListenerState::new(config(true)).unwrap();
+        let mut acceptor = QuicAcceptor::new(config(true)).unwrap();
 
         loop {
             let mut buf = [0; MAX_DATAGRAM_SIZE];
@@ -127,5 +128,18 @@ mod tests {
 
             assert_eq!(read_size, send_size);
         }
+    }
+
+    #[hala_io_test::test]
+    async fn test_async_api() {
+        let raddr: SocketAddr = "127.0.0.1:20234".parse().unwrap();
+
+        let mut conn = QuicConn::bind("127.0.0.1:0").unwrap();
+
+        conn.connect(raddr, config(false), |fut| {
+            hala_io_test::spawner().spawn(fut).unwrap();
+        })
+        .await
+        .unwrap();
     }
 }

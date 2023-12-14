@@ -90,7 +90,7 @@ fn async_udpgroup_echo(bench: Bencher) {
         .map(|port| format!("127.0.0.1:{}", port).parse::<SocketAddr>().unwrap())
         .collect::<Vec<_>>();
 
-    let mut udp_server = UdpGroup::bind(addrs.as_slice()).unwrap();
+    let udp_server = UdpGroup::bind(addrs.as_slice()).unwrap();
 
     let udp_client = UdpSocket::bind("127.0.0.1:0").unwrap();
 

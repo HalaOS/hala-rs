@@ -30,14 +30,14 @@ enum InitAck {
 }
 
 /// Quic server connection acceptor
-pub struct QuicListenerState {
+pub struct QuicAcceptor {
     config: Config,
     conn_id_seed: Key,
     conns: HashMap<ConnectionId<'static>, quiche::Connection>,
     init_acks: VecDeque<InitAck>,
 }
 
-impl QuicListenerState {
+impl QuicAcceptor {
     /// Create new acceptor.
     pub fn new(config: Config) -> io::Result<Self> {
         let rng = SystemRandom::new();

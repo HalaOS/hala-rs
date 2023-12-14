@@ -91,7 +91,7 @@ where
                         log::trace!("timeout expired");
                         return Poll::Ready(Err(io::Error::new(
                             io::ErrorKind::TimedOut,
-                            format!("Future timeout expired,{:?}", self.expired),
+                            format!("async io timeout={:?}", self.expired),
                         )));
                     }
                 }
