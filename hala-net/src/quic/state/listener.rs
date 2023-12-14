@@ -33,7 +33,7 @@ enum InitAck {
 }
 
 /// Quic server connection acceptor
-pub struct QuicAcceptor {
+pub(crate) struct QuicAcceptor {
     config: Config,
     conn_id_seed: Key,
     conns: HashMap<ConnectionId<'static>, quiche::Connection>,
@@ -56,7 +56,7 @@ impl QuicAcceptor {
         })
     }
 
-    pub fn pop_established(&mut self) -> io::Result<Vec<(ConnectionId<'static>, QuicConn)>> {
+    pub fn pop_established(&mut self) -> Vec<(ConnectionId<'static>, QuicConn)> {
         let ids = self
             .conns
             .values()
@@ -71,14 +71,7 @@ impl QuicAcceptor {
             conns.push((id, state));
         }
 
-        if conns.is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::WouldBlock,
-                "No more incoming connection valid",
-            ));
-        }
-
-        Ok(conns)
+        conns
     }
 
     pub fn send(&mut self, buf: &mut [u8]) -> io::Result<(usize, SendInfo)> {

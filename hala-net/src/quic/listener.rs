@@ -5,7 +5,7 @@ use futures::{
     io, SinkExt, StreamExt,
 };
 use hala_io_util::io_spawn;
-use quiche::{ConnectionId, Header, RecvInfo};
+use quiche::{ConnectionId, RecvInfo};
 
 use crate::UdpGroup;
 
@@ -69,17 +69,37 @@ impl QuicListenerEventLoop {
             };
 
             let conn_id = {
-                let (header, drop) = self.handle_accept(&mut buf[..read_size], recv_info).await?;
+                let (read_size, header) = match self.acceptor.recv(&mut buf[..read_size], recv_info)
+                {
+                    Ok(r) => r,
+                    Err(err) => {
+                        log::error!("Recv invalid data from={},error={}", recv_info.from, err);
 
-                if drop {
-                    return Ok(());
-                }
+                        continue;
+                    }
+                };
 
-                if header.is_none() {
+                // handle init/handshake package response
+                if read_size != 0 {
+                    let (send_size, send_info) = match self.acceptor.send(&mut buf) {
+                        Ok(len) => len,
+                        Err(err) => {
+                            log::error!("Recv invalid data from={},error={}", recv_info.from, err);
+
+                            continue;
+                        }
+                    };
+
+                    self.udp_group
+                        .send_to(&buf[..send_size], send_info.to)
+                        .await?;
+
+                    if !self.handle_established().await? {
+                        return Ok(());
+                    }
+
                     continue;
                 }
-
-                let header = header.unwrap();
 
                 header.dcid.into_owned()
             };
@@ -102,50 +122,26 @@ impl QuicListenerEventLoop {
         }
     }
 
-    async fn handle_accept<'a>(
-        &mut self,
-        buf: &'a mut [u8],
-        recv_info: RecvInfo,
-    ) -> io::Result<(Option<Header<'a>>, bool)> {
-        let (read_size, header) = match self.acceptor.recv(buf, recv_info) {
-            Ok(r) => r,
-            Err(err) => {
-                log::error!("Recv invalid data from={},error={}", recv_info.from, err);
-
-                return Ok((None, false));
-            }
-        };
-
-        if read_size != 0 {
-            match self.acceptor.pop_established() {
-                Ok(states) => {
-                    for (id, conn) in states {
-                        // try send incoming connection.
-                        match self.incoming_sender.send(conn.clone()).await {
-                            // listener already disposed
-                            Err(_) => return Ok((None, true)),
-                            _ => {}
-                        }
-
-                        // crate event loop
-                        let event_loop = QuicConnEventLoop {
-                            conn: conn.clone(),
-                            udp_group: self.udp_group.clone(),
-                        };
-
-                        io_spawn(async move { event_loop.send_loop().await })?;
-
-                        // register conn
-                        self.conns.insert(id, conn);
-                    }
-                }
-                Err(err) if err.kind() == io::ErrorKind::WouldBlock => {}
-                Err(err) => return Err(err),
+    async fn handle_established<'a>(&mut self) -> io::Result<bool> {
+        for (id, conn) in self.acceptor.pop_established() {
+            // try send incoming connection.
+            match self.incoming_sender.send(conn.clone()).await {
+                // listener already disposed
+                Err(_) => return Ok(false),
+                _ => {}
             }
 
-            return Ok((None, false));
+            // crate event loop
+            let event_loop = QuicConnEventLoop {
+                conn: conn.clone(),
+                udp_group: self.udp_group.clone(),
+            };
+
+            io_spawn(async move { event_loop.send_loop().await })?;
+
+            // register conn
+            self.conns.insert(id, conn);
         }
-
-        Ok((Some(header), false))
+        Ok(true)
     }
 }

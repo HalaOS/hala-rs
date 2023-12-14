@@ -142,7 +142,10 @@ impl UdpGroup {
 
     /// Receives data from the socket. On success, returns the number of bytes
     /// read and the address from whence the data came.
-    pub async fn recv_from(&self, buf: &mut [u8]) -> io::Result<(SocketAddr, usize, SocketAddr)> {
+    pub async fn recv_from<'a>(
+        &self,
+        buf: &'a mut [u8],
+    ) -> io::Result<(SocketAddr, usize, SocketAddr)> {
         select(self.io_group_read.clone(), |handle, waker| {
             let (data_len, raddr) = self
                 .driver
