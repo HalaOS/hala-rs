@@ -105,7 +105,12 @@ impl QuicConnState {
     }
 
     /// Create new future for send stream data
-    pub fn stream_send<'a>(&self, stream_id: u64, buf: &'a [u8], fin: bool) -> QuicStreamSend<'a> {
+    pub(super) fn stream_send<'a>(
+        &self,
+        stream_id: u64,
+        buf: &'a [u8],
+        fin: bool,
+    ) -> QuicStreamSend<'a> {
         QuicStreamSend {
             buf,
             stream_id,
@@ -115,7 +120,7 @@ impl QuicConnState {
     }
 
     /// Create new future for recv stream data
-    pub fn stream_recv<'a>(&self, stream_id: u64, buf: &'a mut [u8]) -> QuicStreamRecv<'a> {
+    pub(super) fn stream_recv<'a>(&self, stream_id: u64, buf: &'a mut [u8]) -> QuicStreamRecv<'a> {
         QuicStreamRecv {
             buf,
             stream_id,
