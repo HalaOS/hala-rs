@@ -113,7 +113,7 @@ impl MioTimeWheel {
         }
 
         for token in &timeout_vec {
-            log::trace!("{:?} {:?} timeout expired", SystemTime::now(), token)
+            log::trace!("{:?} timeout expired, now={:?}", token, Instant::now())
         }
 
         timeout_vec

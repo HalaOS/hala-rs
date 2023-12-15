@@ -192,11 +192,18 @@ mod tests {
 
         io_spawn(async move {
             let _ = listener.accept().await.unwrap();
+
+            log::trace!("Accept one incoming");
+
             Ok(())
         })
         .unwrap();
 
+        log::trace!("Client connect");
+
         let conn = connector.connect(laddrs.as_slice()).await.unwrap();
+
+        log::trace!("Client connected");
 
         let mut stream = conn.open_stream().await.unwrap();
 

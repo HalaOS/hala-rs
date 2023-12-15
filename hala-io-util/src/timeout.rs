@@ -11,6 +11,95 @@ use hala_io_driver::{
     current_poller, get_driver, Cmd, Description, Driver, Handle, Interest, OpenFlags,
 };
 
+pub struct Sleep {
+    fd: Option<Handle>,
+    driver: Driver,
+    expired: Duration,
+    poller: Handle,
+}
+
+impl Sleep {
+    pub fn new(expired: Duration) -> io::Result<Self> {
+        let driver = get_driver()?;
+
+        let poller = current_poller()?;
+
+        Ok(Self {
+            fd: None,
+            driver,
+            expired,
+            poller,
+        })
+    }
+}
+
+impl Future for Sleep {
+    type Output = io::Result<()>;
+
+    fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        // first time, create timeout fd
+        if self.fd.is_none() {
+            let fd = match self
+                .driver
+                .fd_open(Description::Timeout, OpenFlags::Duration(self.expired))
+            {
+                Err(err) => return Poll::Ready(Err(err)),
+                Ok(fd) => fd,
+            };
+
+            self.fd = Some(fd);
+
+            match self.driver.fd_cntl(
+                self.poller,
+                Cmd::Register {
+                    source: fd,
+                    interests: Interest::Readable,
+                },
+            ) {
+                Err(err) => return Poll::Ready(Err(err)),
+                _ => {}
+            }
+
+            log::trace!("create timeout {:?}", fd);
+        }
+
+        // try check status of timeout fd
+        match self
+            .driver
+            .fd_cntl(self.fd.unwrap(), Cmd::Timeout(cx.waker().clone()))
+        {
+            Ok(resp) => match resp.try_into_timeout() {
+                Ok(status) => {
+                    if status {
+                        return Poll::Ready(Ok(()));
+                    }
+                }
+
+                Err(err) => {
+                    return Poll::Ready(Err(err));
+                }
+            },
+            Err(err) => return Poll::Ready(Err(err)),
+        }
+
+        return Poll::Pending;
+    }
+}
+
+impl Drop for Sleep {
+    fn drop(&mut self) {
+        if let Some(fd) = self.fd.take() {
+            log::trace!("dropping sleep, fd={:?}", fd);
+
+            self.driver
+                .fd_cntl(self.poller, Cmd::Deregister(fd))
+                .unwrap();
+
+            self.driver.fd_close(fd).unwrap();
+        }
+    }
+}
+
 pub struct Timeout<Fut> {
     fut: Pin<Box<Fut>>,
     fd: Option<Handle>,
@@ -78,8 +167,6 @@ where
             _ => {}
         }
 
-        log::trace!("poll timeout status");
-
         // try check status of timeout fd
         match self
             .driver
@@ -88,7 +175,6 @@ where
             Ok(resp) => match resp.try_into_timeout() {
                 Ok(status) => {
                     if status {
-                        log::trace!("timeout expired");
                         return Poll::Ready(Err(io::Error::new(
                             io::ErrorKind::TimedOut,
                             format!("async io timeout={:?}", self.expired),
@@ -134,13 +220,7 @@ where
 
 /// Sleep for a while
 pub async fn sleep(duration: Duration) -> io::Result<()> {
-    use futures::future::poll_fn;
-
-    timeout(
-        poll_fn(|_| -> Poll<io::Result<()>> { Poll::Pending }),
-        Some(duration),
-    )
-    .await
+    Sleep::new(duration)?.await
 }
 
 #[cfg(test)]
@@ -158,5 +238,10 @@ mod tests {
         .await;
 
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::TimedOut);
+    }
+
+    #[hala_io_test::test]
+    async fn test_sleep() {
+        sleep(Duration::from_secs(1)).await.unwrap();
     }
 }

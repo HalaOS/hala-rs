@@ -9,6 +9,7 @@ use std::{
 };
 
 use futures::{lock::Mutex, Future, FutureExt};
+use hala_io_util::Sleep;
 use quiche::{RecvInfo, SendInfo};
 
 use crate::{errors::into_io_error, quic::QuicStream};
@@ -91,6 +92,12 @@ impl RawConnState {
     }
 }
 
+impl Drop for RawConnState {
+    fn drop(&mut self) {
+        log::trace!("dropping conn={}", self.quiche_conn.trace_id());
+    }
+}
+
 /// Quic connection state object
 #[derive(Debug, Clone)]
 pub(crate) struct QuicConnState {
@@ -117,6 +124,7 @@ impl QuicConnState {
         QuicConnSend {
             buf,
             state: self.state.clone(),
+            timeout: None,
         }
     }
 
@@ -211,6 +219,7 @@ impl QuicConnState {
 pub struct QuicConnSend<'a> {
     buf: &'a mut [u8],
     state: Arc<Mutex<RawConnState>>,
+    timeout: Option<Sleep>,
 }
 
 impl<'a> Future for QuicConnSend<'a> {
@@ -226,17 +235,70 @@ impl<'a> Future for QuicConnSend<'a> {
             _ => return Poll::Pending,
         };
 
-        match state.quiche_conn.send(self.buf) {
-            Ok((send_size, send_info)) => {
-                state.wakeup_stream();
+        if let Some(mut sleep) = self.timeout.take() {
+            match sleep.poll_unpin(cx) {
+                Poll::Ready(_) => {
+                    log::trace!(
+                        "QuicConnSend(conn_id={}) on_timeout",
+                        state.quiche_conn.trace_id()
+                    );
+                    state.quiche_conn.on_timeout();
+                }
+                Poll::Pending => {}
+            }
+        }
 
-                return Poll::Ready(Ok((send_size, send_info)));
+        loop {
+            match state.quiche_conn.send(self.buf) {
+                Ok((send_size, send_info)) => {
+                    log::trace!(
+                        "QuicConnSend(conn_id={}), send_size={}, send_info={:?}",
+                        state.quiche_conn.trace_id(),
+                        send_size,
+                        send_info
+                    );
+
+                    state.wakeup_stream();
+
+                    return Poll::Ready(Ok((send_size, send_info)));
+                }
+                Err(quiche::Error::Done) => {
+                    state.send_waker = Some(cx.waker().clone());
+
+                    if let Some(expired) = state.quiche_conn.timeout() {
+                        log::trace!(
+                            "QuicConnSend(conn_id={}) add timeout({:?})",
+                            state.quiche_conn.trace_id(),
+                            expired
+                        );
+
+                        let mut timeout = Sleep::new(expired)?;
+
+                        match timeout.poll_unpin(cx) {
+                            Poll::Ready(_) => {
+                                log::trace!(
+                                    "QuicConnSend(conn_id={}) on_timeout",
+                                    state.quiche_conn.trace_id()
+                                );
+
+                                state.quiche_conn.on_timeout();
+                                continue;
+                            }
+                            _ => {
+                                self.timeout = Some(timeout);
+                            }
+                        }
+                    }
+
+                    log::trace!(
+                        "QuicConnSend(conn_id={}), Done",
+                        state.quiche_conn.trace_id(),
+                    );
+
+                    return Poll::Pending;
+                }
+                Err(err) => return Poll::Ready(Err(into_io_error(err))),
             }
-            Err(quiche::Error::Done) => {
-                state.send_waker = Some(cx.waker().clone());
-                return Poll::Pending;
-            }
-            Err(err) => return Poll::Ready(Err(into_io_error(err))),
         }
     }
 }

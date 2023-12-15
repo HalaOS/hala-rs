@@ -175,6 +175,7 @@ impl QuicConnector {
                 match timeout(self.udp_group.recv_from(&mut buf), recv_timeout).await {
                     Ok(r) => r,
                     Err(err) if err.kind() == io::ErrorKind::TimedOut => {
+                        log::trace!("connector={} timeout", connector.quiche_conn.trace_id());
                         // generate timeout retry package
                         connector.on_timeout();
                         continue;
@@ -265,6 +266,13 @@ impl QuicConnEventLoop {
                     return Ok(());
                 }
             };
+
+            log::trace!(
+                "Quiconn({:?}) send_size={}, send_info={:?}",
+                self.conn,
+                send_size,
+                send_info
+            );
 
             self.udp_group
                 .send_to_by(send_info.from, &buf[..send_size], send_info.to)
