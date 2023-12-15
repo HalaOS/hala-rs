@@ -1,5 +1,8 @@
-mod state;
-pub use state::*;
+mod acceptor;
+use acceptor::*;
+
+mod conn_state;
+use conn_state::*;
 
 mod stream;
 pub use stream::*;
@@ -26,7 +29,7 @@ mod tests {
     use hala_io_util::io_spawn;
     use quiche::RecvInfo;
 
-    use super::*;
+    use super::{acceptor::QuicAcceptor, *};
 
     fn config(is_server: bool) -> Config {
         let mut config = Config::new().unwrap();
@@ -119,7 +122,7 @@ mod tests {
 
     #[hala_io_test::test]
     async fn test_async_quic() {
-        let ports = 10200u16..10300;
+        let ports = 10000u16..10101;
 
         let laddrs = ports
             .clone()
@@ -138,6 +141,10 @@ mod tests {
         })
         .unwrap();
 
-        listener.accept().await;
+        let conn = listener.accept().await.unwrap();
+
+        let stream = conn.open_stream().await.unwrap();
+
+        stream.stream_send(b"hello", true).await.unwrap();
     }
 }

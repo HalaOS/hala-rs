@@ -263,7 +263,7 @@ impl QuicConnEventLoop {
             };
 
             self.udp_group
-                .send_to(&buf[..send_size], send_info.to)
+                .send_to_by(send_info.from, &buf[..send_size], send_info.to)
                 .await?;
         }
     }
