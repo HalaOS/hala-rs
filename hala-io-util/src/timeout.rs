@@ -164,7 +164,9 @@ where
                 log::trace!("timeout poll future ready {:?}", r);
                 return Poll::Ready(r);
             }
-            _ => {}
+            _ => {
+                log::trace!("timeout poll future pending");
+            }
         }
 
         // try check status of timeout fd

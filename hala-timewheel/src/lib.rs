@@ -21,15 +21,15 @@ pub struct TimeWheel<T> {
     hashed: BTreeMap<u128, VecDeque<Slot<T>>>,
     #[cfg(feature = "std")]
     hashed: HashMap<u128, VecDeque<Slot<T>>>,
-    steps: u128,
-    tick: u128,
+    pub steps: u128,
+    pub tick: u128,
 }
 
 impl<T> TimeWheel<T> {
     // create new hashed time wheel instance
     pub fn new(steps: u128) -> Self {
         TimeWheel {
-            steps: steps,
+            steps,
             hashed: Default::default(),
             tick: 0,
         }
@@ -42,7 +42,7 @@ impl<T> TimeWheel<T> {
 
         slots.push_back(Slot {
             t: value,
-            round: (timeout + self.tick) / self.steps,
+            round: timeout / self.steps,
         });
 
         slot
@@ -101,6 +101,8 @@ impl<T> TimeWheel<T> {
 
 #[cfg(test)]
 mod tests {
+    use core::task::Poll;
+
     use crate::TimeWheel;
 
     #[test]
@@ -112,5 +114,28 @@ mod tests {
         assert!(time_wheel.remove(slot, 1));
 
         assert!(!time_wheel.remove(slot, 10));
+    }
+
+    #[test]
+    fn test_issue_1() {
+        let mut time_wheel = TimeWheel::new(2048);
+
+        for _ in 0..34 {
+            _ = time_wheel.tick();
+        }
+
+        let slot = time_wheel.add(998, ());
+
+        assert_eq!(slot, 1032);
+
+        assert_eq!(time_wheel.tick, 34);
+
+        let mut r = Poll::Pending;
+
+        for _ in 0..999 {
+            r = time_wheel.tick();
+        }
+
+        assert!(r.is_ready());
     }
 }

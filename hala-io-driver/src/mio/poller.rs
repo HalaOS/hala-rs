@@ -4,7 +4,7 @@ use std::{
     io,
     sync::Arc,
     task::Poll,
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, Instant},
 };
 
 use hala_timewheel::TimeWheel;
@@ -19,21 +19,18 @@ fn duration_to_ticks(duration: Duration, tick_duration: Duration, round_up: bool
 
     let mut ticks = duration_m / tick_duration_m;
 
-    if round_up && tick_duration_m % tick_duration_m > 0 {
+    if round_up && tick_duration * (ticks as u32) < duration {
         ticks += 1;
     }
 
     ticks
 }
 
-fn ticks_to_duration(ticks: u128, tick_duration: Duration) -> Duration {
-    tick_duration * (ticks as u32)
-}
-
 pub(crate) struct MioTimeout {
     pub(crate) duration: Duration,
     pub(crate) start_time: Option<Instant>,
     pub(crate) slot: Option<u128>,
+    pub(crate) tick_duration: Option<Duration>,
 }
 
 impl Debug for MioTimeout {
@@ -57,6 +54,7 @@ impl MioTimeout {
             duration,
             start_time: None,
             slot: None,
+            tick_duration: None,
         }
     }
 
@@ -66,7 +64,17 @@ impl MioTimeout {
 
     pub(crate) fn is_expired(&self) -> bool {
         if let Some(start_time) = self.start_time {
-            start_time.elapsed() > self.duration
+            let elapsed = start_time.elapsed();
+
+            if elapsed >= self.duration {
+                return true;
+            }
+
+            if self.duration - elapsed < self.tick_duration.unwrap() {
+                return true;
+            }
+
+            return false;
         } else {
             false
         }
@@ -98,22 +106,18 @@ impl MioTimeWheel {
 
         let ticks = duration_to_ticks(elapsed, tick_duration, false);
 
-        if ticks > 0 {
-            let duration = ticks_to_duration(ticks, tick_duration);
-
-            self.last_tick = self.last_tick.checked_add(duration).unwrap();
-        }
+        let ticks = ticks - self.time_wheel.tick;
 
         let mut timeout_vec = VecDeque::new();
 
         for _ in 0..ticks {
             if let Poll::Ready(mut v) = self.time_wheel.tick() {
+                for token in &v {
+                    log::trace!("{:?} timeout expired, at={}", token, self.time_wheel.tick)
+                }
+
                 timeout_vec.append(&mut v);
             }
-        }
-
-        for token in &timeout_vec {
-            log::trace!("{:?} timeout expired, now={:?}", token, Instant::now())
         }
 
         timeout_vec
@@ -225,22 +229,27 @@ where
                 TypedHandle::<MioTimeout>::new(handle).with_mut(|timeout| {
                     assert!(!timeout.duration.is_zero());
 
-                    let t = duration_to_ticks(timeout.duration, self.tick_duration, true);
+                    let ticks = duration_to_ticks(timeout.duration, self.tick_duration, true);
 
                     timeout.start_time = Some(Instant::now());
+                    timeout.tick_duration = Some(self.tick_duration);
 
-                    log::trace!(
-                        "{:?} {:?} register {:?}, tick duration={:?},ticks={}",
-                        SystemTime::now(),
-                        handle.token,
-                        timeout,
-                        self.tick_duration,
-                        t
-                    );
+                    let mut time_wheel = self.time_wheel.get_mut();
 
-                    let slot = self.time_wheel.get_mut().time_wheel.add(t, handle.token);
+                    let slot = time_wheel.time_wheel.add(ticks, handle.token);
 
                     timeout.slot = Some(slot);
+
+                    log::trace!(
+                        "{:?} register as {:?}, slot={}, tick_duration={:?}, ticks={}, time_wheel_ticks={}, time_wheel_steps={}",
+                        handle.token,
+                        timeout,
+                        timeout.slot.unwrap(),
+                        self.tick_duration,
+                        ticks,
+                        time_wheel.time_wheel.tick,
+                        time_wheel.time_wheel.steps
+                    );
 
                     Ok(())
                 })
@@ -299,6 +308,7 @@ where
                     timeout.start_time = Some(Instant::now());
 
                     timeout.slot = Some(slot);
+                    timeout.tick_duration = Some(self.tick_duration);
 
                     Ok(())
                 })

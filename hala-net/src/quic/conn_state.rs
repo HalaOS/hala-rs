@@ -235,6 +235,13 @@ impl<'a> Future for QuicConnSend<'a> {
             _ => return Poll::Pending,
         };
 
+        if state.quiche_conn.is_closed() {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                format!("conn={} closed", state.quiche_conn.trace_id()),
+            )));
+        }
+
         if let Some(mut sleep) = self.timeout.take() {
             match sleep.poll_unpin(cx) {
                 Poll::Ready(_) => {
@@ -291,9 +298,17 @@ impl<'a> Future for QuicConnSend<'a> {
                     }
 
                     log::trace!(
-                        "QuicConnSend(conn_id={}), Done",
+                        "QuicConnSend(conn_id={}),stats={:?}, done, is_closed={:?}",
                         state.quiche_conn.trace_id(),
+                        state.quiche_conn.stats(),
+                        state.quiche_conn.is_closed()
                     );
+
+                    if state.quiche_conn.is_closed() {
+                        state.wakeup_accept(None);
+                        state.wakeup_conn_recv();
+                        state.wakeup_stream();
+                    }
 
                     return Poll::Pending;
                 }
@@ -322,6 +337,13 @@ impl<'a> Future for QuicConnRecv<'a> {
             Poll::Ready(guard) => guard,
             _ => return Poll::Pending,
         };
+
+        if state.quiche_conn.is_closed() {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                format!("conn={} closed", state.quiche_conn.trace_id()),
+            )));
+        }
 
         let recv_info = self.recv_info;
 
@@ -368,6 +390,13 @@ impl<'a> Future for QuicStreamSend<'a> {
             _ => return Poll::Pending,
         };
 
+        if state.quiche_conn.is_closed() {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                format!("conn={} closed", state.quiche_conn.trace_id()),
+            )));
+        }
+
         match state
             .quiche_conn
             .stream_send(self.stream_id, self.buf, self.fin)
@@ -407,6 +436,13 @@ impl<'a> Future for QuicStreamRecv<'a> {
             Poll::Ready(guard) => guard,
             _ => return Poll::Pending,
         };
+
+        if state.quiche_conn.is_closed() {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                format!("conn={} closed", state.quiche_conn.trace_id()),
+            )));
+        }
 
         match state.quiche_conn.stream_recv(self.stream_id, self.buf) {
             Ok(recv_size) => {
