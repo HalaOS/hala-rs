@@ -67,7 +67,7 @@ impl QuicAcceptor {
         let mut conns = vec![];
 
         for id in ids {
-            let state = QuicConn::new(QuicConnState::new(self.conns.remove(&id).unwrap(), 4));
+            let state = QuicConn::new(QuicConnState::new(self.conns.remove(&id).unwrap(), 5));
             conns.push((id, state));
         }
 

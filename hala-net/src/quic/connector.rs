@@ -89,7 +89,7 @@ impl InnerConnector {
 
 impl From<InnerConnector> for QuicConn {
     fn from(value: InnerConnector) -> Self {
-        QuicConn::new(QuicConnState::new(value.quiche_conn, 5))
+        QuicConn::new(QuicConnState::new(value.quiche_conn, 4))
     }
 }
 

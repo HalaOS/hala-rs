@@ -1,4 +1,4 @@
-use std::{io, sync::Arc};
+use std::{fmt::Debug, io, sync::Arc};
 
 use super::QuicConnState;
 
@@ -6,6 +6,16 @@ use super::QuicConnState;
 pub struct QuicStream {
     stream_id: Arc<u64>,
     state: QuicConnState,
+}
+
+impl Debug for QuicStream {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "conn={}, stream_id={}",
+            self.state.trace_id, self.stream_id
+        )
+    }
 }
 
 impl QuicStream {
@@ -30,6 +40,11 @@ impl QuicStream {
 impl Drop for QuicStream {
     fn drop(&mut self) {
         if Arc::strong_count(&self.stream_id) == 1 {
+            log::trace!(
+                "drop stream conn={}, stream_id={}",
+                self.state.trace_id,
+                self.stream_id
+            );
             self.state.close_stream(*self.stream_id);
         }
     }

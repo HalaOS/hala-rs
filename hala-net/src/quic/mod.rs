@@ -122,7 +122,9 @@ mod tests {
 
     #[hala_io_test::test]
     async fn test_async_quic() {
-        let ports = 10000u16..10101;
+        pretty_env_logger::init();
+
+        let ports = 10000u16..10001;
 
         let laddrs = ports
             .clone()
@@ -135,7 +137,15 @@ mod tests {
         io_spawn(async move {
             let mut connector = QuicConnector::bind("127.0.0.1:0", config(false)).unwrap();
 
-            connector.connect(laddrs.as_slice()).await.unwrap();
+            let conn = connector.connect(laddrs.as_slice()).await.unwrap();
+
+            log::debug!("client connected !!!");
+
+            let stream = conn.accept().await.unwrap();
+
+            log::debug!("client accept one stream({:?})", stream);
+
+            stream.stream_send(b"hello world", true).await.unwrap();
 
             Ok(())
         })
@@ -143,8 +153,18 @@ mod tests {
 
         let conn = listener.accept().await.unwrap();
 
+        log::debug!("Accept one incoming conn({:?})", conn);
+
         let stream = conn.open_stream().await.unwrap();
 
         stream.stream_send(b"hello", true).await.unwrap();
+
+        let mut buf = [0; MAX_DATAGRAM_SIZE];
+
+        let (read_size, fin) = stream.stream_recv(&mut buf).await.unwrap();
+
+        assert_eq!(&buf[..read_size], b"hello world");
+
+        assert!(fin);
     }
 }

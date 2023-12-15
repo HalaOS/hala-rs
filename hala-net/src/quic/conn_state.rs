@@ -49,7 +49,7 @@ impl RawConnState {
 
     fn wakeup_stream(&mut self) {
         for stream_id in self.quiche_conn.readable() {
-            self.wakeup_accept(stream_id);
+            self.wakeup_accept(Some(stream_id));
 
             if let Some(waker) = self.stream_recv_wakers.remove(&stream_id) {
                 waker.wake();
@@ -57,7 +57,7 @@ impl RawConnState {
         }
 
         for stream_id in self.quiche_conn.writable() {
-            self.wakeup_accept(stream_id);
+            self.wakeup_accept(Some(stream_id));
 
             if let Some(waker) = self.stream_send_wakers.remove(&stream_id) {
                 waker.wake();
@@ -65,14 +65,16 @@ impl RawConnState {
         }
     }
 
-    fn wakeup_accept(&mut self, stream_id: u64) {
-        if !self.opened_streams.contains(&stream_id) {
-            self.opened_streams.insert(stream_id);
-            self.incoming_streams.push_back(stream_id);
-
-            if let Some(waker) = self.accept_waker.take() {
-                waker.wake();
+    fn wakeup_accept(&mut self, stream_id: Option<u64>) {
+        if let Some(stream_id) = stream_id {
+            if !self.opened_streams.contains(&stream_id) {
+                self.opened_streams.insert(stream_id);
+                self.incoming_streams.push_back(stream_id);
             }
+        }
+
+        if let Some(waker) = self.accept_waker.take() {
+            waker.wake();
         }
     }
 
@@ -159,8 +161,9 @@ impl QuicConnState {
     }
 
     pub(crate) fn close_stream(&self, stream_id: u64) {
-        // no future lock state in pending state
+        // pin lock like
         loop {
+            log::trace!("close_stream try lock state: {:?}", self.state);
             let state = self.state.try_lock();
 
             if state.is_none() {
@@ -170,6 +173,8 @@ impl QuicConnState {
             let mut state = state.unwrap();
 
             state.opened_streams.remove(&stream_id);
+
+            break;
         }
     }
 
@@ -240,13 +245,20 @@ impl<'a> Future for QuicConnRecv<'a> {
             Ok(recv_size) => {
                 state.wakeup_stream();
 
+                if state.quiche_conn.is_closed() {
+                    state.wakeup_accept(None);
+                }
+
                 return Poll::Ready(Ok(recv_size));
             }
             Err(quiche::Error::Done) => {
                 state.recv_waker = Some(cx.waker().clone());
                 return Poll::Pending;
             }
-            Err(err) => return Poll::Ready(Err(into_io_error(err))),
+            Err(err) => {
+                state.wakeup_accept(None);
+                return Poll::Ready(Err(into_io_error(err)));
+            }
         }
     }
 }
@@ -335,7 +347,7 @@ pub struct QuicConnAccept {
 }
 
 impl Future for QuicConnAccept {
-    type Output = io::Result<QuicStream>;
+    type Output = Option<QuicStream>;
 
     fn poll(
         self: std::pin::Pin<&mut Self>,
@@ -347,8 +359,12 @@ impl Future for QuicConnAccept {
             _ => return Poll::Pending,
         };
 
+        if state.quiche_conn.is_closed() {
+            return Poll::Ready(None);
+        }
+
         if let Some(stream_id) = state.incoming_streams.pop_front() {
-            return Poll::Ready(Ok(QuicStream::new(stream_id, self.state.clone())));
+            return Poll::Ready(Some(QuicStream::new(stream_id, self.state.clone())));
         } else {
             state.accept_waker = Some(cx.waker().clone());
 
