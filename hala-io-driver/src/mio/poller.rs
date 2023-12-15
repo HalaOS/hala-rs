@@ -82,19 +82,19 @@ pub trait MioPoller {
 
 struct MioTimeWheel {
     time_wheel: TimeWheel<Token>,
-    last_tick: SystemTime,
+    last_tick: Instant,
 }
 
 impl MioTimeWheel {
     fn new() -> Self {
         Self {
             time_wheel: TimeWheel::new(2048),
-            last_tick: SystemTime::now(),
+            last_tick: Instant::now(),
         }
     }
 
     fn tick(&mut self, tick_duration: Duration) -> VecDeque<Token> {
-        let elapsed = self.last_tick.elapsed().unwrap();
+        let elapsed = self.last_tick.elapsed();
 
         let ticks = duration_to_ticks(elapsed, tick_duration, false);
 

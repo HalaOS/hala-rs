@@ -184,7 +184,7 @@ mod tests {
 
     #[hala_io_test::test]
     async fn test_conn_timeout() {
-        pretty_env_logger::init();
+        pretty_env_logger::init_timed();
 
         let (mut listener, laddrs) = create_listener(1).await;
 
