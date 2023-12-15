@@ -24,7 +24,7 @@ const MAX_DATAGRAM_SIZE: usize = 1350;
 #[cfg(test)]
 mod tests {
 
-    use std::{net::SocketAddr, path::Path};
+    use std::{io, net::SocketAddr, path::Path};
 
     use futures::{AsyncReadExt, AsyncWriteExt};
     use hala_io_util::io_spawn;
@@ -171,5 +171,39 @@ mod tests {
         assert_eq!(&buf[..read_size], b"hello world");
 
         assert!(stream.is_closed().await);
+    }
+
+    #[hala_io_test::test]
+    async fn test_connector_timeout() {
+        let mut connector = QuicConnector::bind("127.0.0.1:0", config(false)).unwrap();
+
+        let err = connector.connect("127.0.0.1:1812").await.unwrap_err();
+
+        assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+    }
+
+    #[hala_io_test::test]
+    async fn test_conn_timeout() {
+        pretty_env_logger::init();
+
+        let (mut listener, laddrs) = create_listener(1).await;
+
+        let mut connector = QuicConnector::bind("127.0.0.1:0", config(false)).unwrap();
+
+        io_spawn(async move {
+            let _ = listener.accept().await.unwrap();
+            Ok(())
+        })
+        .unwrap();
+
+        let conn = connector.connect(laddrs.as_slice()).await.unwrap();
+
+        let mut stream = conn.open_stream().await.unwrap();
+
+        stream.write(b"hello world").await.unwrap();
+
+        let mut buf = [0; MAX_DATAGRAM_SIZE];
+
+        stream.read(&mut buf).await.unwrap();
     }
 }

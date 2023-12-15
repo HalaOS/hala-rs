@@ -43,9 +43,13 @@ impl InnerConnector {
 
     /// Generate send data.
     pub(crate) fn send(&mut self, buf: &mut [u8]) -> io::Result<(usize, SendInfo)> {
-        self.quiche_conn
-            .send(buf)
-            .map_err(|err| io::Error::new(io::ErrorKind::ConnectionRefused, err))
+        self.quiche_conn.send(buf).map_err(|err| {
+            if err == quiche::Error::Done {
+                io::Error::new(io::ErrorKind::TimedOut, err)
+            } else {
+                io::Error::new(io::ErrorKind::ConnectionRefused, err)
+            }
+        })
     }
 
     /// Accept remote peer data.
