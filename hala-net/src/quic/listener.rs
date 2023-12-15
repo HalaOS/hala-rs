@@ -1,4 +1,8 @@
-use std::{collections::HashMap, net::ToSocketAddrs, sync::Arc};
+use std::{
+    collections::HashMap,
+    net::{SocketAddr, ToSocketAddrs},
+    sync::Arc,
+};
 
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
@@ -13,35 +17,43 @@ use super::{Config, QuicAcceptor, QuicConn, QuicConnEventLoop, MAX_DATAGRAM_SIZE
 
 pub struct QuicListener {
     incoming: Receiver<QuicConn>,
+    laddrs: Vec<SocketAddr>,
 }
 
 impl QuicListener {
     pub fn new(udp_group: UdpGroup, config: Config) -> io::Result<Self> {
+        let laddrs = udp_group
+            .local_addrs()
+            .map(|addr| *addr)
+            .collect::<Vec<_>>();
+
         let (s, r) = channel(1024);
 
         let mut acceptor_loop = QuicListenerEventLoop::new(udp_group, s, config)?;
 
         io_spawn(async move { acceptor_loop.run_loop().await })?;
 
-        Ok(Self { incoming: r })
+        Ok(Self {
+            incoming: r,
+            laddrs,
+        })
     }
 
     /// Create new quic server listener and bind to `laddrs`
     pub fn bind<S: ToSocketAddrs>(laddrs: S, config: Config) -> io::Result<Self> {
         let udp_group = UdpGroup::bind(laddrs)?;
 
-        let (s, r) = channel(1024);
-
-        let mut acceptor_loop = QuicListenerEventLoop::new(udp_group, s, config)?;
-
-        io_spawn(async move { acceptor_loop.run_loop().await })?;
-
-        Ok(Self { incoming: r })
+        Self::new(udp_group, config)
     }
 
     /// Accept next incoming `QuicConn`
     pub async fn accept(&mut self) -> Option<QuicConn> {
         self.incoming.next().await
+    }
+
+    /// Get `QuicListener` bound local addresses iterator
+    pub fn local_addrs(&self) -> impl Iterator<Item = &SocketAddr> {
+        self.laddrs.iter()
     }
 }
 

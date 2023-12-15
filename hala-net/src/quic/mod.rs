@@ -26,6 +26,7 @@ mod tests {
 
     use std::{net::SocketAddr, path::Path};
 
+    use futures::{AsyncReadExt, AsyncWriteExt};
     use hala_io_util::io_spawn;
     use quiche::RecvInfo;
 
@@ -120,19 +121,23 @@ mod tests {
         }
     }
 
-    #[hala_io_test::test]
-    async fn test_async_quic() {
-        pretty_env_logger::init();
-
-        let ports = 10000u16..10001;
-
-        let laddrs = ports
+    async fn create_listener(ports: i32) -> (QuicListener, Vec<SocketAddr>) {
+        let laddrs = (0..ports)
             .clone()
             .into_iter()
-            .map(|port| format!("127.0.0.1:{}", port).parse::<SocketAddr>().unwrap())
+            .map(|_| "127.0.0.1:0".parse::<SocketAddr>().unwrap())
             .collect::<Vec<_>>();
 
-        let mut listener = QuicListener::bind(laddrs.as_slice(), config(true)).unwrap();
+        let listener = QuicListener::bind(laddrs.as_slice(), config(true)).unwrap();
+
+        let laddrs = listener.local_addrs().map(|addr| *addr).collect::<Vec<_>>();
+
+        (listener, laddrs)
+    }
+
+    #[hala_io_test::test]
+    async fn test_async_quic() {
+        let (mut listener, laddrs) = create_listener(10).await;
 
         io_spawn(async move {
             let mut connector = QuicConnector::bind("127.0.0.1:0", config(false)).unwrap();
@@ -155,16 +160,16 @@ mod tests {
 
         log::debug!("Accept one incoming conn({:?})", conn);
 
-        let stream = conn.open_stream().await.unwrap();
+        let mut stream = conn.open_stream().await.unwrap();
 
-        stream.stream_send(b"hello", true).await.unwrap();
+        stream.write(b"hello").await.unwrap();
 
         let mut buf = [0; MAX_DATAGRAM_SIZE];
 
-        let (read_size, fin) = stream.stream_recv(&mut buf).await.unwrap();
+        let read_size = stream.read(&mut buf).await.unwrap();
 
         assert_eq!(&buf[..read_size], b"hello world");
 
-        assert!(fin);
+        assert!(stream.is_closed().await);
     }
 }

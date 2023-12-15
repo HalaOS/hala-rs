@@ -178,6 +178,28 @@ impl QuicConnState {
         }
     }
 
+    pub(super) async fn is_stream_closed(&self, stream_id: u64) -> bool {
+        let state = self.state.lock().await;
+
+        state.quiche_conn.stream_finished(stream_id)
+    }
+
+    /// Close connection.
+    pub(super) async fn close(&self, app: bool, err: u64, reason: &[u8]) -> io::Result<()> {
+        let mut state = self.state.lock().await;
+
+        state
+            .quiche_conn
+            .close(app, err, reason)
+            .map_err(into_io_error)
+    }
+
+    pub(super) async fn is_closed(&self) -> bool {
+        let state = self.state.lock().await;
+
+        state.quiche_conn.is_closed()
+    }
+
     pub(crate) fn accept(&self) -> QuicConnAccept {
         QuicConnAccept {
             state: self.clone(),
