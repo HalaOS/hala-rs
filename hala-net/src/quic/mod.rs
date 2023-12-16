@@ -19,10 +19,10 @@ pub use config::*;
 mod listener;
 pub use listener::*;
 
-const MAX_DATAGRAM_SIZE: usize = 1350;
-
 #[cfg(test)]
 mod tests {
+
+    const MAX_DATAGRAM_SIZE: usize = 1350;
 
     use std::{io, net::SocketAddr, path::Path};
 

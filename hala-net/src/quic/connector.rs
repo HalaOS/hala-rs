@@ -12,7 +12,7 @@ use ring::rand::{SecureRandom, SystemRandom};
 
 use crate::{errors::into_io_error, UdpGroup};
 
-use super::{Config, QuicConn, QuicConnState, MAX_DATAGRAM_SIZE};
+use super::{Config, QuicConn, QuicConnState};
 
 /// Quic client connector
 pub(crate) struct InnerConnector {
@@ -160,7 +160,7 @@ impl QuicConnector {
     }
 
     async fn connect_once(&mut self, mut connector: InnerConnector) -> io::Result<QuicConn> {
-        let mut buf = [0; MAX_DATAGRAM_SIZE];
+        let mut buf = [0; 65535];
 
         loop {
             let (send_size, send_info) = connector.send(&mut buf)?;
@@ -220,7 +220,7 @@ impl QuicConnEventLoop {
     }
 
     async fn recv_loop(&self) -> io::Result<()> {
-        let mut buf = [0; MAX_DATAGRAM_SIZE];
+        let mut buf = [0; 65535];
 
         loop {
             let (laddr, read_size, raddr) = self.udp_group.recv_from(&mut buf).await?;
@@ -251,7 +251,7 @@ impl QuicConnEventLoop {
     }
 
     pub(super) async fn send_loop(&self) -> io::Result<()> {
-        let mut buf = [0; MAX_DATAGRAM_SIZE];
+        let mut buf = [0; 65535];
 
         loop {
             let (send_size, send_info) = match self.conn.state.send(&mut buf).await {

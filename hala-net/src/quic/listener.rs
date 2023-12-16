@@ -13,7 +13,7 @@ use quiche::{ConnectionId, RecvInfo};
 
 use crate::UdpGroup;
 
-use super::{Config, QuicAcceptor, QuicConn, QuicConnEventLoop, MAX_DATAGRAM_SIZE};
+use super::{Config, QuicAcceptor, QuicConn, QuicConnEventLoop};
 
 pub struct QuicListener {
     incoming: Receiver<QuicConn>,
@@ -81,7 +81,7 @@ impl QuicListenerEventLoop {
     }
 
     async fn run_loop(&mut self) -> io::Result<()> {
-        let mut buf = [0; MAX_DATAGRAM_SIZE];
+        let mut buf = [0; 65535];
         loop {
             let (laddr, read_size, raddr) = self.udp_group.recv_from(&mut buf).await?;
 
