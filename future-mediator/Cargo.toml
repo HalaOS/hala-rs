@@ -1,0 +1,20 @@
+[package]
+description = "The Mediator Pattern in Rust Asynchronous Programming"
+edition.workspace = true
+name = "future-mediator"
+repository.workspace = true
+version.workspace = true
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+bitmask-enum = {workspace = true}
+futures = {workspace = true}
+futures-test = {workspace = true}
+log = {workspace = true}
+
+[dev-dependencies]
+hala-io-test = {workspace = true}
+pretty_env_logger = {workspace = true}
+
+[features]
