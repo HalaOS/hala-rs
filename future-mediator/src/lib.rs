@@ -84,6 +84,24 @@ impl<T, E> Mediator<T, E> {
         }
     }
 
+    pub async fn with<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&T) -> R,
+    {
+        let raw = self.raw.lock().await;
+
+        f(&raw.value)
+    }
+
+    pub async fn with_mut<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut T) -> R,
+    {
+        let mut raw = self.raw.lock().await;
+
+        f(&mut raw.value)
+    }
+
     /// notify one event on.
     pub async fn notify(&self, event: E)
     where
@@ -106,7 +124,7 @@ impl<T, E> Mediator<T, E> {
         }
     }
 
-    pub fn on<F, R>(&self, event: E, f: F) -> OnEvent<T, E, F>
+    pub fn on_fn<F, R>(&self, event: E, f: F) -> OnEvent<T, E, F>
     where
         F: FnMut(&mut MediatorContext<T, E>, &mut Context<'_>) -> Poll<R> + Unpin,
         T: Unpin + 'static,
@@ -122,6 +140,7 @@ impl<T, E> Mediator<T, E> {
     }
 }
 
+/// Future create by [`on`](Mediator::on)
 pub struct OnEvent<T, E, F>
 where
     E: Debug,
@@ -178,13 +197,25 @@ where
     }
 }
 
+#[macro_export]
+macro_rules! on {
+    ($mediator: expr, $event: expr, $fut: expr) => {
+        $mediator.on_fn(Event::A, |mediator_cx, cx| {
+            use $crate::FutureExt;
+            Box::pin($fut(mediator_cx)).poll_unpin(cx)
+        })
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use std::task::Poll;
 
     use futures::executor::ThreadPool;
 
-    use crate::Mediator;
+    use futures::task::SpawnExt;
+
+    use crate::{Mediator, MediatorContext};
 
     #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
     enum Event {
@@ -194,25 +225,25 @@ mod tests {
 
     #[futures_test::test]
     async fn test_mediator() {
-        pretty_env_logger::init_timed();
-
         let mediator: Mediator<i32, Event> = Mediator::new(1);
 
         let thread_pool = ThreadPool::builder().pool_size(10).create().unwrap();
 
-        thread_pool.spawn_ok(mediator.on(Event::B, |mediator_cx, _| {
-            if *mediator_cx.value() == 1 {
-                *mediator_cx.value_mut() = 2;
-                mediator_cx.notify(Event::A);
+        thread_pool
+            .spawn(mediator.on_fn(Event::B, |mediator_cx, _| {
+                if *mediator_cx.value() == 1 {
+                    *mediator_cx.value_mut() = 2;
+                    mediator_cx.notify(Event::A);
 
-                return Poll::Ready(());
-            }
+                    return Poll::Ready(());
+                }
 
-            return Poll::Pending;
-        }));
+                return Poll::Pending;
+            }))
+            .unwrap();
 
         mediator
-            .on(Event::A, |mediator_cx, _| {
+            .on_fn(Event::A, |mediator_cx, _| {
                 if *mediator_cx.value() == 1 {
                     return Poll::Pending;
                 }
@@ -220,5 +251,23 @@ mod tests {
                 return Poll::Ready(());
             })
             .await;
+    }
+
+    #[futures_test::test]
+    async fn test_mediator_async() {
+        let mediator: Mediator<i32, Event> = Mediator::new(1);
+
+        let thread_pool = ThreadPool::builder().pool_size(10).create().unwrap();
+
+        async fn assign_2(cx: &mut MediatorContext<i32, Event>) {
+            *cx.value_mut() = 2;
+        }
+
+        thread_pool
+            .spawn_with_handle(on!(mediator, Event::A, assign_2))
+            .unwrap()
+            .await;
+
+        assert_eq!(mediator.with(|value| *value).await, 2);
     }
 }
