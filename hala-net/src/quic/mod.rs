@@ -216,4 +216,42 @@ mod tests {
 
         assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
     }
+
+    #[hala_io_test::test]
+    async fn test_lock() {
+        pretty_env_logger::init();
+
+        let state = Arc::new(Mutex::new(1));
+
+        poll_fn(|cx| -> Poll<()> {
+            let state_cloned = state.clone();
+
+            let try_lock = async move {
+                let mut state = state_cloned.lock().await;
+
+                log::debug!("state entry");
+
+                poll_fn(|_| -> Poll<()> {
+                    *state = 2;
+                    std::task::Poll::Pending
+                })
+                .await;
+
+                log::debug!("state leave");
+            };
+
+            let mut try_lock = Box::pin(try_lock);
+
+            assert_eq!(try_lock.poll_unpin(cx), Poll::Pending);
+
+            assert_eq!(try_lock.poll_unpin(cx), Poll::Pending);
+
+            log::trace!("state outside entry");
+
+            assert!(state.lock().poll_unpin(cx).is_pending());
+
+            Poll::Ready(())
+        })
+        .await;
+    }
 }
