@@ -219,8 +219,6 @@ mod tests {
 
     #[hala_io_test::test]
     async fn test_lock() {
-        pretty_env_logger::init();
-
         let state = Arc::new(Mutex::new(1));
 
         poll_fn(|cx| -> Poll<()> {
