@@ -24,9 +24,9 @@ mod tests {
 
     const MAX_DATAGRAM_SIZE: usize = 1350;
 
-    use std::{io, net::SocketAddr, path::Path};
+    use std::{io, net::SocketAddr, path::Path, sync::Arc, task::Poll};
 
-    use futures::{AsyncReadExt, AsyncWriteExt};
+    use futures::{future::poll_fn, lock::Mutex, AsyncReadExt, AsyncWriteExt, FutureExt};
     use hala_io_util::io_spawn;
     use quiche::RecvInfo;
 
