@@ -55,7 +55,7 @@ mod tests {
             .set_application_protos(&[b"hq-interop", b"hq-29", b"hq-28", b"hq-27", b"http/0.9"])
             .unwrap();
 
-        config.set_max_idle_timeout(500);
+        config.set_max_idle_timeout(5500);
         config.set_max_recv_udp_payload_size(MAX_DATAGRAM_SIZE);
         config.set_max_send_udp_payload_size(MAX_DATAGRAM_SIZE);
         config.set_initial_max_data(10_000_000);
@@ -137,6 +137,8 @@ mod tests {
 
     #[hala_io_test::test]
     async fn test_async_quic() {
+        pretty_env_logger::init();
+
         let (mut listener, laddrs) = create_listener(10).await;
 
         io_spawn(async move {

@@ -1,11 +1,11 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashSet, VecDeque},
     io,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
     },
-    task::{Poll, Waker},
+    task::Poll,
 };
 
 use future_mediator::Mediator;
@@ -19,16 +19,7 @@ use crate::{errors::into_io_error, quic::QuicStream};
 struct RawConnState {
     /// quiche connection instance.
     quiche_conn: quiche::Connection,
-    /// Waker for connection send operation.
-    send_waker: Option<Waker>,
-    /// Waker for connection recv operation.
-    recv_waker: Option<Waker>,
-    /// Accept stream waker
-    accept_waker: Option<Waker>,
-    /// Wakers for stream send
-    stream_send_wakers: HashMap<u64, Waker>,
-    /// Wakers for stream recv
-    stream_recv_wakers: HashMap<u64, Waker>,
+
     /// Opened stream id set
     opened_streams: HashSet<u64>,
     /// Incoming stream deque.
@@ -39,56 +30,8 @@ impl RawConnState {
     fn new(quiche_conn: quiche::Connection) -> Self {
         Self {
             quiche_conn,
-            send_waker: Default::default(),
-            recv_waker: Default::default(),
-            accept_waker: Default::default(),
-            stream_send_wakers: Default::default(),
-            stream_recv_wakers: Default::default(),
             opened_streams: Default::default(),
             incoming_streams: Default::default(),
-        }
-    }
-
-    fn wakeup_stream(&mut self) {
-        for stream_id in self.quiche_conn.readable() {
-            self.wakeup_accept(Some(stream_id));
-
-            if let Some(waker) = self.stream_recv_wakers.remove(&stream_id) {
-                waker.wake();
-            }
-        }
-
-        for stream_id in self.quiche_conn.writable() {
-            self.wakeup_accept(Some(stream_id));
-
-            if let Some(waker) = self.stream_send_wakers.remove(&stream_id) {
-                waker.wake();
-            }
-        }
-    }
-
-    fn wakeup_accept(&mut self, stream_id: Option<u64>) {
-        if let Some(stream_id) = stream_id {
-            if !self.opened_streams.contains(&stream_id) {
-                self.opened_streams.insert(stream_id);
-                self.incoming_streams.push_back(stream_id);
-            }
-        }
-
-        if let Some(waker) = self.accept_waker.take() {
-            waker.wake();
-        }
-    }
-
-    fn wakeup_conn_send(&mut self) {
-        if let Some(waker) = self.send_waker.take() {
-            waker.wake();
-        }
-    }
-
-    fn wakeup_conn_recv(&mut self) {
-        if let Some(waker) = self.recv_waker.take() {
-            waker.wake();
         }
     }
 }
@@ -165,13 +108,11 @@ impl QuicConnState {
                                 send_info
                             );
 
-                            state.wakeup_stream();
+                            state.notify_all(&[Ops::StreamRecv, Ops::StreanSend]);
 
                             return Poll::Ready(Ok((send_size, send_info)));
                         }
                         Err(quiche::Error::Done) => {
-                            state.send_waker = Some(cx.waker().clone());
-
                             if let Some(expired) = state.quiche_conn.timeout() {
                                 log::trace!(
                                     "QuicConnSend(conn_id={}) add timeout({:?})",
@@ -205,9 +146,12 @@ impl QuicConnState {
                             );
 
                             if state.quiche_conn.is_closed() {
-                                state.wakeup_accept(None);
-                                state.wakeup_conn_recv();
-                                state.wakeup_stream();
+                                state.notify_all(&[
+                                    Ops::Accept,
+                                    Ops::Recv,
+                                    Ops::StreamRecv,
+                                    Ops::StreanSend,
+                                ]);
                             }
 
                             return Poll::Pending;
@@ -226,7 +170,7 @@ impl QuicConnState {
         recv_info: RecvInfo,
     ) -> io::Result<usize> {
         self.state
-            .on_fn(Ops::Recv, |state, cx| {
+            .on_fn(Ops::Recv, |state, _| {
                 if state.quiche_conn.is_closed() {
                     return Poll::Ready(Err(io::Error::new(
                         io::ErrorKind::BrokenPipe,
@@ -238,20 +182,20 @@ impl QuicConnState {
 
                 match state.quiche_conn.recv(buf, recv_info) {
                     Ok(recv_size) => {
-                        state.wakeup_stream();
+                        state.notify_all(&[Ops::StreamRecv, Ops::StreanSend]);
 
                         if state.quiche_conn.is_closed() {
-                            state.wakeup_accept(None);
+                            state.notify(Ops::Accept);
                         }
 
                         return Poll::Ready(Ok(recv_size));
                     }
                     Err(quiche::Error::Done) => {
-                        state.recv_waker = Some(cx.waker().clone());
+                        state.notify(Ops::Recv);
                         return Poll::Pending;
                     }
                     Err(err) => {
-                        state.wakeup_accept(None);
+                        state.notify(Ops::Accept);
                         return Poll::Ready(Err(into_io_error(err)));
                     }
                 }
@@ -267,7 +211,7 @@ impl QuicConnState {
         fin: bool,
     ) -> io::Result<usize> {
         self.state
-            .on_fn(Ops::StreanSend, |state, cx| {
+            .on_fn(Ops::StreanSend, |state, _| {
                 if state.quiche_conn.is_closed() {
                     return Poll::Ready(Err(io::Error::new(
                         io::ErrorKind::BrokenPipe,
@@ -277,14 +221,11 @@ impl QuicConnState {
 
                 match state.quiche_conn.stream_send(stream_id, buf, fin) {
                     Ok(recv_size) => {
-                        state.wakeup_conn_send();
+                        state.notify(Ops::Send);
 
                         return Poll::Ready(Ok(recv_size));
                     }
                     Err(quiche::Error::Done) => {
-                        state
-                            .stream_send_wakers
-                            .insert(stream_id, cx.waker().clone());
                         return Poll::Pending;
                     }
                     Err(err) => return Poll::Ready(Err(into_io_error(err))),
@@ -300,7 +241,7 @@ impl QuicConnState {
         buf: &'a mut [u8],
     ) -> io::Result<(usize, bool)> {
         self.state
-            .on_fn(Ops::StreamRecv, |state, cx| {
+            .on_fn(Ops::StreamRecv, |state, _| {
                 if state.quiche_conn.is_closed() {
                     return Poll::Ready(Err(io::Error::new(
                         io::ErrorKind::BrokenPipe,
@@ -310,14 +251,11 @@ impl QuicConnState {
 
                 match state.quiche_conn.stream_recv(stream_id, buf) {
                     Ok(recv_size) => {
-                        state.wakeup_conn_recv();
+                        state.notify(Ops::Recv);
 
                         return Poll::Ready(Ok(recv_size));
                     }
                     Err(quiche::Error::Done) => {
-                        state
-                            .stream_recv_wakers
-                            .insert(stream_id, cx.waker().clone());
                         return Poll::Pending;
                     }
                     Err(err) => return Poll::Ready(Err(into_io_error(err))),
@@ -374,7 +312,7 @@ impl QuicConnState {
 
     pub(crate) async fn accept(&self) -> Option<QuicStream> {
         self.state
-            .on_fn(Ops::Accept, |state, cx| {
+            .on_fn(Ops::Accept, |state, _| {
                 if state.quiche_conn.is_closed() {
                     return Poll::Ready(None);
                 }
@@ -382,8 +320,6 @@ impl QuicConnState {
                 if let Some(stream_id) = state.incoming_streams.pop_front() {
                     return Poll::Ready(Some(QuicStream::new(stream_id, self.clone())));
                 } else {
-                    state.accept_waker = Some(cx.waker().clone());
-
                     return Poll::Pending;
                 }
             })

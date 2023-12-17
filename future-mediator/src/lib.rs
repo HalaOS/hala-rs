@@ -48,6 +48,15 @@ impl<T, E> MediatorContext<T, E> {
         }
     }
 
+    pub fn notify_all<Events: AsRef<[E]>>(&mut self, events: Events)
+    where
+        E: Eq + Hash + Debug + Clone,
+    {
+        for event in events.as_ref() {
+            self.notify(event.clone());
+        }
+    }
+
     pub fn value(&self) -> &T {
         &self.value
     }
