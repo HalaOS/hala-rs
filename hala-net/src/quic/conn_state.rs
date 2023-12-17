@@ -8,7 +8,7 @@ use std::{
     task::Poll,
 };
 
-use future_mediator::{Mediator, MediatorContext};
+use future_mediator::{Mediator, Shared};
 use futures::FutureExt;
 use hala_io_util::Sleep;
 use quiche::{RecvInfo, SendInfo};
@@ -50,7 +50,7 @@ enum Ops {
     Accept,
 }
 
-fn handle_accept(cx: &mut MediatorContext<RawConnState, Ops>, stream_id: u64) {
+fn handle_accept(cx: &mut Shared<RawConnState, Ops>, stream_id: u64) {
     if !cx.opened_streams.contains(&stream_id) {
         cx.opened_streams.insert(stream_id);
         cx.incoming_streams.push_back(stream_id);
@@ -59,7 +59,7 @@ fn handle_accept(cx: &mut MediatorContext<RawConnState, Ops>, stream_id: u64) {
     }
 }
 
-fn handle_stream(cx: &mut MediatorContext<RawConnState, Ops>) {
+fn handle_stream(cx: &mut Shared<RawConnState, Ops>) {
     for stream_id in cx.quiche_conn.readable() {
         handle_accept(cx, stream_id);
         cx.notify(Ops::StreamRecv(stream_id));
@@ -72,7 +72,7 @@ fn handle_stream(cx: &mut MediatorContext<RawConnState, Ops>) {
     }
 }
 
-fn handle_close(cx: &mut MediatorContext<RawConnState, Ops>) {
+fn handle_close(cx: &mut Shared<RawConnState, Ops>) {
     let ids = cx.opened_streams.iter().map(|id| *id).collect::<Vec<_>>();
 
     for stream_id in &ids {
@@ -85,7 +85,7 @@ fn handle_close(cx: &mut MediatorContext<RawConnState, Ops>) {
     cx.notify(Ops::Accept);
 }
 
-fn handle_stream_close(cx: &mut MediatorContext<RawConnState, Ops>, stream_id: u64) {
+fn handle_stream_close(cx: &mut Shared<RawConnState, Ops>, stream_id: u64) {
     cx.notify(Ops::StreamRecv(stream_id));
     cx.notify(Ops::StreamSend(stream_id));
 }

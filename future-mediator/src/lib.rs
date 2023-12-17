@@ -16,12 +16,13 @@ use std::{
 
 use futures::FutureExt;
 
-pub struct MediatorContext<T, E> {
+/// Shared raw data between futures.
+pub struct Shared<T, E> {
     value: T,
     wakers: HashMap<E, Waker>,
 }
 
-impl<T, E> MediatorContext<T, E> {
+impl<T, E> Shared<T, E> {
     fn new(value: T) -> Self {
         Self {
             value: value.into(),
@@ -36,6 +37,7 @@ impl<T, E> MediatorContext<T, E> {
         self.wakers.insert(event, waker);
     }
 
+    /// Emit once `event` on
     pub fn notify(&mut self, event: E)
     where
         E: Eq + Hash + Debug,
@@ -48,6 +50,7 @@ impl<T, E> MediatorContext<T, E> {
         }
     }
 
+    /// Emit all `events` on
     pub fn notify_all<Events: AsRef<[E]>>(&mut self, events: Events)
     where
         E: Eq + Hash + Debug + Clone,
@@ -57,23 +60,25 @@ impl<T, E> MediatorContext<T, E> {
         }
     }
 
+    /// Get shared value immutable reference.
     pub fn value(&self) -> &T {
         &self.value
     }
 
+    /// Get shared value mutable reference.
     pub fn value_mut(&mut self) -> &mut T {
         &mut self.value
     }
 }
 
-impl<T, E> Deref for MediatorContext<T, E> {
+impl<T, E> Deref for Shared<T, E> {
     type Target = T;
     fn deref(&self) -> &Self::Target {
         &self.value
     }
 }
 
-impl<T, E> DerefMut for MediatorContext<T, E> {
+impl<T, E> DerefMut for Shared<T, E> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.value
     }
@@ -82,7 +87,7 @@ impl<T, E> DerefMut for MediatorContext<T, E> {
 /// A mediator is a central hub for communication between futures.
 #[derive(Debug)]
 pub struct Mediator<T, E> {
-    raw: Arc<Mutex<MediatorContext<T, E>>>,
+    raw: Arc<Mutex<Shared<T, E>>>,
 }
 
 impl<T, E> Clone for Mediator<T, E> {
@@ -97,10 +102,11 @@ impl<T, E> Mediator<T, E> {
     /// Create new mediator with shared value.
     pub fn new(value: T) -> Self {
         Self {
-            raw: Arc::new(Mutex::new(MediatorContext::new(value))),
+            raw: Arc::new(Mutex::new(Shared::new(value))),
         }
     }
 
+    /// Acquire the lock and access immutable shared data.
     pub async fn with<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&T) -> R,
@@ -110,10 +116,7 @@ impl<T, E> Mediator<T, E> {
         f(&raw.value)
     }
 
-    pub fn try_lock(&self) -> Option<futures::lock::MutexGuard<'_, MediatorContext<T, E>>> {
-        self.raw.try_lock()
-    }
-
+    /// Acquire the lock and access mutable shared data.
     pub async fn with_mut<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&mut T) -> R,
@@ -123,7 +126,14 @@ impl<T, E> Mediator<T, E> {
         f(&mut raw.value)
     }
 
-    /// notify one event on.
+    /// Attempt to acquire the shared data lock immediately.
+    ///
+    /// If the lock is currently held, this will return `None`.
+    pub fn try_lock(&self) -> Option<futures::lock::MutexGuard<'_, Shared<T, E>>> {
+        self.raw.try_lock()
+    }
+
+    /// Emit one event on.
     pub async fn notify(&self, event: E)
     where
         E: Eq + Hash + Debug,
@@ -133,7 +143,7 @@ impl<T, E> Mediator<T, E> {
         raw.notify(event);
     }
 
-    /// Notify all events
+    /// Emit all events
     pub async fn notify_all<Events: AsRef<[E]>>(&self, events: Events)
     where
         E: Eq + Hash + Clone + Debug,
@@ -145,9 +155,15 @@ impl<T, E> Mediator<T, E> {
         }
     }
 
+    /// Create a new event handle future with poll function `f` and run once immediately
+    ///
+    /// If `f` returns [`Pending`](Poll::Pending), the system will move the
+    /// handle into the event waiting map, and the future returns `Pending` status.
+    ///
+    /// You can call [`notify`](Mediator::notify) to wake up this poll function and run once again.
     pub fn on_fn<F, R>(&self, event: E, f: F) -> OnEvent<T, E, F>
     where
-        F: FnMut(&mut MediatorContext<T, E>, &mut Context<'_>) -> Poll<R> + Unpin,
+        F: FnMut(&mut Shared<T, E>, &mut Context<'_>) -> Poll<R> + Unpin,
         T: Unpin + 'static,
         E: Unpin + Eq + Hash + Debug,
         R: Unpin,
@@ -167,14 +183,14 @@ where
     E: Debug,
 {
     f: Option<F>,
-    raw: Arc<Mutex<MediatorContext<T, E>>>,
-    lock_future: Option<OwnedMutexLockFuture<MediatorContext<T, E>>>,
+    raw: Arc<Mutex<Shared<T, E>>>,
+    lock_future: Option<OwnedMutexLockFuture<Shared<T, E>>>,
     event: E,
 }
 
 impl<T, E, F, R> Future for OnEvent<T, E, F>
 where
-    F: FnMut(&mut MediatorContext<T, E>, &mut Context<'_>) -> Poll<R> + Unpin,
+    F: FnMut(&mut Shared<T, E>, &mut Context<'_>) -> Poll<R> + Unpin,
     T: Unpin,
     E: Unpin + Eq + Hash + Copy,
     R: Unpin,
@@ -218,6 +234,7 @@ where
     }
 }
 
+/// Register event handle with async fn
 #[macro_export]
 macro_rules! on {
     ($mediator: expr, $event: expr, $fut: expr) => {
@@ -236,7 +253,7 @@ mod tests {
 
     use futures::task::SpawnExt;
 
-    use crate::{Mediator, MediatorContext};
+    use crate::{Mediator, Shared};
 
     #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
     enum Event {
@@ -280,7 +297,7 @@ mod tests {
 
         let thread_pool = ThreadPool::builder().pool_size(10).create().unwrap();
 
-        async fn assign_2(cx: &mut MediatorContext<i32, Event>) {
+        async fn assign_2(cx: &mut Shared<i32, Event>) {
             *cx.value_mut() = 2;
         }
 
