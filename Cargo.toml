@@ -28,6 +28,7 @@ serde_json = {version = "^1.0"}
 thiserror = "^1.0.50"
 thiserror-no-std = "^2.0"
 
+future-mediator = {path = "./future-mediator", default = false, version = "^0.1"}
 hala-io-driver = {path = "./hala-io-driver", default = false, version = "^0.1"}
 hala-io-test = {path = "./hala-io-test", default = false, version = "^0.1"}
 hala-io-util = {path = "./hala-io-util", version = "^0.1"}

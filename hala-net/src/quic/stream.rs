@@ -62,9 +62,7 @@ impl AsyncWrite for QuicStream {
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<io::Result<usize>> {
-        self.state
-            .stream_send(*self.stream_id, buf, false)
-            .poll_unpin(cx)
+        Box::pin(self.state.stream_send(*self.stream_id, buf, false)).poll_unpin(cx)
     }
 
     fn poll_flush(
@@ -78,8 +76,7 @@ impl AsyncWrite for QuicStream {
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<io::Result<()>> {
-        self.state
-            .stream_send(*self.stream_id, b"", true)
+        Box::pin(self.state.stream_send(*self.stream_id, b"", true))
             .poll_unpin(cx)
             .map(|_| Ok(()))
     }
@@ -91,8 +88,7 @@ impl AsyncRead for QuicStream {
         cx: &mut std::task::Context<'_>,
         buf: &mut [u8],
     ) -> std::task::Poll<io::Result<usize>> {
-        self.state
-            .stream_recv(*self.stream_id, buf)
+        Box::pin(self.state.stream_recv(*self.stream_id, buf))
             .poll_unpin(cx)
             .map(|r| r.map(|(read_size, _)| read_size))
     }

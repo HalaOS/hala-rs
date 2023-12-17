@@ -8,7 +8,8 @@ use std::{
     task::{Poll, Waker},
 };
 
-use futures::{lock::Mutex, Future, FutureExt};
+use future_mediator::Mediator;
+use futures::FutureExt;
 use hala_io_util::Sleep;
 use quiche::{RecvInfo, SendInfo};
 
@@ -98,11 +99,20 @@ impl Drop for RawConnState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Ops {
+    Send,
+    Recv,
+    StreanSend,
+    StreamRecv,
+    Accept,
+}
+
 /// Quic connection state object
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) struct QuicConnState {
     /// core inner state.
-    state: Arc<Mutex<RawConnState>>,
+    state: Mediator<RawConnState, Ops>,
 
     /// stream id generator seed
     stream_id_seed: Arc<AtomicU64>,
@@ -114,51 +124,206 @@ impl QuicConnState {
     pub(crate) fn new(quiche_conn: quiche::Connection, stream_id_seed: u64) -> Self {
         Self {
             trace_id: Arc::new(quiche_conn.trace_id().to_owned()),
-            state: Arc::new(Mutex::new(RawConnState::new(quiche_conn))),
+            state: Mediator::new(RawConnState::new(quiche_conn)),
             stream_id_seed: Arc::new(stream_id_seed.into()),
         }
     }
 
     /// Create new future for send connection data
-    pub(crate) fn send<'a>(&self, buf: &'a mut [u8]) -> QuicConnSend<'a> {
-        QuicConnSend {
-            buf,
-            state: self.state.clone(),
-            timeout: None,
-        }
+    pub(crate) async fn send<'a>(&self, buf: &'a mut [u8]) -> io::Result<(usize, SendInfo)> {
+        let mut sleep: Option<Sleep> = None;
+
+        self.state
+            .on_fn(Ops::Send, |state, cx| {
+                if state.quiche_conn.is_closed() {
+                    return Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        format!("conn={} closed", state.quiche_conn.trace_id()),
+                    )));
+                }
+
+                if let Some(mut sleep) = sleep.take() {
+                    match sleep.poll_unpin(cx) {
+                        Poll::Ready(_) => {
+                            log::trace!(
+                                "QuicConnSend(conn_id={}) on_timeout",
+                                state.quiche_conn.trace_id()
+                            );
+                            state.quiche_conn.on_timeout();
+                        }
+                        Poll::Pending => {}
+                    }
+                }
+
+                loop {
+                    match state.quiche_conn.send(buf) {
+                        Ok((send_size, send_info)) => {
+                            log::trace!(
+                                "QuicConnSend(conn_id={}), send_size={}, send_info={:?}",
+                                state.quiche_conn.trace_id(),
+                                send_size,
+                                send_info
+                            );
+
+                            state.wakeup_stream();
+
+                            return Poll::Ready(Ok((send_size, send_info)));
+                        }
+                        Err(quiche::Error::Done) => {
+                            state.send_waker = Some(cx.waker().clone());
+
+                            if let Some(expired) = state.quiche_conn.timeout() {
+                                log::trace!(
+                                    "QuicConnSend(conn_id={}) add timeout({:?})",
+                                    state.quiche_conn.trace_id(),
+                                    expired
+                                );
+
+                                let mut timeout = Sleep::new(expired)?;
+
+                                match timeout.poll_unpin(cx) {
+                                    Poll::Ready(_) => {
+                                        log::trace!(
+                                            "QuicConnSend(conn_id={}) on_timeout",
+                                            state.quiche_conn.trace_id()
+                                        );
+
+                                        state.quiche_conn.on_timeout();
+                                        continue;
+                                    }
+                                    _ => {
+                                        sleep = Some(timeout);
+                                    }
+                                }
+                            }
+
+                            log::trace!(
+                                "QuicConnSend(conn_id={}),stats={:?}, done, is_closed={:?}",
+                                state.quiche_conn.trace_id(),
+                                state.quiche_conn.stats(),
+                                state.quiche_conn.is_closed()
+                            );
+
+                            if state.quiche_conn.is_closed() {
+                                state.wakeup_accept(None);
+                                state.wakeup_conn_recv();
+                                state.wakeup_stream();
+                            }
+
+                            return Poll::Pending;
+                        }
+                        Err(err) => return Poll::Ready(Err(into_io_error(err))),
+                    }
+                }
+            })
+            .await
     }
 
     /// Create new future for recv connection data
-    pub(crate) fn recv<'a>(&self, buf: &'a mut [u8], recv_info: RecvInfo) -> QuicConnRecv<'a> {
-        QuicConnRecv {
-            buf,
-            recv_info,
-            state: self.state.clone(),
-        }
+    pub(crate) async fn recv<'a>(
+        &self,
+        buf: &'a mut [u8],
+        recv_info: RecvInfo,
+    ) -> io::Result<usize> {
+        self.state
+            .on_fn(Ops::Recv, |state, cx| {
+                if state.quiche_conn.is_closed() {
+                    return Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        format!("conn={} closed", state.quiche_conn.trace_id()),
+                    )));
+                }
+
+                let recv_info = recv_info;
+
+                match state.quiche_conn.recv(buf, recv_info) {
+                    Ok(recv_size) => {
+                        state.wakeup_stream();
+
+                        if state.quiche_conn.is_closed() {
+                            state.wakeup_accept(None);
+                        }
+
+                        return Poll::Ready(Ok(recv_size));
+                    }
+                    Err(quiche::Error::Done) => {
+                        state.recv_waker = Some(cx.waker().clone());
+                        return Poll::Pending;
+                    }
+                    Err(err) => {
+                        state.wakeup_accept(None);
+                        return Poll::Ready(Err(into_io_error(err)));
+                    }
+                }
+            })
+            .await
     }
 
     /// Create new future for send stream data
-    pub(crate) fn stream_send<'a>(
+    pub(crate) async fn stream_send<'a>(
         &self,
         stream_id: u64,
         buf: &'a [u8],
         fin: bool,
-    ) -> QuicStreamSend<'a> {
-        QuicStreamSend {
-            buf,
-            stream_id,
-            fin,
-            state: self.state.clone(),
-        }
+    ) -> io::Result<usize> {
+        self.state
+            .on_fn(Ops::StreanSend, |state, cx| {
+                if state.quiche_conn.is_closed() {
+                    return Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        format!("conn={} closed", state.quiche_conn.trace_id()),
+                    )));
+                }
+
+                match state.quiche_conn.stream_send(stream_id, buf, fin) {
+                    Ok(recv_size) => {
+                        state.wakeup_conn_send();
+
+                        return Poll::Ready(Ok(recv_size));
+                    }
+                    Err(quiche::Error::Done) => {
+                        state
+                            .stream_send_wakers
+                            .insert(stream_id, cx.waker().clone());
+                        return Poll::Pending;
+                    }
+                    Err(err) => return Poll::Ready(Err(into_io_error(err))),
+                }
+            })
+            .await
     }
 
     /// Create new future for recv stream data
-    pub(crate) fn stream_recv<'a>(&self, stream_id: u64, buf: &'a mut [u8]) -> QuicStreamRecv<'a> {
-        QuicStreamRecv {
-            buf,
-            stream_id,
-            state: self.state.clone(),
-        }
+    pub(crate) async fn stream_recv<'a>(
+        &self,
+        stream_id: u64,
+        buf: &'a mut [u8],
+    ) -> io::Result<(usize, bool)> {
+        self.state
+            .on_fn(Ops::StreamRecv, |state, cx| {
+                if state.quiche_conn.is_closed() {
+                    return Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        format!("conn={} closed", state.quiche_conn.trace_id()),
+                    )));
+                }
+
+                match state.quiche_conn.stream_recv(stream_id, buf) {
+                    Ok(recv_size) => {
+                        state.wakeup_conn_recv();
+
+                        return Poll::Ready(Ok(recv_size));
+                    }
+                    Err(quiche::Error::Done) => {
+                        state
+                            .stream_recv_wakers
+                            .insert(stream_id, cx.waker().clone());
+                        return Poll::Pending;
+                    }
+                    Err(err) => return Poll::Ready(Err(into_io_error(err))),
+                }
+            })
+            .await
     }
 
     /// Open new stream to communicate with remote peer.
@@ -171,7 +336,6 @@ impl QuicConnState {
     pub(crate) fn close_stream(&self, stream_id: u64) {
         // pin lock like
         loop {
-            log::trace!("close_stream try lock state: {:?}", self.state);
             let state = self.state.try_lock();
 
             if state.is_none() {
@@ -187,341 +351,42 @@ impl QuicConnState {
     }
 
     pub(super) async fn is_stream_closed(&self, stream_id: u64) -> bool {
-        let state = self.state.lock().await;
-
-        state.quiche_conn.stream_finished(stream_id)
+        self.state
+            .with(|mediator| mediator.quiche_conn.stream_finished(stream_id))
+            .await
     }
 
     /// Close connection.
     pub(super) async fn close(&self, app: bool, err: u64, reason: &[u8]) -> io::Result<()> {
-        let mut state = self.state.lock().await;
-
-        state
-            .quiche_conn
-            .close(app, err, reason)
-            .map_err(into_io_error)
+        self.state
+            .with_mut(|state| {
+                state
+                    .quiche_conn
+                    .close(app, err, reason)
+                    .map_err(into_io_error)
+            })
+            .await
     }
 
     pub(super) async fn is_closed(&self) -> bool {
-        let state = self.state.lock().await;
-
-        state.quiche_conn.is_closed()
+        self.state.with(|state| state.quiche_conn.is_closed()).await
     }
 
-    pub(crate) fn accept(&self) -> QuicConnAccept {
-        QuicConnAccept {
-            state: self.clone(),
-        }
-    }
-}
-
-/// Future created by [`send`](QuicInnerConn::send) method
-pub struct QuicConnSend<'a> {
-    buf: &'a mut [u8],
-    state: Arc<Mutex<RawConnState>>,
-    timeout: Option<Sleep>,
-}
-
-impl<'a> Future for QuicConnSend<'a> {
-    type Output = io::Result<(usize, SendInfo)>;
-
-    fn poll(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
-        let state = self.state.clone();
-        let mut state = match state.lock().poll_unpin(cx) {
-            Poll::Ready(guard) => guard,
-            _ => return Poll::Pending,
-        };
-
-        if state.quiche_conn.is_closed() {
-            return Poll::Ready(Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                format!("conn={} closed", state.quiche_conn.trace_id()),
-            )));
-        }
-
-        if let Some(mut sleep) = self.timeout.take() {
-            match sleep.poll_unpin(cx) {
-                Poll::Ready(_) => {
-                    log::trace!(
-                        "QuicConnSend(conn_id={}) on_timeout",
-                        state.quiche_conn.trace_id()
-                    );
-                    state.quiche_conn.on_timeout();
+    pub(crate) async fn accept(&self) -> Option<QuicStream> {
+        self.state
+            .on_fn(Ops::Accept, |state, cx| {
+                if state.quiche_conn.is_closed() {
+                    return Poll::Ready(None);
                 }
-                Poll::Pending => {}
-            }
-        }
 
-        loop {
-            match state.quiche_conn.send(self.buf) {
-                Ok((send_size, send_info)) => {
-                    log::trace!(
-                        "QuicConnSend(conn_id={}), send_size={}, send_info={:?}",
-                        state.quiche_conn.trace_id(),
-                        send_size,
-                        send_info
-                    );
-
-                    state.wakeup_stream();
-
-                    return Poll::Ready(Ok((send_size, send_info)));
-                }
-                Err(quiche::Error::Done) => {
-                    state.send_waker = Some(cx.waker().clone());
-
-                    if let Some(expired) = state.quiche_conn.timeout() {
-                        log::trace!(
-                            "QuicConnSend(conn_id={}) add timeout({:?})",
-                            state.quiche_conn.trace_id(),
-                            expired
-                        );
-
-                        let mut timeout = Sleep::new(expired)?;
-
-                        match timeout.poll_unpin(cx) {
-                            Poll::Ready(_) => {
-                                log::trace!(
-                                    "QuicConnSend(conn_id={}) on_timeout",
-                                    state.quiche_conn.trace_id()
-                                );
-
-                                state.quiche_conn.on_timeout();
-                                continue;
-                            }
-                            _ => {
-                                self.timeout = Some(timeout);
-                            }
-                        }
-                    }
-
-                    log::trace!(
-                        "QuicConnSend(conn_id={}),stats={:?}, done, is_closed={:?}",
-                        state.quiche_conn.trace_id(),
-                        state.quiche_conn.stats(),
-                        state.quiche_conn.is_closed()
-                    );
-
-                    if state.quiche_conn.is_closed() {
-                        state.wakeup_accept(None);
-                        state.wakeup_conn_recv();
-                        state.wakeup_stream();
-                    }
+                if let Some(stream_id) = state.incoming_streams.pop_front() {
+                    return Poll::Ready(Some(QuicStream::new(stream_id, self.clone())));
+                } else {
+                    state.accept_waker = Some(cx.waker().clone());
 
                     return Poll::Pending;
                 }
-                Err(err) => return Poll::Ready(Err(into_io_error(err))),
-            }
-        }
-    }
-}
-
-/// Future created by [`recv`](QuicInnerConn::recv) method
-pub struct QuicConnRecv<'a> {
-    buf: &'a mut [u8],
-    recv_info: RecvInfo,
-    state: Arc<Mutex<RawConnState>>,
-}
-
-impl<'a> Future for QuicConnRecv<'a> {
-    type Output = io::Result<usize>;
-
-    fn poll(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
-        let state = self.state.clone();
-        let mut state = match state.lock().poll_unpin(cx) {
-            Poll::Ready(guard) => guard,
-            _ => return Poll::Pending,
-        };
-
-        if state.quiche_conn.is_closed() {
-            return Poll::Ready(Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                format!("conn={} closed", state.quiche_conn.trace_id()),
-            )));
-        }
-
-        let recv_info = self.recv_info;
-
-        match state.quiche_conn.recv(self.buf, recv_info) {
-            Ok(recv_size) => {
-                state.wakeup_stream();
-
-                if state.quiche_conn.is_closed() {
-                    state.wakeup_accept(None);
-                }
-
-                return Poll::Ready(Ok(recv_size));
-            }
-            Err(quiche::Error::Done) => {
-                state.recv_waker = Some(cx.waker().clone());
-                return Poll::Pending;
-            }
-            Err(err) => {
-                state.wakeup_accept(None);
-                return Poll::Ready(Err(into_io_error(err)));
-            }
-        }
-    }
-}
-
-/// Future created by [`stream_send`](QuicInnerConn::stream_send) method
-pub struct QuicStreamSend<'a> {
-    buf: &'a [u8],
-    stream_id: u64,
-    fin: bool,
-    state: Arc<Mutex<RawConnState>>,
-}
-
-impl<'a> Future for QuicStreamSend<'a> {
-    type Output = io::Result<usize>;
-
-    fn poll(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
-        let state = self.state.clone();
-        let mut state = match state.lock().poll_unpin(cx) {
-            Poll::Ready(guard) => guard,
-            _ => return Poll::Pending,
-        };
-
-        if state.quiche_conn.is_closed() {
-            return Poll::Ready(Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                format!("conn={} closed", state.quiche_conn.trace_id()),
-            )));
-        }
-
-        match state
-            .quiche_conn
-            .stream_send(self.stream_id, self.buf, self.fin)
-        {
-            Ok(recv_size) => {
-                state.wakeup_conn_send();
-
-                return Poll::Ready(Ok(recv_size));
-            }
-            Err(quiche::Error::Done) => {
-                state
-                    .stream_send_wakers
-                    .insert(self.stream_id, cx.waker().clone());
-                return Poll::Pending;
-            }
-            Err(err) => return Poll::Ready(Err(into_io_error(err))),
-        }
-    }
-}
-
-/// Future created by [`stream_recv`](QuicInnerConn::stream_recv) method
-pub struct QuicStreamRecv<'a> {
-    buf: &'a mut [u8],
-    stream_id: u64,
-    state: Arc<Mutex<RawConnState>>,
-}
-
-impl<'a> Future for QuicStreamRecv<'a> {
-    type Output = io::Result<(usize, bool)>;
-
-    fn poll(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
-        let state = self.state.clone();
-        let mut state = match state.lock().poll_unpin(cx) {
-            Poll::Ready(guard) => guard,
-            _ => return Poll::Pending,
-        };
-
-        if state.quiche_conn.is_closed() {
-            return Poll::Ready(Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                format!("conn={} closed", state.quiche_conn.trace_id()),
-            )));
-        }
-
-        match state.quiche_conn.stream_recv(self.stream_id, self.buf) {
-            Ok(recv_size) => {
-                state.wakeup_conn_recv();
-
-                return Poll::Ready(Ok(recv_size));
-            }
-            Err(quiche::Error::Done) => {
-                state
-                    .stream_recv_wakers
-                    .insert(self.stream_id, cx.waker().clone());
-                return Poll::Pending;
-            }
-            Err(err) => return Poll::Ready(Err(into_io_error(err))),
-        }
-    }
-}
-
-/// Future created by [`accept`](QuicInnerConn::accept) method
-pub struct QuicConnAccept {
-    state: QuicConnState,
-}
-
-impl Future for QuicConnAccept {
-    type Output = Option<QuicStream>;
-
-    fn poll(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
-        let state = self.state.clone();
-        let mut state = match state.state.lock().poll_unpin(cx) {
-            Poll::Ready(guard) => guard,
-            _ => return Poll::Pending,
-        };
-
-        if state.quiche_conn.is_closed() {
-            return Poll::Ready(None);
-        }
-
-        if let Some(stream_id) = state.incoming_streams.pop_front() {
-            return Poll::Ready(Some(QuicStream::new(stream_id, self.state.clone())));
-        } else {
-            state.accept_waker = Some(cx.waker().clone());
-
-            return Poll::Pending;
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-
-    use futures::lock::Mutex;
-
-    use hala_io_util::io_spawn;
-
-    #[hala_io_test::test]
-    async fn test_future_lock() {
-        let a = Arc::new(Mutex::new(1));
-
-        let a_cloned = a.clone();
-
-        io_spawn(async move {
-            *a_cloned.lock().await = 2;
-
-            Ok(())
-        })
-        .unwrap();
-
-        loop {
-            let state = a.try_lock();
-
-            if state.is_none() {
-                continue;
-            }
-
-            break;
-        }
+            })
+            .await
     }
 }

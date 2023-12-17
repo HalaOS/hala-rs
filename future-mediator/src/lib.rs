@@ -16,12 +16,6 @@ use std::{
 
 use futures::FutureExt;
 
-/// A mediator is a central hub for communication between futures.
-#[derive(Clone)]
-pub struct Mediator<T, E> {
-    raw: Arc<Mutex<MediatorContext<T, E>>>,
-}
-
 pub struct MediatorContext<T, E> {
     value: T,
     wakers: HashMap<E, Waker>,
@@ -76,6 +70,20 @@ impl<T, E> DerefMut for MediatorContext<T, E> {
     }
 }
 
+/// A mediator is a central hub for communication between futures.
+#[derive(Debug)]
+pub struct Mediator<T, E> {
+    raw: Arc<Mutex<MediatorContext<T, E>>>,
+}
+
+impl<T, E> Clone for Mediator<T, E> {
+    fn clone(&self) -> Self {
+        Self {
+            raw: self.raw.clone(),
+        }
+    }
+}
+
 impl<T, E> Mediator<T, E> {
     /// Create new mediator with shared value.
     pub fn new(value: T) -> Self {
@@ -91,6 +99,10 @@ impl<T, E> Mediator<T, E> {
         let raw = self.raw.lock().await;
 
         f(&raw.value)
+    }
+
+    pub fn try_lock(&self) -> Option<futures::lock::MutexGuard<'_, MediatorContext<T, E>>> {
+        self.raw.try_lock()
     }
 
     pub async fn with_mut<F, R>(&self, f: F) -> R
