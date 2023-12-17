@@ -8,7 +8,7 @@ use std::{
     task::Poll,
 };
 
-use future_mediator::Mediator;
+use future_mediator::{Mediator, MediatorContext};
 use futures::FutureExt;
 use hala_io_util::Sleep;
 use quiche::{RecvInfo, SendInfo};
@@ -19,7 +19,6 @@ use crate::{errors::into_io_error, quic::QuicStream};
 struct RawConnState {
     /// quiche connection instance.
     quiche_conn: quiche::Connection,
-
     /// Opened stream id set
     opened_streams: HashSet<u64>,
     /// Incoming stream deque.
@@ -51,6 +50,27 @@ enum Ops {
     Accept,
 }
 
+fn handle_accept(cx: &mut MediatorContext<RawConnState, Ops>, stream_id: u64) {
+    if !cx.opened_streams.contains(&stream_id) {
+        cx.opened_streams.insert(stream_id);
+        cx.incoming_streams.push_back(stream_id);
+
+        cx.notify(Ops::Accept);
+    }
+}
+
+fn handle_stream(cx: &mut MediatorContext<RawConnState, Ops>) {
+    for stream_id in cx.quiche_conn.readable() {
+        handle_accept(cx, stream_id);
+    }
+
+    for stream_id in cx.quiche_conn.writable() {
+        handle_accept(cx, stream_id);
+    }
+
+    cx.notify_all(&[Ops::StreanSend, Ops::StreamRecv]);
+}
+
 /// Quic connection state object
 #[derive(Clone)]
 pub(crate) struct QuicConnState {
@@ -79,6 +99,8 @@ impl QuicConnState {
         self.state
             .on_fn(Ops::Send, |state, cx| {
                 if state.quiche_conn.is_closed() {
+                    state.notify_all(&[Ops::Accept, Ops::Recv, Ops::StreamRecv, Ops::StreanSend]);
+
                     return Poll::Ready(Err(io::Error::new(
                         io::ErrorKind::BrokenPipe,
                         format!("conn={} closed", state.quiche_conn.trace_id()),
@@ -108,7 +130,7 @@ impl QuicConnState {
                                 send_info
                             );
 
-                            state.notify_all(&[Ops::StreamRecv, Ops::StreanSend]);
+                            handle_stream(state);
 
                             return Poll::Ready(Ok((send_size, send_info)));
                         }
@@ -146,6 +168,11 @@ impl QuicConnState {
                             );
 
                             if state.quiche_conn.is_closed() {
+                                log::trace!(
+                                    "QuicConnSend(conn_id={:?}), closed",
+                                    state.quiche_conn.source_id()
+                                );
+
                                 state.notify_all(&[
                                     Ops::Accept,
                                     Ops::Recv,
@@ -182,7 +209,13 @@ impl QuicConnState {
 
                 match state.quiche_conn.recv(buf, recv_info) {
                     Ok(recv_size) => {
-                        state.notify_all(&[Ops::StreamRecv, Ops::StreanSend]);
+                        log::trace!(
+                            "conn={} recv data, len={}",
+                            state.quiche_conn.trace_id(),
+                            recv_size
+                        );
+
+                        handle_stream(state);
 
                         if state.quiche_conn.is_closed() {
                             state.notify(Ops::Accept);
