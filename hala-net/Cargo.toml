@@ -1,6 +1,8 @@
 [package]
 description = "Hala network framework"
+documentation = "https://docs.rs/hala-net"
 edition.workspace = true
+license = "MIT"
 name = "hala-net"
 repository.workspace = true
 version.workspace = true

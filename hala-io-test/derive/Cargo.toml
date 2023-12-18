@@ -1,6 +1,8 @@
 [package]
 description = "Hala asynchronous io test proc-macro toolkit"
+documentation = "https://docs.rs/hala-io-test-derive"
 edition.workspace = true
+license = "MIT"
 name = "hala-io-test-derive"
 repository.workspace = true
 version.workspace = true

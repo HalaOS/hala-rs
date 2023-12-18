@@ -1,6 +1,8 @@
 [package]
 description = "Hala io reactor framework"
+documentation = "https://docs.rs/hala-io-driver"
 edition.workspace = true
+license = "MIT"
 name = "hala-io-driver"
 repository.workspace = true
 version.workspace = true

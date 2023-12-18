@@ -1,5 +1,7 @@
 [package]
+documentation = "https://docs.rs/hala-io-util"
 edition.workspace = true
+license = "MIT"
 name = "hala-io-util"
 repository.workspace = true
 version.workspace = true

@@ -1,11 +1,11 @@
 [package]
 description = "The Mediator Pattern in Rust Asynchronous Programming"
+documentation = "https://docs.rs/future-mediator"
 edition.workspace = true
+license = "MIT"
 name = "future-mediator"
 repository.workspace = true
 version.workspace = true
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 bitmask-enum = {workspace = true}

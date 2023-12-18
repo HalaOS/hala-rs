@@ -1,6 +1,8 @@
 [package]
 description = "Hala timewheel implementation"
+documentation = "https://docs.rs/timewheel"
 edition.workspace = true
+license = "MIT"
 name = "timewheel"
 repository.workspace = true
 version.workspace = true
