@@ -22,7 +22,7 @@ impl UdpSocket {
 
         let fd = driver.fd_open(Description::UdpSocket, OpenFlags::Bind(&laddrs))?;
 
-        let poller = current_poller()?;
+        let poller = get_poller()?;
 
         match driver.fd_cntl(
             poller,

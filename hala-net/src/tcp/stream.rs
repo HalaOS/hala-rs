@@ -18,7 +18,7 @@ impl Debug for TcpStream {
 
 impl TcpStream {
     pub fn new(driver: Driver, fd: Handle) -> io::Result<Self> {
-        let poller = current_poller()?;
+        let poller = get_poller()?;
 
         match driver.fd_cntl(
             poller,

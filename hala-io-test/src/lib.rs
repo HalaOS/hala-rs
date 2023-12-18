@@ -23,13 +23,13 @@ where
         _ = register_driver(mio_driver());
     });
 
-    let _guard = PollGuard::new(None).unwrap();
-
     let mut local_pool = LocalPool::new();
 
-    register_local_io_spawner(TesterIoSpawner {
+    register_local_spawner(TesterIoSpawner {
         spawner: local_pool.spawner(),
     });
+
+    let _guard = LocalPollerLoopGuard::new(None).unwrap();
 
     log::trace!("start io test(st,{})", label);
 

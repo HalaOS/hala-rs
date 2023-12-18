@@ -25,9 +25,3 @@ mod driver_ext;
 pub use driver_ext::*;
 
 pub mod thread_model;
-
-#[cfg(feature = "spawner")]
-mod spawner;
-
-#[cfg(feature = "spawner")]
-pub use spawner::*;

@@ -8,7 +8,7 @@ use std::{
 };
 
 use hala_io_driver::{
-    current_poller, get_driver, Cmd, Description, Driver, Handle, Interest, OpenFlags,
+    get_driver, get_poller, Cmd, Description, Driver, Handle, Interest, OpenFlags,
 };
 
 pub struct Sleep {
@@ -22,7 +22,7 @@ impl Sleep {
     pub fn new(expired: Duration) -> io::Result<Self> {
         let driver = get_driver()?;
 
-        let poller = current_poller()?;
+        let poller = get_poller()?;
 
         Ok(Self {
             fd: None,
@@ -112,7 +112,7 @@ impl<Fut> Timeout<Fut> {
     pub fn new(fut: Fut, expired: Duration) -> io::Result<Self> {
         let driver = get_driver()?;
 
-        let poller = current_poller()?;
+        let poller = get_poller()?;
 
         Ok(Self {
             fut: Box::pin(fut),

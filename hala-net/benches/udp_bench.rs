@@ -21,7 +21,7 @@ fn async_udp_echo(bench: Bencher) {
         _ = register_driver(mio_driver());
     });
 
-    let _guard = PollGuard::new(None).unwrap();
+    let _guard = PollerLoopGuard::new(None).unwrap();
 
     let mut local_pool = LocalPool::new();
 
@@ -74,7 +74,7 @@ fn async_udpgroup_echo(bench: Bencher) {
         _ = register_driver(mio_driver());
     });
 
-    let _guard = PollGuard::new(None).unwrap();
+    let _guard = PollerLoopGuard::new(None).unwrap();
 
     let mut local_pool = LocalPool::new();
 

@@ -22,11 +22,10 @@ futures = {workspace = true}
 pretty_env_logger = {workspace = true}
 
 [features]
-default = ["mio_driver", "global", "driver_ext", "spawner"]
+default = ["mio_driver", "global", "driver_ext"]
 driver_ext = []
-global = []
+global = ["futures"]
 mio_driver = ["mio", "timewheel"]
-spawner = ["futures"]
 
 [[bench]]
 harness = false

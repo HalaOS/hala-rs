@@ -31,7 +31,7 @@ impl TcpListener {
 
         let fd = driver.fd_open(Description::TcpListener, OpenFlags::Bind(&laddrs))?;
 
-        let poller = current_poller()?;
+        let poller = get_poller()?;
 
         match driver.fd_cntl(
             poller,
