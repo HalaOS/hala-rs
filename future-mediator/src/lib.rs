@@ -177,7 +177,7 @@ impl<T, E> Mediator<T, E> {
     }
 }
 
-/// Future create by [`on`](Mediator::on)
+/// Future create by [`on`](Mediator::on_fn)
 pub struct OnEvent<T, E, F>
 where
     E: Debug,

@@ -19,8 +19,13 @@ pub struct UdpGroup {
 }
 
 impl UdpGroup {
-    /// This function will create a new UDP socket and attempt to bind it to the addr provided.
+    /// Call [`bind_with`](UdpGroup::bind_with) with global context [`poller`](get_poller)
     pub fn bind<S: ToSocketAddrs>(laddrs: S) -> io::Result<Self> {
+        Self::bind_with(laddrs, get_poller()?)
+    }
+
+    /// This function will create a new UDP socket and attempt to bind it to the addr provided.
+    pub fn bind_with<S: ToSocketAddrs>(laddrs: S, poller: Handle) -> io::Result<Self> {
         let driver = get_driver()?;
 
         let mut fds = VecDeque::new();
@@ -29,7 +34,7 @@ impl UdpGroup {
 
         let mut addr_to_handle = HashMap::new();
 
-        let poller = get_poller()?;
+        // let poller = get_poller()?;
 
         for addr in laddrs.to_socket_addrs()? {
             let fd = driver.fd_open(Description::UdpSocket, OpenFlags::Bind(&[addr]))?;

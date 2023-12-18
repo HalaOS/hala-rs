@@ -64,7 +64,7 @@ pub struct PollerLoopGuard {
 }
 
 impl PollerLoopGuard {
-    /// Create new `PollerLoopGuard` with event loop [`timeout`]
+    /// Create new `PollerLoopGuard` with event loop `timeout`
     pub fn new(timeout: Option<Duration>) -> io::Result<Self> {
         let drop = Arc::new(AtomicBool::new(false));
 
@@ -102,7 +102,7 @@ pub struct LocalPollerLoopGuard {
 }
 
 impl LocalPollerLoopGuard {
-    /// Create new `LocalPollerLoopGuard` with event loop [`timeout`]
+    /// Create new `LocalPollerLoopGuard` with event loop `timeout`
     pub fn new(timeout: Option<Duration>) -> io::Result<Self> {
         let drop = Arc::new(AtomicBool::new(false));
 
