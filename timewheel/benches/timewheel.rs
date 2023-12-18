@@ -1,5 +1,5 @@
 use divan::Bencher;
-use hala_timewheel::*;
+use timewheel::*;
 
 fn main() {
     // Run registered benchmarks.
