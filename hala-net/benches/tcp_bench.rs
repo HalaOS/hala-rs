@@ -5,6 +5,7 @@ use divan::Bencher;
 use futures::executor::LocalPool;
 use futures::{task::*, AsyncReadExt, AsyncWriteExt};
 use hala_io_driver::*;
+use hala_io_util::*;
 use hala_net::*;
 
 use std::io::{Read, Write};

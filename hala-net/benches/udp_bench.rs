@@ -6,6 +6,7 @@ use divan::Bencher;
 use futures::executor::LocalPool;
 use futures::task::*;
 use hala_io_driver::*;
+use hala_io_util::*;
 use hala_net::*;
 use rand::seq::SliceRandom;
 

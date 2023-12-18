@@ -1,8 +1,8 @@
 use futures::{AsyncReadExt, AsyncWriteExt};
-use hala_io_driver::io_spawn;
+use hala_io_util::*;
 use hala_net::*;
 
-#[hala_io_test::test]
+#[hala_test::test(io_test)]
 async fn tcp_echo_test() {
     let echo_data = b"hello";
 
@@ -42,7 +42,7 @@ async fn tcp_echo_test() {
     }
 }
 
-#[hala_io_test::test]
+#[hala_test::test(io_test)]
 async fn udp_echo_test() {
     let echo_data = b"hello";
 

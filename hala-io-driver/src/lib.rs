@@ -13,12 +13,6 @@ pub use driver::*;
 mod file;
 pub use file::*;
 
-#[cfg(feature = "global")]
-mod global;
-
-#[cfg(feature = "global")]
-pub use global::*;
-
 #[cfg(feature = "driver_ext")]
 mod driver_ext;
 #[cfg(feature = "driver_ext")]

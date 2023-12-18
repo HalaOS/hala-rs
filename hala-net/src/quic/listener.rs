@@ -8,7 +8,7 @@ use futures::{
     channel::mpsc::{channel, Receiver, Sender},
     io, SinkExt, StreamExt,
 };
-use hala_io_driver::io_spawn;
+use hala_io_util::*;
 use quiche::{ConnectionId, RecvInfo};
 
 use crate::UdpGroup;

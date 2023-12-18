@@ -1,9 +1,11 @@
 use proc_macro::TokenStream;
 use quote::{quote, quote_spanned};
-use syn::{parse_macro_input, spanned::Spanned, ItemFn};
+use syn::{parse_macro_input, spanned::Spanned, ItemFn, TypePath};
 
 #[proc_macro_attribute]
-pub fn test(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn test(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let runner_path = parse_macro_input!(attr as TypePath);
+
     let item_fn = parse_macro_input!(item as ItemFn);
 
     if item_fn.sig.asyncness.is_none() {
@@ -21,10 +23,8 @@ pub fn test(_attr: TokenStream, item: TokenStream) -> TokenStream {
         fn #fn_name() {
             #item_fn
 
-            hala_io_test::socket_tester(#test_name,#fn_name);
+            #runner_path(#test_name,#fn_name);
         }
-
-
     }
     .into()
 }

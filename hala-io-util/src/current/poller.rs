@@ -1,4 +1,4 @@
-use crate::{Cmd, Description, Handle, OpenFlags};
+use hala_io_driver::{Cmd, Description, Handle, OpenFlags};
 
 use super::*;
 
@@ -109,7 +109,7 @@ impl LocalPollerLoopGuard {
         let drop_cloned = drop.clone();
 
         let driver = get_driver().unwrap();
-        let poller = get_poller().unwrap();
+        let poller = get_local_poller().unwrap();
 
         let handle = std::thread::spawn(move || {
             while !drop_cloned.load(Ordering::SeqCst) {

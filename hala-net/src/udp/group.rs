@@ -6,7 +6,7 @@ use std::{
 
 use bytes::BufMut;
 use hala_io_driver::*;
-use hala_io_util::{as_bytes_mut, async_io, select, IoGroup};
+use hala_io_util::*;
 
 pub struct UdpGroup {
     io_group_read: IoGroup,
@@ -194,14 +194,14 @@ impl Drop for UdpGroup {
 #[cfg(test)]
 mod tests {
 
-    use hala_io_driver::io_spawn;
+    use hala_io_util::*;
     use rand::seq::SliceRandom;
 
     use crate::UdpSocket;
 
     use super::*;
 
-    #[hala_io_test::test]
+    #[hala_test::test(io_test)]
     async fn udp_echo_test() {
         let echo_data = b"hello";
 

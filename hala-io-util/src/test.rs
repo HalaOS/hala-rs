@@ -1,50 +1,45 @@
 use std::{io, sync::Once};
 
 use futures::{
-    executor::{LocalPool, LocalSpawner},
+    executor::{block_on, ThreadPool},
     future::BoxFuture,
     Future,
 };
 
 use hala_io_driver::*;
 
-pub use futures;
-
-pub use hala_io_test_derive::*;
-
 static START: Once = Once::new();
 
-pub fn socket_tester<T, Fut>(label: &'static str, test: T)
+use crate::*;
+
+/// Test runner with local spawner and local poller event loop
+pub fn io_test<T, Fut>(label: &'static str, test: T)
 where
     T: FnOnce() -> Fut + 'static,
     Fut: Future<Output = ()> + 'static,
 {
     START.call_once(|| {
         _ = register_driver(mio_driver());
+
+        let thread_pool = ThreadPool::builder().pool_size(10).create().unwrap();
+
+        register_spawner(TestIoSpawner(thread_pool));
     });
 
-    let mut local_pool = LocalPool::new();
-
-    register_local_spawner(TesterIoSpawner {
-        spawner: local_pool.spawner(),
-    });
-
-    let _guard = LocalPollerLoopGuard::new(None).unwrap();
+    let _guard = PollerLoopGuard::new(None).unwrap();
 
     log::trace!("start io test(st,{})", label);
 
-    local_pool.run_until(test());
+    block_on(test());
 }
 
-struct TesterIoSpawner {
-    spawner: LocalSpawner,
-}
+struct TestIoSpawner(ThreadPool);
 
-impl IoSpawner for TesterIoSpawner {
+impl IoSpawner for TestIoSpawner {
     fn spawn(&self, fut: BoxFuture<'static, std::io::Result<()>>) -> std::io::Result<()> {
         use futures::task::SpawnExt;
 
-        self.spawner
+        self.0
             .spawn(async move {
                 match fut.await {
                     Ok(_) => {}

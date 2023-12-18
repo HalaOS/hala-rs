@@ -2,7 +2,7 @@ use std::{fmt::Debug, io, net::ToSocketAddrs, task::Poll};
 
 use futures::{AsyncRead, AsyncWrite};
 use hala_io_driver::*;
-use hala_io_util::poll;
+use hala_io_util::*;
 
 pub struct TcpStream {
     fd: Handle,

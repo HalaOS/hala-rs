@@ -27,7 +27,8 @@ mod tests {
     use std::{io, net::SocketAddr, path::Path, sync::Arc, task::Poll};
 
     use futures::{future::poll_fn, lock::Mutex, AsyncReadExt, AsyncWriteExt, FutureExt};
-    use hala_io_driver::io_spawn;
+
+    use hala_io_util::*;
     use quiche::RecvInfo;
 
     use super::{acceptor::QuicAcceptor, *};
@@ -55,7 +56,7 @@ mod tests {
             .set_application_protos(&[b"hq-interop", b"hq-29", b"hq-28", b"hq-27", b"http/0.9"])
             .unwrap();
 
-        config.set_max_idle_timeout(5500);
+        config.set_max_idle_timeout(200);
         config.set_max_recv_udp_payload_size(MAX_DATAGRAM_SIZE);
         config.set_max_send_udp_payload_size(MAX_DATAGRAM_SIZE);
         config.set_initial_max_data(10_000_000);
@@ -135,7 +136,7 @@ mod tests {
         (listener, laddrs)
     }
 
-    #[hala_io_test::test]
+    #[hala_test::test(io_test)]
     async fn test_async_quic() {
         let (mut listener, laddrs) = create_listener(10).await;
 
@@ -173,7 +174,7 @@ mod tests {
         assert!(stream.is_closed().await);
     }
 
-    #[hala_io_test::test]
+    #[hala_test::test(io_test)]
     async fn test_connector_timeout() {
         // pretty_env_logger::init_timed();
         let mut connector = QuicConnector::bind("127.0.0.1:0", config(false)).unwrap();
@@ -183,7 +184,7 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::TimedOut);
     }
 
-    #[hala_io_test::test]
+    #[hala_test::test(io_test)]
     async fn test_conn_timeout() {
         // pretty_env_logger::init_timed();
 
@@ -217,7 +218,7 @@ mod tests {
         assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
     }
 
-    #[hala_io_test::test]
+    #[hala_test::test(io_test)]
     async fn test_lock() {
         let state = Arc::new(Mutex::new(1));
 

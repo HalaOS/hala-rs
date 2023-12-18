@@ -14,16 +14,18 @@ bytes = {workspace = true, optional = true}
 futures = {workspace = true}
 hala-io-driver = {workspace = true}
 log = {workspace = true}
+pretty_env_logger = {workspace = true}
 
 [dev-dependencies]
 futures = {workspace = true}
-hala-io-test = {workspace = true}
-pretty_env_logger = {workspace = true}
+hala-test = {workspace = true}
 
 [features]
 async_io = []
-default = ["async_io", "io_group", "mux", "timeout", "read_buf"]
+current = []
+default = ["async_io", "io_group", "mux", "timeout", "read_buf", "test", "current"]
 io_group = []
 mux = []
 read_buf = ["bytes"]
+test = []
 timeout = []

@@ -1,4 +1,4 @@
-use crate::Driver;
+use hala_io_driver::Driver;
 
 use std::{io, sync::OnceLock};
 

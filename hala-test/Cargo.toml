@@ -1,9 +1,9 @@
 [package]
-description = "Hala asynchronous io test proc-macro toolkit"
-documentation = "https://docs.rs/hala-io-test-derive"
+description = "Hala asynchronous test proc-macro toolkit"
+documentation = "https://docs.rs/hala-test"
 edition.workspace = true
 license = "MIT"
-name = "hala-io-test-derive"
+name = "hala-test"
 repository.workspace = true
 version.workspace = true
 
@@ -11,7 +11,7 @@ version.workspace = true
 
 [dependencies]
 quote = "^1.0"
-syn = {version = "^2.0", features = ["full"]}
+syn = {version = "^2.0", features = ["full", "parsing"]}
 
 [lib]
 proc-macro = true

@@ -25,14 +25,14 @@ pub fn register_local_spawner<S: IoSpawner + 'static>(spawner: S) {
 /// Register [`IoSpawner`] for all thread. the `IoSpawner` instance must implement [`Send`] + [`Sync`] traits.
 pub fn register_spawner<S: IoSpawner + Send + Sync + 'static>(spawner: S) {
     if let Err(_) = SPAWNER.set(Box::new(spawner)) {
-        panic!("Call register_spawner more than once.");
+        log::error!("Call register_spawner more than once.");
     }
 }
 
 /// Spawn an io task that polls the given future with output `io::Result<()>` to completion.
 /// ```
 /// # {
-/// use hala_io_driver::*;
+/// use hala_io_util::*;
 /// use std::io;
 /// use futures::{
 ///     executor::{LocalPool, LocalSpawner},

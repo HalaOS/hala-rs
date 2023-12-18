@@ -7,9 +7,9 @@ use std::{
     time::Duration,
 };
 
-use hala_io_driver::{
-    get_driver, get_poller, Cmd, Description, Driver, Handle, Interest, OpenFlags,
-};
+use hala_io_driver::{Cmd, Description, Driver, Handle, Interest, OpenFlags};
+
+use crate::{get_driver, get_poller};
 
 pub struct Sleep {
     fd: Option<Handle>,
@@ -229,9 +229,11 @@ pub async fn sleep(duration: Duration) -> io::Result<()> {
 mod tests {
     use futures::future::poll_fn;
 
+    use crate::io_test;
+
     use super::*;
 
-    #[hala_io_test::test]
+    #[hala_test::test(io_test)]
     async fn test_timeout() {
         let result = timeout(
             poll_fn(|_| -> Poll<io::Result<()>> { Poll::Pending }),
@@ -242,7 +244,7 @@ mod tests {
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::TimedOut);
     }
 
-    #[hala_io_test::test]
+    #[hala_test::test(io_test)]
     async fn test_sleep() {
         sleep(Duration::from_secs(1)).await.unwrap();
     }
