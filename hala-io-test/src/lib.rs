@@ -11,7 +11,6 @@ use hala_io_driver::*;
 pub use futures;
 
 pub use hala_io_test_derive::*;
-use hala_io_util::{register_local_io_spawner, IoSpawner};
 
 static START: Once = Once::new();
 

@@ -27,7 +27,7 @@ mod tests {
     use std::{io, net::SocketAddr, path::Path, sync::Arc, task::Poll};
 
     use futures::{future::poll_fn, lock::Mutex, AsyncReadExt, AsyncWriteExt, FutureExt};
-    use hala_io_util::io_spawn;
+    use hala_io_driver::io_spawn;
     use quiche::RecvInfo;
 
     use super::{acceptor::QuicAcceptor, *};

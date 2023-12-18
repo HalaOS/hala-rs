@@ -194,7 +194,7 @@ impl Drop for UdpGroup {
 #[cfg(test)]
 mod tests {
 
-    use hala_io_util::io_spawn;
+    use hala_io_driver::io_spawn;
     use rand::seq::SliceRandom;
 
     use crate::UdpSocket;

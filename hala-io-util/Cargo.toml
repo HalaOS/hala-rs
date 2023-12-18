@@ -19,9 +19,8 @@ pretty_env_logger = {workspace = true}
 
 [features]
 async_io = []
-default = ["async_io", "io_group", "mux", "timeout", "read_buf", "spawner"]
+default = ["async_io", "io_group", "mux", "timeout", "read_buf"]
 io_group = []
 mux = []
 read_buf = ["bytes"]
-spawner = []
 timeout = []

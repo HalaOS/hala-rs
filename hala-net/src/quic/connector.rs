@@ -5,7 +5,8 @@ use std::{
     time::Duration,
 };
 
-use hala_io_util::{io_spawn, timeout};
+use hala_io_driver::*;
+use hala_io_util::timeout;
 use quiche::{RecvInfo, SendInfo};
 use rand::seq::IteratorRandom;
 use ring::rand::{SecureRandom, SystemRandom};

@@ -12,7 +12,6 @@ async-recursion = {workspace = true}
 futures = {workspace = true}
 hala-io-driver = {workspace = true}
 hala-io-test-derive = {path = "./derive", version = "^0.1"}
-hala-io-util = {workspace = true}
 log = {workspace = true}
 pretty_env_logger = {workspace = true}
 

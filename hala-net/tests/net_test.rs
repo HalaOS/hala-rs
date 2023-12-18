@@ -1,5 +1,5 @@
 use futures::{AsyncReadExt, AsyncWriteExt};
-use hala_io_util::io_spawn;
+use hala_io_driver::io_spawn;
 use hala_net::*;
 
 #[hala_io_test::test]
