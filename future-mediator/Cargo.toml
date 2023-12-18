@@ -14,7 +14,6 @@ futures-test = {workspace = true}
 log = {workspace = true}
 
 [dev-dependencies]
-hala-io-test = {workspace = true}
 pretty_env_logger = {workspace = true}
 
 [features]
