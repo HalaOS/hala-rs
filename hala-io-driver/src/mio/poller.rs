@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use hala_timewheel::TimeWheel;
+use timewheel::TimeWheel;
 
 use crate::{Handle, Interest, Token, TypedHandle};
 

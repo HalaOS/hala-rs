@@ -9,9 +9,9 @@ version.workspace = true
 
 [dependencies]
 bitmask-enum = {workspace = true}
-hala-timewheel = {workspace = true, optional = true}
 log = {workspace = true}
 mio = {workspace = true, optional = true}
+timewheel = {workspace = true, optional = true}
 
 [dev-dependencies]
 divan = {workspace = true}
@@ -22,7 +22,7 @@ pretty_env_logger = {workspace = true}
 default = ["mio_driver", "global", "driver_ext"]
 driver_ext = []
 global = []
-mio_driver = ["mio", "hala-timewheel"]
+mio_driver = ["mio", "timewheel"]
 
 [[bench]]
 harness = false

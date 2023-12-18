@@ -1,7 +1,7 @@
 [package]
 description = "Hala timewheel implementation"
 edition.workspace = true
-name = "hala-timewheel"
+name = "timewheel"
 repository.workspace = true
 version.workspace = true
 
