@@ -8,6 +8,7 @@ use bytes::BufMut;
 use hala_io_driver::*;
 use hala_io_util::*;
 
+/// A group of udp socket
 pub struct UdpGroup {
     io_group_read: IoGroup,
     io_group_write: IoGroup,
@@ -103,24 +104,24 @@ impl UdpGroup {
         last_error.unwrap()
     }
 
-    pub async fn send_to_by<S: ToSocketAddrs>(
+    pub async fn send_to_on_path<S: ToSocketAddrs>(
         &self,
-        laddr: SocketAddr,
         buf: &[u8],
-        target: S,
+        from: SocketAddr,
+        to: S,
     ) -> io::Result<usize> {
         let fd = self
             .addr_to_handle
-            .get(&laddr)
+            .get(&from)
             .ok_or(io::Error::new(
                 io::ErrorKind::NotFound,
-                format!("UdpGroup local endpoint {:?} not found", laddr),
+                format!("UdpGroup local endpoint {:?} not found", from),
             ))?
             .clone();
 
         let mut last_error = None;
 
-        for raddr in target.to_socket_addrs()? {
+        for raddr in to.to_socket_addrs()? {
             let result = async_io(|cx| {
                 self.driver
                     .fd_cntl(
