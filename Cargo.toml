@@ -1,5 +1,5 @@
 [workspace]
-members = ["hala-io-driver", "hala-net", "hala-test", "timewheel", "hala-io-util", "future-mediator"]
+members = ["hala-io-driver", "hala-net", "hala-test", "timewheel", "hala-io-util", "future-mediator", "hala-rproxy"]
 resolver = "2"
 
 [workspace.package]
@@ -32,5 +32,6 @@ future-mediator = {path = "./future-mediator", default = false, version = "^0.1"
 hala-io-driver = {path = "./hala-io-driver", default = false, version = "^0.1"}
 hala-io-util = {path = "./hala-io-util", version = "^0.1"}
 hala-net = {path = "./hala-net", default = false, version = "^0.1"}
+hala-rproxy = {path = "./hala-rproxy", version = "^0.1"}
 hala-test = {path = "./hala-test", default = false, version = "^0.1"}
 timewheel = {path = "./timewheel", version = "^0.1"}

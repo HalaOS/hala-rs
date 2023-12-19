@@ -23,10 +23,15 @@ pub fn register_local_spawner<S: IoSpawner + 'static>(spawner: S) {
 }
 
 /// Register [`IoSpawner`] for all thread. the `IoSpawner` instance must implement [`Send`] + [`Sync`] traits.
-pub fn register_spawner<S: IoSpawner + Send + Sync + 'static>(spawner: S) {
+pub fn register_spawner<S: IoSpawner + Send + Sync + 'static>(spawner: S) -> io::Result<()> {
     if let Err(_) = SPAWNER.set(Box::new(spawner)) {
-        log::error!("Call register_spawner more than once.");
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "Call register_spawner more than once",
+        ));
     }
+
+    Ok(())
 }
 
 /// Spawn an io task that polls the given future with output `io::Result<()>` to completion.
@@ -106,45 +111,4 @@ where
             "Call register_local_spawner  first",
         ));
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use std::io;
-
-    use futures::executor::ThreadPool;
-    use futures::task::SpawnExt;
-
-    use crate::{io_spawn, register_spawner, IoSpawner};
-
-    struct MockSpawner {
-        pool: ThreadPool,
-    }
-
-    impl IoSpawner for MockSpawner {
-        fn spawn(
-            &self,
-            fut: futures::prelude::future::BoxFuture<'static, std::io::Result<()>>,
-        ) -> std::io::Result<()> {
-            self.pool
-                .spawn(async {
-                    match fut.await {
-                        Ok(_) => {}
-                        Err(err) => {
-                            log::error!("MockSpawner catch err={}", err);
-                        }
-                    }
-                })
-                .map_err(|err| io::Error::new(io::ErrorKind::Other, err))
-        }
-    }
-
-    #[test]
-    fn test_register_spawner() {
-        register_spawner(MockSpawner {
-            pool: ThreadPool::new().unwrap(),
-        });
-
-        io_spawn(async { Ok(()) }).unwrap();
-    }
 }

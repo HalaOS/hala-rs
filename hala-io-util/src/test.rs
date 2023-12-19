@@ -21,9 +21,11 @@ where
     START.call_once(|| {
         _ = register_driver(mio_driver());
 
+        register_poller().unwrap();
+
         let thread_pool = ThreadPool::builder().pool_size(10).create().unwrap();
 
-        register_spawner(TestIoSpawner(thread_pool));
+        register_spawner(TestIoSpawner(thread_pool)).unwrap();
     });
 
     let _guard = PollLoopGuard::new(None).unwrap();

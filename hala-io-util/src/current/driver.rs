@@ -1,12 +1,16 @@
 use hala_io_driver::Driver;
 
-use std::{io, sync::OnceLock};
+use std::{cell::RefCell, io, sync::OnceLock};
 
-static INSTANCE_DRIVER: OnceLock<Driver> = OnceLock::new();
+thread_local! {
+    static LOCAL_DRIVER: RefCell<Option<Driver>> = RefCell::new(None);
+}
+
+static DRIVER: OnceLock<Driver> = OnceLock::new();
 
 /// Get the currently registered io driver, or return a NotFound error if it is not registered.
 pub fn get_driver() -> io::Result<Driver> {
-    return INSTANCE_DRIVER
+    return DRIVER
         .get()
         .map(|driver| driver.clone())
         .ok_or(io::Error::new(
@@ -17,7 +21,7 @@ pub fn get_driver() -> io::Result<Driver> {
 
 /// Register new io driver
 pub fn register_driver<D: Into<Driver>>(driver: D) -> io::Result<()> {
-    INSTANCE_DRIVER.set(driver.into()).map_err(|_| {
+    DRIVER.set(driver.into()).map_err(|_| {
         io::Error::new(
             io::ErrorKind::PermissionDenied,
             "[Hala-IO] call register_driver twice",

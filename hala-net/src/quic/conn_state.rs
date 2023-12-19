@@ -10,7 +10,7 @@ use std::{
 
 use future_mediator::{Mediator, Shared};
 use futures::FutureExt;
-use hala_io_util::Sleep;
+use hala_io_util::{get_poller, Sleep};
 use quiche::{RecvInfo, SendInfo};
 
 use crate::{errors::into_io_error, quic::QuicStream};
@@ -41,13 +41,13 @@ impl Drop for RawConnState {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum Ops {
-    Send,
-    Recv,
-    StreamSend(u64),
-    StreamRecv(u64),
-    Accept,
+    Send(String),
+    Recv(String),
+    StreamSend(String, u64),
+    StreamRecv(String, u64),
+    Accept(String),
 }
 
 fn handle_accept(cx: &mut Shared<RawConnState, Ops>, stream_id: u64) {
@@ -55,20 +55,20 @@ fn handle_accept(cx: &mut Shared<RawConnState, Ops>, stream_id: u64) {
         cx.opened_streams.insert(stream_id);
         cx.incoming_streams.push_back(stream_id);
 
-        cx.notify(Ops::Accept);
+        cx.notify(Ops::Accept(cx.quiche_conn.trace_id().into()));
     }
 }
 
 fn handle_stream(cx: &mut Shared<RawConnState, Ops>) {
     for stream_id in cx.quiche_conn.readable() {
         handle_accept(cx, stream_id);
-        cx.notify(Ops::StreamRecv(stream_id));
+        cx.notify(Ops::StreamRecv(cx.quiche_conn.trace_id().into(), stream_id));
     }
 
     for stream_id in cx.quiche_conn.writable() {
         handle_accept(cx, stream_id);
 
-        cx.notify(Ops::StreamSend(stream_id));
+        cx.notify(Ops::StreamSend(cx.quiche_conn.trace_id().into(), stream_id));
     }
 }
 
@@ -76,18 +76,24 @@ fn handle_close(cx: &mut Shared<RawConnState, Ops>) {
     let ids = cx.opened_streams.iter().map(|id| *id).collect::<Vec<_>>();
 
     for stream_id in &ids {
-        cx.notify(Ops::StreamRecv(*stream_id));
-        cx.notify(Ops::StreamSend(*stream_id));
+        cx.notify(Ops::StreamRecv(
+            cx.quiche_conn.trace_id().into(),
+            *stream_id,
+        ));
+        cx.notify(Ops::StreamSend(
+            cx.quiche_conn.trace_id().into(),
+            *stream_id,
+        ));
     }
 
-    cx.notify(Ops::Recv);
-    cx.notify(Ops::Send);
-    cx.notify(Ops::Accept);
+    cx.notify(Ops::Recv(cx.quiche_conn.trace_id().into()));
+    cx.notify(Ops::Send(cx.quiche_conn.trace_id().into()));
+    cx.notify(Ops::Accept(cx.quiche_conn.trace_id().into()));
 }
 
 fn handle_stream_close(cx: &mut Shared<RawConnState, Ops>, stream_id: u64) {
-    cx.notify(Ops::StreamRecv(stream_id));
-    cx.notify(Ops::StreamSend(stream_id));
+    cx.notify(Ops::StreamRecv(cx.quiche_conn.trace_id().into(), stream_id));
+    cx.notify(Ops::StreamSend(cx.quiche_conn.trace_id().into(), stream_id));
 }
 
 /// Quic connection state object
@@ -116,7 +122,7 @@ impl QuicConnState {
         let mut sleep: Option<Sleep> = None;
 
         self.state
-            .on_fn(Ops::Send, |state, cx| {
+            .on_fn(Ops::Send(self.trace_id.to_string()), |state, cx| {
                 if state.quiche_conn.is_closed() {
                     handle_close(state);
 
@@ -161,7 +167,7 @@ impl QuicConnState {
                                     expired
                                 );
 
-                                let mut timeout = Sleep::new(expired)?;
+                                let mut timeout = Sleep::new_with(get_poller()?, expired)?;
 
                                 match timeout.poll_unpin(cx) {
                                     Poll::Ready(_) => {
@@ -206,7 +212,7 @@ impl QuicConnState {
         recv_info: RecvInfo,
     ) -> io::Result<usize> {
         self.state
-            .on_fn(Ops::Recv, |state, _| {
+            .on_fn(Ops::Recv(self.trace_id.to_string()), |state, _| {
                 if state.quiche_conn.is_closed() {
                     handle_close(state);
                     return Poll::Ready(Err(io::Error::new(
@@ -258,45 +264,48 @@ impl QuicConnState {
         fin: bool,
     ) -> io::Result<usize> {
         self.state
-            .on_fn(Ops::StreamSend(stream_id), |state, _| {
-                if state.quiche_conn.is_closed() {
-                    handle_stream_close(state, stream_id);
+            .on_fn(
+                Ops::StreamSend(self.trace_id.to_string(), stream_id),
+                |state, _| {
+                    if state.quiche_conn.is_closed() {
+                        handle_stream_close(state, stream_id);
 
-                    return Poll::Ready(Err(io::Error::new(
-                        io::ErrorKind::BrokenPipe,
-                        format!("conn={} closed", state.quiche_conn.trace_id()),
-                    )));
-                }
-
-                match state.quiche_conn.stream_send(stream_id, buf, fin) {
-                    Ok(recv_size) => {
-                        state.notify(Ops::Send);
-
-                        return Poll::Ready(Ok(recv_size));
+                        return Poll::Ready(Err(io::Error::new(
+                            io::ErrorKind::BrokenPipe,
+                            format!("conn={} closed", state.quiche_conn.trace_id()),
+                        )));
                     }
-                    Err(quiche::Error::Done) => {
-                        if state.quiche_conn.is_closed() {
-                            handle_stream_close(state, stream_id);
 
-                            return Poll::Ready(Err(io::Error::new(
-                                io::ErrorKind::BrokenPipe,
-                                format!("conn={} closed", state.quiche_conn.trace_id()),
-                            )));
+                    match state.quiche_conn.stream_send(stream_id, buf, fin) {
+                        Ok(recv_size) => {
+                            state.notify(Ops::Send(self.trace_id.to_string()));
+
+                            return Poll::Ready(Ok(recv_size));
                         }
-
-                        return Poll::Pending;
-                    }
-                    Err(err) => {
-                        return {
+                        Err(quiche::Error::Done) => {
                             if state.quiche_conn.is_closed() {
                                 handle_stream_close(state, stream_id);
+
+                                return Poll::Ready(Err(io::Error::new(
+                                    io::ErrorKind::BrokenPipe,
+                                    format!("conn={} closed", state.quiche_conn.trace_id()),
+                                )));
                             }
 
-                            Poll::Ready(Err(into_io_error(err)))
+                            return Poll::Pending;
+                        }
+                        Err(err) => {
+                            return {
+                                if state.quiche_conn.is_closed() {
+                                    handle_stream_close(state, stream_id);
+                                }
+
+                                Poll::Ready(Err(into_io_error(err)))
+                            }
                         }
                     }
-                }
-            })
+                },
+            )
             .await
     }
 
@@ -307,43 +316,52 @@ impl QuicConnState {
         buf: &'a mut [u8],
     ) -> io::Result<(usize, bool)> {
         self.state
-            .on_fn(Ops::StreamRecv(stream_id), |state, _| {
-                if state.quiche_conn.is_closed() {
-                    handle_stream_close(state, stream_id);
-                    return Poll::Ready(Err(io::Error::new(
-                        io::ErrorKind::BrokenPipe,
-                        format!("conn={} closed", state.quiche_conn.trace_id()),
-                    )));
-                }
-
-                match state.quiche_conn.stream_recv(stream_id, buf) {
-                    Ok(recv_size) => {
-                        state.notify(Ops::Recv);
-
-                        if state.quiche_conn.is_closed() {
-                            handle_stream_close(state, stream_id);
-                        }
-
-                        return Poll::Ready(Ok(recv_size));
+            .on_fn(
+                Ops::StreamRecv(self.trace_id.to_string(), stream_id),
+                |state, _| {
+                    if state.quiche_conn.is_closed() {
+                        handle_stream_close(state, stream_id);
+                        return Poll::Ready(Err(io::Error::new(
+                            io::ErrorKind::BrokenPipe,
+                            format!("conn={} closed", state.quiche_conn.trace_id()),
+                        )));
                     }
-                    Err(quiche::Error::Done) => {
-                        if state.quiche_conn.is_closed() {
-                            handle_stream_close(state, stream_id);
-                            return Poll::Ready(Err(io::Error::new(
-                                io::ErrorKind::BrokenPipe,
-                                format!("conn={} closed", state.quiche_conn.trace_id()),
-                            )));
+
+                    match state.quiche_conn.stream_recv(stream_id, buf) {
+                        Ok(recv_size) => {
+                            state.notify(Ops::Recv(self.trace_id.to_string()));
+
+                            if state.quiche_conn.is_closed() {
+                                handle_stream_close(state, stream_id);
+                            }
+
+                            return Poll::Ready(Ok(recv_size));
                         }
-                        return Poll::Pending;
-                    }
-                    Err(err) => {
-                        if state.quiche_conn.is_closed() {
-                            handle_stream_close(state, stream_id);
+                        Err(quiche::Error::Done) => {
+                            if state.quiche_conn.is_closed() {
+                                handle_stream_close(state, stream_id);
+                                return Poll::Ready(Err(io::Error::new(
+                                    io::ErrorKind::BrokenPipe,
+                                    format!("conn={} closed", state.quiche_conn.trace_id()),
+                                )));
+                            }
+
+                            log::trace!(
+                                "{:?} Pending",
+                                Ops::StreamRecv(self.trace_id.to_string(), stream_id)
+                            );
+
+                            return Poll::Pending;
                         }
-                        return Poll::Ready(Err(into_io_error(err)));
+                        Err(err) => {
+                            if state.quiche_conn.is_closed() {
+                                handle_stream_close(state, stream_id);
+                            }
+                            return Poll::Ready(Err(into_io_error(err)));
+                        }
                     }
-                }
-            })
+                },
+            )
             .await
     }
 
@@ -395,7 +413,7 @@ impl QuicConnState {
 
     pub(crate) async fn accept(&self) -> Option<QuicStream> {
         self.state
-            .on_fn(Ops::Accept, |state, _| {
+            .on_fn(Ops::Accept(self.trace_id.to_string()), |state, _| {
                 if state.quiche_conn.is_closed() {
                     return Poll::Ready(None);
                 }

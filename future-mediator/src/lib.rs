@@ -32,8 +32,10 @@ impl<T, E> Shared<T, E> {
 
     fn register_event_listener(&mut self, event: E, waker: Waker)
     where
-        E: Eq + Hash,
+        E: Eq + Hash + Debug,
     {
+        log::trace!("register event={:?}", event);
+
         self.wakers.insert(event, waker);
     }
 
@@ -88,12 +90,14 @@ impl<T, E> DerefMut for Shared<T, E> {
 #[derive(Debug)]
 pub struct Mediator<T, E> {
     raw: Arc<Mutex<Shared<T, E>>>,
+    lock_futures: Arc<std::sync::Mutex<HashMap<E, OwnedMutexLockFuture<Shared<T, E>>>>>,
 }
 
 impl<T, E> Clone for Mediator<T, E> {
     fn clone(&self) -> Self {
         Self {
             raw: self.raw.clone(),
+            lock_futures: self.lock_futures.clone(),
         }
     }
 }
@@ -103,6 +107,7 @@ impl<T, E> Mediator<T, E> {
     pub fn new(value: T) -> Self {
         Self {
             raw: Arc::new(Mutex::new(Shared::new(value))),
+            lock_futures: Default::default(),
         }
     }
 
@@ -161,6 +166,7 @@ impl<T, E> Mediator<T, E> {
     /// handle into the event waiting map, and the future returns `Pending` status.
     ///
     /// You can call [`notify`](Mediator::notify) to wake up this poll function and run once again.
+    #[inline]
     pub fn on_fn<F, R>(&self, event: E, f: F) -> OnEvent<T, E, F>
     where
         F: FnMut(&mut Shared<T, E>, &mut Context<'_>) -> Poll<R> + Unpin,
@@ -171,7 +177,7 @@ impl<T, E> Mediator<T, E> {
         OnEvent {
             f: Some(f),
             raw: self.raw.clone(),
-            lock_future: None,
+            lock_futures: self.lock_futures.clone(),
             event,
         }
     }
@@ -184,15 +190,24 @@ where
 {
     f: Option<F>,
     raw: Arc<Mutex<Shared<T, E>>>,
-    lock_future: Option<OwnedMutexLockFuture<Shared<T, E>>>,
+    lock_futures: Arc<std::sync::Mutex<HashMap<E, OwnedMutexLockFuture<Shared<T, E>>>>>,
     event: E,
+}
+
+impl<T, E, F> Drop for OnEvent<T, E, F>
+where
+    E: Debug,
+{
+    fn drop(&mut self) {
+        log::trace!("Dropping OnEvent: {:?}", self.event);
+    }
 }
 
 impl<T, E, F, R> Future for OnEvent<T, E, F>
 where
     F: FnMut(&mut Shared<T, E>, &mut Context<'_>) -> Poll<R> + Unpin,
     T: Unpin,
-    E: Unpin + Eq + Hash + Copy,
+    E: Unpin + Eq + Hash + Clone,
     R: Unpin,
     E: Debug,
 {
@@ -202,20 +217,29 @@ where
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Self::Output> {
-        let mut lock_future = if let Some(lock_future) = self.lock_future.take() {
-            lock_future
-        } else {
-            self.raw.clone().lock_owned()
-        };
+        log::trace!("{:?} poll", self.event);
+
+        let mut lock_future =
+            if let Some(lock_future) = self.lock_futures.lock().unwrap().remove(&self.event) {
+                lock_future
+            } else {
+                self.raw.clone().lock_owned()
+            };
 
         let mut raw = match lock_future.poll_unpin(cx) {
             Poll::Ready(raw) => raw,
             _ => {
-                self.lock_future = Some(lock_future);
+                log::trace!("{:?} poll lock pending", self.event);
+                self.lock_futures
+                    .lock()
+                    .unwrap()
+                    .insert(self.event.clone(), lock_future);
 
                 return Poll::Pending;
             }
         };
+
+        log::trace!("{:?} poll locked", self.event);
 
         let mut f = self.f.take().unwrap();
 
@@ -223,11 +247,15 @@ where
             Poll::Pending => {
                 self.f = Some(f);
 
-                raw.register_event_listener(self.event, cx.waker().clone());
+                raw.register_event_listener(self.event.clone(), cx.waker().clone());
+
+                log::trace!("{:?} poll unlock, returns pending", self.event);
 
                 return Poll::Pending;
             }
             poll => {
+                log::trace!("{:?} poll unlock, returns ready", self.event);
+
                 return poll;
             }
         }
@@ -267,17 +295,23 @@ mod tests {
 
         let thread_pool = ThreadPool::builder().pool_size(10).create().unwrap();
 
+        let mediator_cloned = mediator.clone();
+
         thread_pool
-            .spawn(mediator.on_fn(Event::B, |mediator_cx, _| {
-                if *mediator_cx.value() == 1 {
-                    *mediator_cx.value_mut() = 2;
-                    mediator_cx.notify(Event::A);
+            .spawn(async move {
+                mediator_cloned
+                    .on_fn(Event::B, |mediator_cx, _| {
+                        if *mediator_cx.value() == 1 {
+                            *mediator_cx.value_mut() = 2;
+                            mediator_cx.notify(Event::A);
 
-                    return Poll::Ready(());
-                }
+                            return Poll::Ready(());
+                        }
 
-                return Poll::Pending;
-            }))
+                        return Poll::Pending;
+                    })
+                    .await
+            })
             .unwrap();
 
         mediator
@@ -301,8 +335,10 @@ mod tests {
             *cx.value_mut() = 2;
         }
 
+        let mediator_cloned = mediator.clone();
+
         thread_pool
-            .spawn_with_handle(on!(mediator, Event::A, assign_2))
+            .spawn_with_handle(async move { on!(mediator_cloned, Event::A, assign_2).await })
             .unwrap()
             .await;
 

@@ -186,8 +186,6 @@ mod tests {
 
     #[hala_test::test(io_test)]
     async fn test_conn_timeout() {
-        // pretty_env_logger::init_timed();
-
         let (mut listener, laddrs) = create_listener(1).await;
 
         let mut connector = QuicConnector::bind("127.0.0.1:0", config(false)).unwrap();
@@ -212,6 +210,8 @@ mod tests {
         stream.write(b"hello world").await.unwrap();
 
         let mut buf = [0; MAX_DATAGRAM_SIZE];
+
+        log::trace!("Start stream recv");
 
         let error = stream.read(&mut buf).await.unwrap_err();
 

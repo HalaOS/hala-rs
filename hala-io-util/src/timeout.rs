@@ -19,10 +19,8 @@ pub struct Sleep {
 }
 
 impl Sleep {
-    pub fn new(expired: Duration) -> io::Result<Self> {
+    pub fn new_with(poller: Handle, expired: Duration) -> io::Result<Self> {
         let driver = get_driver()?;
-
-        let poller = get_poller()?;
 
         Ok(Self {
             fd: None,
@@ -109,10 +107,8 @@ pub struct Timeout<Fut> {
 }
 
 impl<Fut> Timeout<Fut> {
-    pub fn new(fut: Fut, expired: Duration) -> io::Result<Self> {
+    pub fn new_with(fut: Fut, poller: Handle, expired: Duration) -> io::Result<Self> {
         let driver = get_driver()?;
-
-        let poller = get_poller()?;
 
         Ok(Self {
             fut: Box::pin(fut),
@@ -214,7 +210,7 @@ where
     R: Debug,
 {
     if let Some(expired) = expired {
-        Timeout::new(fut, expired)?.await
+        Timeout::new_with(fut, get_poller()?, expired)?.await
     } else {
         fut.await
     }
@@ -222,7 +218,7 @@ where
 
 /// Sleep for a while
 pub async fn sleep(duration: Duration) -> io::Result<()> {
-    Sleep::new(duration)?.await
+    Sleep::new_with(get_poller()?, duration)?.await
 }
 
 #[cfg(test)]
