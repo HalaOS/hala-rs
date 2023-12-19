@@ -1,12 +1,11 @@
 use std::{
+    collections::VecDeque,
     fmt::Debug,
     future::Future,
     ops::{Deref, DerefMut},
-    sync::Arc,
+    sync::{Arc, Mutex, MutexGuard, TryLockResult},
     task::Context,
 };
-
-use futures::lock::{Mutex, OwnedMutexLockFuture};
 
 use std::{
     collections::HashMap,
@@ -14,7 +13,7 @@ use std::{
     task::{Poll, Waker},
 };
 
-use futures::FutureExt;
+pub use futures::FutureExt;
 
 /// Shared raw data between futures.
 pub struct Shared<T, E> {
@@ -87,17 +86,16 @@ impl<T, E> DerefMut for Shared<T, E> {
 }
 
 /// A mediator is a central hub for communication between futures.
-#[derive(Debug)]
 pub struct Mediator<T, E> {
     raw: Arc<Mutex<Shared<T, E>>>,
-    lock_futures: Arc<std::sync::Mutex<HashMap<E, OwnedMutexLockFuture<Shared<T, E>>>>>,
+    wakers: Arc<Mutex<VecDeque<Waker>>>,
 }
 
 impl<T, E> Clone for Mediator<T, E> {
     fn clone(&self) -> Self {
         Self {
             raw: self.raw.clone(),
-            lock_futures: self.lock_futures.clone(),
+            wakers: self.wakers.clone(),
         }
     }
 }
@@ -107,7 +105,7 @@ impl<T, E> Mediator<T, E> {
     pub fn new(value: T) -> Self {
         Self {
             raw: Arc::new(Mutex::new(Shared::new(value))),
-            lock_futures: Default::default(),
+            wakers: Default::default(),
         }
     }
 
@@ -116,7 +114,7 @@ impl<T, E> Mediator<T, E> {
     where
         F: FnOnce(&T) -> R,
     {
-        let raw = self.raw.lock().await;
+        let raw = self.raw.lock().unwrap();
 
         f(&raw.value)
     }
@@ -126,7 +124,7 @@ impl<T, E> Mediator<T, E> {
     where
         F: FnOnce(&mut T) -> R,
     {
-        let mut raw = self.raw.lock().await;
+        let mut raw = self.raw.lock().unwrap();
 
         f(&mut raw.value)
     }
@@ -134,7 +132,7 @@ impl<T, E> Mediator<T, E> {
     /// Attempt to acquire the shared data lock immediately.
     ///
     /// If the lock is currently held, this will return `None`.
-    pub fn try_lock(&self) -> Option<futures::lock::MutexGuard<'_, Shared<T, E>>> {
+    pub fn try_lock(&self) -> TryLockResult<MutexGuard<'_, Shared<T, E>>> {
         self.raw.try_lock()
     }
 
@@ -143,7 +141,7 @@ impl<T, E> Mediator<T, E> {
     where
         E: Eq + Hash + Debug,
     {
-        let mut raw = self.raw.lock().await;
+        let mut raw = self.raw.lock().unwrap();
 
         raw.notify(event);
     }
@@ -153,7 +151,7 @@ impl<T, E> Mediator<T, E> {
     where
         E: Eq + Hash + Clone + Debug,
     {
-        let mut raw = self.raw.lock().await;
+        let mut raw = self.raw.lock().unwrap();
 
         for event in events.as_ref() {
             raw.notify(event.clone());
@@ -177,7 +175,7 @@ impl<T, E> Mediator<T, E> {
         OnEvent {
             f: Some(f),
             raw: self.raw.clone(),
-            lock_futures: self.lock_futures.clone(),
+            wakers: self.wakers.clone(),
             event,
         }
     }
@@ -190,7 +188,7 @@ where
 {
     f: Option<F>,
     raw: Arc<Mutex<Shared<T, E>>>,
-    lock_futures: Arc<std::sync::Mutex<HashMap<E, OwnedMutexLockFuture<Shared<T, E>>>>>,
+    wakers: Arc<Mutex<VecDeque<Waker>>>,
     event: E,
 }
 
@@ -219,22 +217,32 @@ where
     ) -> Poll<Self::Output> {
         log::trace!("{:?} poll", self.event);
 
-        let mut lock_future =
-            if let Some(lock_future) = self.lock_futures.lock().unwrap().remove(&self.event) {
-                lock_future
-            } else {
-                self.raw.clone().lock_owned()
-            };
+        // let mut lock_future =
+        //     if let Some(lock_future) = self.lock_futures.lock().unwrap().remove(&self.event) {
+        //         lock_future
+        //     } else {
+        //         self.raw.clone().lock_owned()
+        //     };
 
-        let mut raw = match lock_future.poll_unpin(cx) {
-            Poll::Ready(raw) => raw,
-            _ => {
-                log::trace!("{:?} poll lock pending", self.event);
-                self.lock_futures
-                    .lock()
-                    .unwrap()
-                    .insert(self.event.clone(), lock_future);
+        // let mut raw = match lock_future.poll_unpin(cx) {
+        //     Poll::Ready(raw) => raw,
+        //     _ => {
+        //         log::trace!("{:?} poll lock pending", self.event);
+        //         self.lock_futures
+        //             .lock()
+        //             .unwrap()
+        //             .insert(self.event.clone(), lock_future);
 
+        //         return Poll::Pending;
+        //     }
+        // };
+
+        let raw = self.raw.clone();
+
+        let mut raw = match raw.try_lock() {
+            Ok(raw) => raw,
+            Err(_) => {
+                self.wakers.lock().unwrap().push_back(cx.waker().clone());
                 return Poll::Pending;
             }
         };
@@ -251,10 +259,18 @@ where
 
                 log::trace!("{:?} poll unlock, returns pending", self.event);
 
+                if let Some(waker) = self.wakers.lock().unwrap().pop_front() {
+                    waker.wake();
+                }
+
                 return Poll::Pending;
             }
             poll => {
                 log::trace!("{:?} poll unlock, returns ready", self.event);
+
+                if let Some(waker) = self.wakers.lock().unwrap().pop_front() {
+                    waker.wake();
+                }
 
                 return poll;
             }

@@ -85,7 +85,7 @@ mod test {
         register_driver(mio_driver()).unwrap();
 
         thread_per_core_block_on(async {
-            sleep(Duration::from_secs(10)).await?;
+            sleep(Duration::from_secs(1)).await?;
 
             Ok(())
         })

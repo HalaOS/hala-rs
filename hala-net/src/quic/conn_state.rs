@@ -377,7 +377,7 @@ impl QuicConnState {
         loop {
             let state = self.state.try_lock();
 
-            if state.is_none() {
+            if state.is_err() {
                 continue;
             }
 
