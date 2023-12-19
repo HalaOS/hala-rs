@@ -52,6 +52,11 @@ impl TcpListener {
 
     /// Accepts a new incoming connection from this listener.
     pub async fn accept(&self) -> io::Result<(TcpStream, SocketAddr)> {
+        self.accept_with(get_poller()?).await
+    }
+
+    /// Accepts a new incoming connection with providing `poller`
+    pub async fn accept_with(&self, poller: Handle) -> io::Result<(TcpStream, SocketAddr)> {
         let (handle, raddr) = async_io(|cx| {
             self.driver
                 .fd_cntl(self.fd, Cmd::Accept(cx.waker().clone()))
@@ -59,7 +64,10 @@ impl TcpListener {
         .await?
         .try_into_incoming()?;
 
-        Ok((TcpStream::new(self.driver.clone(), handle)?, raddr))
+        Ok((
+            TcpStream::new_with(self.driver.clone(), handle, poller)?,
+            raddr,
+        ))
     }
 
     /// Returns the local socket address of this listener.

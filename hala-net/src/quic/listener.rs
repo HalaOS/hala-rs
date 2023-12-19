@@ -8,6 +8,7 @@ use futures::{
     channel::mpsc::{channel, Receiver, Sender},
     io, SinkExt, StreamExt,
 };
+use hala_io_driver::Handle;
 use hala_io_util::*;
 use quiche::{ConnectionId, RecvInfo};
 
@@ -41,7 +42,18 @@ impl QuicListener {
 
     /// Create new quic server listener and bind to `laddrs`
     pub fn bind<S: ToSocketAddrs>(laddrs: S, config: Config) -> io::Result<Self> {
-        let udp_group = UdpGroup::bind(laddrs)?;
+        Self::bind_with(laddrs, config, get_poller()?)
+    }
+
+    /// Create new quic server listener and bind to `laddrs`
+    ///
+    /// `poller` is the reactor event notify handle bind to this socket.
+    pub fn bind_with<S: ToSocketAddrs>(
+        laddrs: S,
+        config: Config,
+        poller: Handle,
+    ) -> io::Result<Self> {
+        let udp_group = UdpGroup::bind_with(laddrs, poller)?;
 
         Self::new(udp_group, config)
     }

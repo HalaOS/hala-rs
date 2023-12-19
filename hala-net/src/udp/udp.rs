@@ -6,7 +6,7 @@ use std::{
 use hala_io_driver::*;
 use hala_io_util::*;
 
-/// A UDP socket.
+/// A Udp socket.
 pub struct UdpSocket {
     fd: Handle,
     poller: Handle,
@@ -16,13 +16,16 @@ pub struct UdpSocket {
 impl UdpSocket {
     /// This function will create a new UDP socket and attempt to bind it to the addr provided.
     pub fn bind<S: ToSocketAddrs>(laddrs: S) -> io::Result<Self> {
+        Self::bind_with(laddrs, get_poller()?)
+    }
+
+    /// This function will create a new UDP socket and attempt to bind it to the addr provided.
+    pub fn bind_with<S: ToSocketAddrs>(laddrs: S, poller: Handle) -> io::Result<Self> {
         let driver = get_driver()?;
 
         let laddrs = laddrs.to_socket_addrs()?.into_iter().collect::<Vec<_>>();
 
         let fd = driver.fd_open(Description::UdpSocket, OpenFlags::Bind(&laddrs))?;
-
-        let poller = get_poller()?;
 
         match driver.fd_cntl(
             poller,

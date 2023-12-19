@@ -4,6 +4,7 @@ use futures::{AsyncRead, AsyncWrite};
 use hala_io_driver::*;
 use hala_io_util::*;
 
+/// A TCP stream between a local and a remote socket.
 pub struct TcpStream {
     fd: Handle,
     poller: Handle,
@@ -17,9 +18,7 @@ impl Debug for TcpStream {
 }
 
 impl TcpStream {
-    pub fn new(driver: Driver, fd: Handle) -> io::Result<Self> {
-        let poller = get_poller()?;
-
+    pub(super) fn new_with(driver: Driver, fd: Handle, poller: Handle) -> io::Result<Self> {
         match driver.fd_cntl(
             poller,
             Cmd::Register {
@@ -36,15 +35,21 @@ impl TcpStream {
 
         Ok(Self { fd, driver, poller })
     }
-    /// Opens a TCP connection to a remote host.
+
+    /// Opens a TCP connection to a remote host with global context `poller`
     pub fn connect<S: ToSocketAddrs>(raddrs: S) -> io::Result<Self> {
+        Self::connect_with(raddrs, get_poller()?)
+    }
+
+    /// Opens a TCP connection to a remote host with customer `poller` handle.
+    pub fn connect_with<S: ToSocketAddrs>(raddrs: S, poller: Handle) -> io::Result<Self> {
         let driver = get_driver()?;
 
         let raddrs = raddrs.to_socket_addrs()?.into_iter().collect::<Vec<_>>();
 
         let fd = driver.fd_open(Description::TcpStream, OpenFlags::Connect(&raddrs))?;
 
-        Self::new(driver, fd)
+        Self::new_with(driver, fd, poller)
     }
 }
 

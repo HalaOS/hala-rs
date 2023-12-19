@@ -5,6 +5,7 @@ use std::{
     time::Duration,
 };
 
+use hala_io_driver::Handle;
 use hala_io_util::*;
 use quiche::{RecvInfo, SendInfo};
 use rand::seq::IteratorRandom;
@@ -106,7 +107,16 @@ pub struct QuicConnector {
 impl QuicConnector {
     /// Create a new connector and bind to `laddrs`
     pub fn bind<L: ToSocketAddrs>(laddrs: L, config: Config) -> io::Result<Self> {
-        let udp_group = UdpGroup::bind(laddrs)?;
+        Self::bind_with(laddrs, config, get_poller()?)
+    }
+
+    /// Create a new connector and bind to `laddrs`
+    pub fn bind_with<L: ToSocketAddrs>(
+        laddrs: L,
+        config: Config,
+        poller: Handle,
+    ) -> io::Result<Self> {
+        let udp_group = UdpGroup::bind_with(laddrs, poller)?;
 
         Ok(Self {
             udp_group: Arc::new(udp_group),
