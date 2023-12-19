@@ -8,7 +8,7 @@ use bytes::BufMut;
 use hala_io_driver::*;
 use hala_io_util::*;
 
-/// A group of udp socket
+/// A group of udp socket manager.
 pub struct UdpGroup {
     io_group_read: IoGroup,
     io_group_write: IoGroup,
@@ -76,6 +76,8 @@ impl UdpGroup {
 
     /// Sends data on the socket group to the given address. On success, returns the
     /// number of bytes written and send socket laddr.
+    ///
+    /// The implementation will random select one udp socket to send data.
     pub async fn send_to<S: ToSocketAddrs>(
         &self,
         buf: &[u8],
@@ -104,6 +106,8 @@ impl UdpGroup {
         last_error.unwrap()
     }
 
+    /// Writes a single udp packet to be sent to the peer from
+    /// the specified local address `from` to the destination address to.
     pub async fn send_to_on_path<S: ToSocketAddrs>(
         &self,
         buf: &[u8],
@@ -163,7 +167,10 @@ impl UdpGroup {
         .await
     }
 
-    pub async fn recv_from_buf<B>(&self, buf: &mut B) -> io::Result<(SocketAddr, SocketAddr)>
+    /// Receives data from the socket with [`BufMut`].
+    ///
+    /// On success, returns the local address and the remote address from where the data came.
+    pub async fn recv_from_with_buf<B>(&self, buf: &mut B) -> io::Result<(SocketAddr, SocketAddr)>
     where
         B: BufMut,
     {
@@ -181,6 +188,7 @@ impl UdpGroup {
         }
     }
 
+    /// Return [`Iterator`] of local addresses
     pub fn local_addrs(&self) -> impl Iterator<Item = &SocketAddr> {
         self.addrs.values()
     }

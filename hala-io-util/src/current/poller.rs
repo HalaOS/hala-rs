@@ -58,12 +58,12 @@ pub fn get_local_poller() -> io::Result<Handle> {
 }
 
 /// An RAII guard to control global context `poller` event loop.
-pub struct PollerLoopGuard {
+pub struct PollLoopGuard {
     drop: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
 }
 
-impl PollerLoopGuard {
+impl PollLoopGuard {
     /// Create new `PollerLoopGuard` with event loop `timeout`
     pub fn new(timeout: Option<Duration>) -> io::Result<Self> {
         let drop = Arc::new(AtomicBool::new(false));
@@ -87,7 +87,7 @@ impl PollerLoopGuard {
     }
 }
 
-impl Drop for PollerLoopGuard {
+impl Drop for PollLoopGuard {
     fn drop(&mut self) {
         self.drop.store(true, Ordering::SeqCst);
 
@@ -96,12 +96,12 @@ impl Drop for PollerLoopGuard {
 }
 
 /// An RAII guard to control local thread `poller` event loop.
-pub struct LocalPollerLoopGuard {
+pub struct LocalPollLoopGuard {
     drop: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
 }
 
-impl LocalPollerLoopGuard {
+impl LocalPollLoopGuard {
     /// Create new `LocalPollerLoopGuard` with event loop `timeout`
     pub fn new(timeout: Option<Duration>) -> io::Result<Self> {
         let drop = Arc::new(AtomicBool::new(false));
@@ -125,7 +125,7 @@ impl LocalPollerLoopGuard {
     }
 }
 
-impl Drop for LocalPollerLoopGuard {
+impl Drop for LocalPollLoopGuard {
     fn drop(&mut self) {
         self.drop.store(true, Ordering::SeqCst);
         self.handle.take().unwrap().join().unwrap();

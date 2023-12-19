@@ -12,7 +12,7 @@ static START: Once = Once::new();
 
 use crate::*;
 
-/// Test runner with local spawner and local poller event loop
+/// Test runner with multithread spawner and global poll event loop
 pub fn io_test<T, Fut>(label: &'static str, test: T)
 where
     T: FnOnce() -> Fut + 'static,
@@ -26,7 +26,7 @@ where
         register_spawner(TestIoSpawner(thread_pool));
     });
 
-    let _guard = PollerLoopGuard::new(None).unwrap();
+    let _guard = PollLoopGuard::new(None).unwrap();
 
     log::trace!("start io test(st,{})", label);
 
