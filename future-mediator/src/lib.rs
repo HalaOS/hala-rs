@@ -3,7 +3,7 @@ use std::{
     fmt::Debug,
     future::Future,
     ops::{Deref, DerefMut},
-    sync::{Arc, Mutex, MutexGuard, TryLockResult},
+    sync::{Arc, Mutex},
     task::Context,
 };
 
@@ -14,6 +14,149 @@ use std::{
 };
 
 pub use futures::FutureExt;
+
+use std::{cell::RefCell, rc::Rc};
+
+pub trait ThreadModel {
+    type Guard<T>: ThreadModelGuard<T> + Unpin + Clone + From<T>;
+}
+
+pub trait ThreadModelGuard<T> {
+    type Ref<'a, V>: Deref<Target = V>
+    where
+        Self: 'a,
+        V: 'a;
+
+    type RefMut<'a, V>: DerefMut<Target = V>
+    where
+        Self: 'a,
+        V: 'a;
+
+    fn new(value: T) -> Self;
+    /// Get immutable reference of type `T`
+    fn get(&self) -> Self::Ref<'_, T>;
+
+    /// Get mutable reference of type `T`
+    fn get_mut(&self) -> Self::RefMut<'_, T>;
+
+    fn try_get_mut(&self) -> Option<Self::RefMut<'_, T>>;
+
+    fn is_multithread() -> bool;
+}
+
+/// Single thread model
+pub struct STModel;
+
+pub struct STModelHolder<T> {
+    /// protected value.
+    value: Rc<RefCell<T>>,
+}
+
+impl<T> Clone for STModelHolder<T> {
+    fn clone(&self) -> Self {
+        Self {
+            value: self.value.clone(),
+        }
+    }
+}
+
+unsafe impl<T> Sync for STModelHolder<T> {}
+unsafe impl<T> Send for STModelHolder<T> {}
+
+impl<T> From<T> for STModelHolder<T> {
+    fn from(value: T) -> Self {
+        STModelHolder::new(value)
+    }
+}
+
+impl<T> ThreadModelGuard<T> for STModelHolder<T> {
+    type Ref<'a,V> = std::cell::Ref<'a,V> where Self:'a,V: 'a;
+
+    type RefMut<'a,V> = std::cell::RefMut<'a,V> where Self:'a,V: 'a;
+
+    fn new(value: T) -> Self {
+        Self {
+            value: Rc::new(RefCell::new(value)),
+        }
+    }
+
+    fn get(&self) -> std::cell::Ref<'_, T> {
+        self.value.borrow()
+    }
+
+    fn get_mut(&self) -> std::cell::RefMut<'_, T> {
+        self.value.borrow_mut()
+    }
+
+    fn try_get_mut(&self) -> Option<Self::RefMut<'_, T>> {
+        Some(self.get_mut())
+    }
+
+    fn is_multithread() -> bool {
+        false
+    }
+}
+
+impl ThreadModel for STModel {
+    type Guard<T> = STModelHolder<T>;
+}
+
+/// Multi thread model
+pub struct MTModel;
+
+pub struct MTModelHolder<T> {
+    /// protected value.
+    value: Arc<Mutex<T>>,
+}
+
+impl<T> Clone for MTModelHolder<T> {
+    fn clone(&self) -> Self {
+        Self {
+            value: self.value.clone(),
+        }
+    }
+}
+
+impl<T> From<T> for MTModelHolder<T> {
+    fn from(value: T) -> Self {
+        MTModelHolder::new(value)
+    }
+}
+
+impl<T> ThreadModelGuard<T> for MTModelHolder<T> {
+    type Ref<'a,V> = std::sync::MutexGuard<'a,V> where Self:'a,V: 'a;
+
+    type RefMut<'a,V> = std::sync::MutexGuard<'a,V> where Self:'a,V: 'a;
+
+    fn new(value: T) -> Self {
+        Self {
+            value: Arc::new(Mutex::new(value)),
+        }
+    }
+
+    fn get(&self) -> std::sync::MutexGuard<'_, T> {
+        self.value.lock().unwrap()
+    }
+
+    fn get_mut(&self) -> std::sync::MutexGuard<'_, T> {
+        self.value.lock().unwrap()
+    }
+
+    fn try_get_mut(&self) -> Option<Self::RefMut<'_, T>> {
+        match self.value.try_lock() {
+            Ok(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    fn is_multithread() -> bool {
+        true
+    }
+}
+
+impl ThreadModel for MTModel {
+    type Guard<T> = MTModelHolder<T>;
+}
 
 /// Shared raw data between futures.
 pub struct Shared<T, E> {
@@ -86,12 +229,12 @@ impl<T, E> DerefMut for Shared<T, E> {
 }
 
 /// A mediator is a central hub for communication between futures.
-pub struct Mediator<T, E> {
-    raw: Arc<Mutex<Shared<T, E>>>,
-    wakers: Arc<Mutex<VecDeque<Waker>>>,
+pub struct MediatorTM<TM: ThreadModel, T, E> {
+    raw: TM::Guard<Shared<T, E>>,
+    wakers: TM::Guard<VecDeque<Waker>>,
 }
 
-impl<T, E> Clone for Mediator<T, E> {
+impl<TM: ThreadModel, T, E> Clone for MediatorTM<TM, T, E> {
     fn clone(&self) -> Self {
         Self {
             raw: self.raw.clone(),
@@ -100,12 +243,12 @@ impl<T, E> Clone for Mediator<T, E> {
     }
 }
 
-impl<T, E> Mediator<T, E> {
+impl<TM: ThreadModel, T, E> MediatorTM<TM, T, E> {
     /// Create new mediator with shared value.
     pub fn new(value: T) -> Self {
         Self {
-            raw: Arc::new(Mutex::new(Shared::new(value))),
-            wakers: Default::default(),
+            raw: Shared::new(value).into(),
+            wakers: VecDeque::default().into(),
         }
     }
 
@@ -114,7 +257,7 @@ impl<T, E> Mediator<T, E> {
     where
         F: FnOnce(&T) -> R,
     {
-        let raw = self.raw.lock().unwrap();
+        let raw = self.raw.get();
 
         f(&raw.value)
     }
@@ -124,7 +267,7 @@ impl<T, E> Mediator<T, E> {
     where
         F: FnOnce(&mut T) -> R,
     {
-        let mut raw = self.raw.lock().unwrap();
+        let mut raw = self.raw.get_mut();
 
         f(&mut raw.value)
     }
@@ -132,8 +275,15 @@ impl<T, E> Mediator<T, E> {
     /// Attempt to acquire the shared data lock immediately.
     ///
     /// If the lock is currently held, this will return `None`.
-    pub fn try_lock(&self) -> TryLockResult<MutexGuard<'_, Shared<T, E>>> {
-        self.raw.try_lock()
+    pub fn try_lock_with<F, R>(&self, f: F) -> Option<R>
+    where
+        F: FnOnce(&mut T) -> R,
+    {
+        if let Some(mut locked) = self.raw.try_get_mut() {
+            Some(f(&mut locked))
+        } else {
+            None
+        }
     }
 
     /// Emit one event on.
@@ -141,7 +291,7 @@ impl<T, E> Mediator<T, E> {
     where
         E: Eq + Hash + Debug,
     {
-        let mut raw = self.raw.lock().unwrap();
+        let mut raw = self.raw.get_mut();
 
         raw.notify(event);
     }
@@ -151,7 +301,7 @@ impl<T, E> Mediator<T, E> {
     where
         E: Eq + Hash + Clone + Debug,
     {
-        let mut raw = self.raw.lock().unwrap();
+        let mut raw = self.raw.get_mut();
 
         for event in events.as_ref() {
             raw.notify(event.clone());
@@ -165,13 +315,15 @@ impl<T, E> Mediator<T, E> {
     ///
     /// You can call [`notify`](Mediator::notify) to wake up this poll function and run once again.
     #[inline]
-    pub fn on_fn<F, R>(&self, event: E, f: F) -> OnEvent<T, E, F>
+    pub fn on_fn<F, R>(&self, event: E, f: F) -> OnEvent<TM, T, E, F>
     where
         F: FnMut(&mut Shared<T, E>, &mut Context<'_>) -> Poll<R> + Unpin,
         T: Unpin + 'static,
         E: Unpin + Eq + Hash + Debug,
         R: Unpin,
     {
+        log::trace!("call on_fn {:?}", event);
+
         OnEvent {
             f: Some(f),
             raw: self.raw.clone(),
@@ -182,17 +334,17 @@ impl<T, E> Mediator<T, E> {
 }
 
 /// Future create by [`on`](Mediator::on_fn)
-pub struct OnEvent<T, E, F>
+pub struct OnEvent<TM: ThreadModel, T, E, F>
 where
     E: Debug,
 {
     f: Option<F>,
-    raw: Arc<Mutex<Shared<T, E>>>,
-    wakers: Arc<Mutex<VecDeque<Waker>>>,
+    raw: TM::Guard<Shared<T, E>>,
+    wakers: TM::Guard<VecDeque<Waker>>,
     event: E,
 }
 
-impl<T, E, F> Drop for OnEvent<T, E, F>
+impl<TM: ThreadModel, T, E, F> Drop for OnEvent<TM, T, E, F>
 where
     E: Debug,
 {
@@ -201,7 +353,7 @@ where
     }
 }
 
-impl<T, E, F, R> Future for OnEvent<T, E, F>
+impl<TM: ThreadModel, T, E, F, R> Future for OnEvent<TM, T, E, F>
 where
     F: FnMut(&mut Shared<T, E>, &mut Context<'_>) -> Poll<R> + Unpin,
     T: Unpin,
@@ -217,32 +369,12 @@ where
     ) -> Poll<Self::Output> {
         log::trace!("{:?} poll", self.event);
 
-        // let mut lock_future =
-        //     if let Some(lock_future) = self.lock_futures.lock().unwrap().remove(&self.event) {
-        //         lock_future
-        //     } else {
-        //         self.raw.clone().lock_owned()
-        //     };
-
-        // let mut raw = match lock_future.poll_unpin(cx) {
-        //     Poll::Ready(raw) => raw,
-        //     _ => {
-        //         log::trace!("{:?} poll lock pending", self.event);
-        //         self.lock_futures
-        //             .lock()
-        //             .unwrap()
-        //             .insert(self.event.clone(), lock_future);
-
-        //         return Poll::Pending;
-        //     }
-        // };
-
         let raw = self.raw.clone();
 
-        let mut raw = match raw.try_lock() {
-            Ok(raw) => raw,
-            Err(_) => {
-                self.wakers.lock().unwrap().push_back(cx.waker().clone());
+        let mut raw = match raw.try_get_mut() {
+            Some(raw) => raw,
+            _ => {
+                self.wakers.get_mut().push_back(cx.waker().clone());
                 return Poll::Pending;
             }
         };
@@ -259,7 +391,7 @@ where
 
                 log::trace!("{:?} poll unlock, returns pending", self.event);
 
-                if let Some(waker) = self.wakers.lock().unwrap().pop_front() {
+                if let Some(waker) = self.wakers.get_mut().pop_front() {
                     waker.wake();
                 }
 
@@ -268,7 +400,7 @@ where
             poll => {
                 log::trace!("{:?} poll unlock, returns ready", self.event);
 
-                if let Some(waker) = self.wakers.lock().unwrap().pop_front() {
+                if let Some(waker) = self.wakers.get_mut().pop_front() {
                     waker.wake();
                 }
 
@@ -289,6 +421,15 @@ macro_rules! on {
     };
 }
 
+pub type STMediator<T, E> = MediatorTM<STModel, T, E>;
+pub type MTMediator<T, E> = MediatorTM<MTModel, T, E>;
+
+#[cfg(not(feature = "single-thread"))]
+pub type Mediator<T, E> = MTMediator<T, E>;
+
+#[cfg(feature = "single-thread")]
+pub type Mediator<T, E> = STMediator<T, E>;
+
 #[cfg(test)]
 mod tests {
     use std::task::Poll;
@@ -297,7 +438,7 @@ mod tests {
 
     use futures::task::SpawnExt;
 
-    use crate::{Mediator, Shared};
+    use crate::{Mediator, STMediator, Shared};
 
     #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
     enum Event {
@@ -343,7 +484,7 @@ mod tests {
 
     #[futures_test::test]
     async fn test_mediator_async() {
-        let mediator: Mediator<i32, Event> = Mediator::new(1);
+        let mediator: STMediator<i32, Event> = STMediator::new(1);
 
         let thread_pool = ThreadPool::builder().pool_size(10).create().unwrap();
 

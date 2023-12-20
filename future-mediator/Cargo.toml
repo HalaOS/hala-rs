@@ -11,9 +11,16 @@ version.workspace = true
 bitmask-enum = {workspace = true}
 futures = {workspace = true}
 futures-test = {workspace = true}
+
 log = {workspace = true}
 
 [dev-dependencies]
+divan = {workspace = true}
 pretty_env_logger = {workspace = true}
 
 [features]
+single-thread = []
+
+[[bench]]
+harness = false
+name = "mediator"

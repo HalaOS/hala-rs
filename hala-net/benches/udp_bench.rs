@@ -20,6 +20,7 @@ static INIT: Once = Once::new();
 fn async_udp_echo(bench: Bencher) {
     INIT.call_once(|| {
         _ = register_driver(mio_driver());
+        _ = register_local_poller();
     });
 
     let _guard = PollLoopGuard::new(None).unwrap();
@@ -73,6 +74,7 @@ fn async_udp_echo(bench: Bencher) {
 fn async_udpgroup_echo(bench: Bencher) {
     INIT.call_once(|| {
         _ = register_driver(mio_driver());
+        _ = register_local_poller();
     });
 
     let _guard = PollLoopGuard::new(None).unwrap();

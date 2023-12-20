@@ -375,15 +375,15 @@ impl QuicConnState {
     pub(crate) fn close_stream(&self, stream_id: u64) {
         // pin lock like
         loop {
-            let state = self.state.try_lock();
-
-            if state.is_err() {
+            if self
+                .state
+                .try_lock_with(|state| {
+                    state.opened_streams.remove(&stream_id);
+                })
+                .is_none()
+            {
                 continue;
             }
-
-            let mut state = state.unwrap();
-
-            state.opened_streams.remove(&stream_id);
 
             break;
         }

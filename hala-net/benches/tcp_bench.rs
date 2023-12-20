@@ -21,6 +21,7 @@ static INIT: Once = Once::new();
 fn async_tcp_echo(bench: Bencher) {
     INIT.call_once(|| {
         _ = register_driver(mio_driver());
+        _ = register_local_poller();
     });
 
     let _guard = PollLoopGuard::new(None).unwrap();
