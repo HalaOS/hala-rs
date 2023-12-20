@@ -34,12 +34,12 @@ pub trait Shared {
 }
 
 /// Shared data that using in single thread mode
-#[derive(Debug, Clone)]
-pub struct LocalShared<T> {
-    value: Rc<RefCell<T>>,
+#[derive(Debug)]
+pub struct LocalSharedNonClone<T> {
+    value: RefCell<T>,
 }
 
-impl<T> Shared for LocalShared<T> {
+impl<T> Shared for LocalSharedNonClone<T> {
     type Value = T;
 
     type Ref<'a> = std::cell::Ref<'a,T>
@@ -67,6 +67,27 @@ impl<T> Shared for LocalShared<T> {
     }
 }
 
+impl<T> LocalSharedNonClone<T> {
+    /// Create new `LocalShared` from shared `value`.
+    pub fn new(value: T) -> Self {
+        value.into()
+    }
+}
+
+impl<T> From<T> for LocalSharedNonClone<T> {
+    fn from(value: T) -> Self {
+        Self {
+            value: RefCell::new(value),
+        }
+    }
+}
+
+/// Shared data that using in single thread mode
+#[derive(Debug, Clone)]
+pub struct LocalShared<T> {
+    value: Rc<LocalSharedNonClone<T>>,
+}
+
 impl<T> LocalShared<T> {
     /// Create new `LocalShared` from shared `value`.
     pub fn new(value: T) -> Self {
@@ -77,18 +98,26 @@ impl<T> LocalShared<T> {
 impl<T> From<T> for LocalShared<T> {
     fn from(value: T) -> Self {
         LocalShared {
-            value: Rc::new(RefCell::new(value)),
+            value: Rc::new(value.into()),
         }
     }
 }
 
-/// Shared data that using in multi-thread mode
-#[derive(Debug, Clone)]
-pub struct MutexShared<T> {
-    value: Arc<Mutex<T>>,
+impl<T> ops::Deref for LocalShared<T> {
+    type Target = LocalSharedNonClone<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
 }
 
-impl<T> Shared for MutexShared<T> {
+/// Shared data that using in multi-thread mode
+#[derive(Debug)]
+pub struct MutexSharedNonClone<T> {
+    value: Mutex<T>,
+}
+
+impl<T> Shared for MutexSharedNonClone<T> {
     type Value = T;
 
     type Ref<'a> = std::sync::MutexGuard<'a,T>
@@ -116,10 +145,39 @@ impl<T> Shared for MutexShared<T> {
     }
 }
 
+impl<T> From<T> for MutexSharedNonClone<T> {
+    fn from(value: T) -> Self {
+        Self {
+            value: Mutex::new(value),
+        }
+    }
+}
+
+impl<T> MutexSharedNonClone<T> {
+    /// Create new `MutexShared` from shared `value`.
+    pub fn new(value: T) -> Self {
+        value.into()
+    }
+}
+
+/// Shared data that using in multi-thread mode
+#[derive(Debug, Clone)]
+pub struct MutexShared<T> {
+    value: Arc<MutexSharedNonClone<T>>,
+}
+
+impl<T> ops::Deref for MutexShared<T> {
+    type Target = MutexSharedNonClone<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
+}
+
 impl<T> From<T> for MutexShared<T> {
     fn from(value: T) -> Self {
         MutexShared {
-            value: Arc::new(Mutex::new(value)),
+            value: Arc::new(value.into()),
         }
     }
 }
