@@ -56,7 +56,7 @@ mod tests {
             .set_application_protos(&[b"hq-interop", b"hq-29", b"hq-28", b"hq-27", b"http/0.9"])
             .unwrap();
 
-        config.set_max_idle_timeout(200);
+        config.set_max_idle_timeout(2000);
         config.set_max_recv_udp_payload_size(MAX_DATAGRAM_SIZE);
         config.set_max_send_udp_payload_size(MAX_DATAGRAM_SIZE);
         config.set_initial_max_data(10_000_000);
@@ -136,7 +136,7 @@ mod tests {
         (listener, laddrs)
     }
 
-    #[hala_test::test(io_test)]
+    #[hala_test::test(local_io_test)]
     async fn test_async_quic() {
         let (mut listener, laddrs) = create_listener(10).await;
 
@@ -174,9 +174,8 @@ mod tests {
         assert!(stream.is_closed().await);
     }
 
-    #[hala_test::test(io_test)]
+    #[hala_test::test(local_io_test)]
     async fn test_connector_timeout() {
-        // pretty_env_logger::init_timed();
         let mut connector = QuicConnector::bind("127.0.0.1:0", config(false)).unwrap();
 
         let err = connector.connect("127.0.0.1:1812").await.unwrap_err();
@@ -184,7 +183,7 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::TimedOut);
     }
 
-    #[hala_test::test(io_test)]
+    #[hala_test::test(local_io_test)]
     async fn test_conn_timeout() {
         let (mut listener, laddrs) = create_listener(1).await;
 

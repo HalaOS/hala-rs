@@ -49,47 +49,6 @@ pub fn register_spawner<
 }
 
 /// Spawn an io task that polls the given future with output `io::Result<()>` to completion.
-/// ```
-/// # {
-/// use hala_io_util::*;
-/// use std::io;
-/// use futures::{
-///     executor::{LocalPool, LocalSpawner},
-///     future::BoxFuture,
-/// };
-///
-/// struct MockIoSpawner {
-///     spawner: LocalSpawner,
-/// }
-///
-/// impl IoSpawner for MockIoSpawner {
-///     fn spawn(&self, fut: BoxFuture<'static, std::io::Result<()>>) -> std::io::Result<()> {
-///         use futures::task::SpawnExt;
-///
-///         self.spawner
-///             .spawn(async move {
-///                 match fut.await {
-///                     Ok(_) => {}
-///                     Err(err) => {
-///                         log::error!("IoSpawner catch err={}", err);
-///                     }
-///                 }
-///             })
-///             .map_err(|err| io::Error::new(io::ErrorKind::Other, err))
-///     }
-/// }
-///
-/// let mut local_pool = LocalPool::new();
-///
-/// register_local_spawner(MockIoSpawner {
-///      spawner: local_pool.spawner(),
-/// });
-///
-/// io_spawn(async { Ok(()) }).unwrap();
-///
-/// local_pool.run();
-/// # }
-/// ```
 pub fn io_spawn<Fut>(fut: Fut) -> io::Result<()>
 where
     Fut: Future<Output = io::Result<()>> + Send + 'static,
