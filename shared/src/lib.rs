@@ -83,15 +83,47 @@ impl<T> From<T> for LocalSharedNonClone<T> {
 }
 
 /// Shared data that using in single thread mode
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct LocalShared<T> {
     value: Rc<LocalSharedNonClone<T>>,
+}
+
+impl<T> Clone for LocalShared<T> {
+    fn clone(&self) -> Self {
+        Self {
+            value: self.value.clone(),
+        }
+    }
 }
 
 impl<T> LocalShared<T> {
     /// Create new `LocalShared` from shared `value`.
     pub fn new(value: T) -> Self {
         value.into()
+    }
+}
+
+impl<T> Shared for LocalShared<T> {
+    type Value = T;
+
+    type Ref<'a> = std::cell::Ref<'a,T>
+    where
+        Self: 'a;
+
+    type MutRef<'a> = std::cell::RefMut<'a,T>
+    where
+        Self: 'a;
+
+    fn lock(&self) -> Self::Ref<'_> {
+        self.value.lock()
+    }
+
+    fn lock_mut(&self) -> Self::MutRef<'_> {
+        self.value.lock_mut()
+    }
+
+    fn try_lock_mut(&self) -> Option<Self::MutRef<'_>> {
+        self.value.try_lock_mut()
     }
 }
 
@@ -161,7 +193,7 @@ impl<T> MutexSharedNonClone<T> {
 }
 
 /// Shared data that using in multi-thread mode
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct MutexShared<T> {
     value: Arc<MutexSharedNonClone<T>>,
 }
@@ -186,5 +218,37 @@ impl<T> MutexShared<T> {
     /// Create new `MutexShared` from shared `value`.
     pub fn new(value: T) -> Self {
         value.into()
+    }
+}
+
+impl<T> Shared for MutexShared<T> {
+    type Value = T;
+
+    type Ref<'a> = std::sync::MutexGuard<'a,T>
+    where
+        Self: 'a;
+
+    type MutRef<'a> = std::sync::MutexGuard<'a,T>
+    where
+        Self: 'a;
+
+    fn lock(&self) -> Self::Ref<'_> {
+        self.value.lock()
+    }
+
+    fn lock_mut(&self) -> Self::MutRef<'_> {
+        self.value.lock_mut()
+    }
+
+    fn try_lock_mut(&self) -> Option<Self::MutRef<'_>> {
+        self.value.try_lock_mut()
+    }
+}
+
+impl<T> Clone for MutexShared<T> {
+    fn clone(&self) -> Self {
+        Self {
+            value: self.value.clone(),
+        }
     }
 }
