@@ -171,7 +171,7 @@ impl QuicConnector {
     }
 
     async fn connect_once(&mut self, mut connector: InnerConnector) -> io::Result<QuicConn> {
-        let mut buf = [0; 65535];
+        let mut buf = vec![0; 65535];
 
         loop {
             let (send_size, send_info) = connector.send(&mut buf)?;
@@ -236,7 +236,7 @@ impl QuicConnEventLoop {
     }
 
     pub async fn recv_loop(&self) -> io::Result<()> {
-        let mut buf = [0; 65535];
+        let mut buf = vec![0; 65535];
 
         loop {
             let (laddr, read_size, raddr) = self.udp_group.recv_from(&mut buf).await?;
@@ -267,7 +267,7 @@ impl QuicConnEventLoop {
     }
 
     pub async fn send_loop(&self) -> io::Result<()> {
-        let mut buf = [0; 65535];
+        let mut buf = vec![0; 65535];
 
         loop {
             let (send_size, send_info) = match self.conn.state.send(&mut buf).await {

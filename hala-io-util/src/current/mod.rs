@@ -116,7 +116,7 @@ where
 
     let handle = pool
         .spawner()
-        .spawn_local_with_handle(Box::pin(start_fut))
+        .spawn_local_with_handle(start_fut)
         .map_err(|err| io::Error::new(io::ErrorKind::Other, format!("Spawn local error: {}", err)))
         .unwrap();
 
@@ -146,5 +146,28 @@ impl IoSpawner for LocalBlockOnIoSpawner {
                 }
             })
             .map_err(|err| io::Error::new(io::ErrorKind::Other, err))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    #[test]
+    fn test_futures_executor() {
+        let a = async {
+            log::trace!("hello world");
+        };
+
+        let b = async move {
+            a.await;
+
+            Ok::<(), ()>(())
+        };
+
+        let c = async move {
+            b.await.unwrap();
+        };
+
+        futures::executor::block_on(c);
     }
 }

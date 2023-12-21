@@ -93,7 +93,7 @@ impl QuicListenerEventLoop {
     }
 
     async fn run_loop(&mut self) -> io::Result<()> {
-        let mut buf = [0; 65535];
+        let mut buf = vec![0; 65535];
         loop {
             let (laddr, read_size, raddr) = self.udp_group.recv_from(&mut buf).await?;
 
