@@ -7,11 +7,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+use shared::{Shared, LocalShared, MutexShared};
 use timewheel::TimeWheel;
 
 use crate::{Handle, Interest, Token, TypedHandle};
-
-use super::*;
 
 fn duration_to_ticks(duration: Duration, tick_duration: Duration, round_up: bool) -> u128 {
     let duration_m = duration.as_nanos();
@@ -97,14 +96,7 @@ impl MioTimeout {
     }
 }
 
-pub trait MioPoller {
-    fn poll_once(&self, timeout: Option<Duration>) -> io::Result<Vec<(Token, Interest)>>;
-    fn register(&self, handle: Handle, interests: Interest) -> io::Result<()>;
-    fn reregister(&self, handle: Handle, interests: Interest) -> io::Result<()>;
-    fn deregister(&self, handle: Handle) -> io::Result<()>;
-}
-
-struct MioTimeWheel {
+pub(crate) struct MioTimeWheel {
     time_wheel: TimeWheel<Token>,
     last_tick: Instant,
 }
@@ -150,16 +142,17 @@ impl MioTimeWheel {
     }
 }
 
-pub struct BasicMioPoller<TM: ThreadModel> {
-    poll: TM::Guard<mio::Poll>,
+pub struct MioPoller<Poll,TimeWheel> {
+    poll: Poll,
     registry: Arc<mio::Registry>,
-    time_wheel: TM::Guard<MioTimeWheel>,
+    time_wheel: TimeWheel,
     tick_duration: Duration,
 }
 
-impl<TM> Clone for BasicMioPoller<TM>
+impl<Poll,TimeWheel> Clone for MioPoller<Poll,TimeWheel>
 where
-    TM: ThreadModel,
+    Poll: Clone,
+    TimeWheel: Clone
 {
     fn clone(&self) -> Self {
         Self {
@@ -171,9 +164,10 @@ where
     }
 }
 
-impl<TM> Default for BasicMioPoller<TM>
+impl<Poll,TimeWheel> Default for MioPoller<Poll,TimeWheel>
 where
-    TM: ThreadModel,
+    Poll: Shared<Value = mio::Poll> + From<mio::Poll>,
+    TimeWheel: Shared<Value = MioTimeWheel> + From<MioTimeWheel>,
 {
     fn default() -> Self {
         let poll = mio::Poll::new().unwrap();
@@ -189,16 +183,17 @@ where
     }
 }
 
-impl<TM> MioPoller for BasicMioPoller<TM>
+impl<Poll,TimeWheel> MioPoller<Poll,TimeWheel>
 where
-    TM: ThreadModel,
+    Poll: Shared<Value = mio::Poll>,
+    TimeWheel: Shared<Value = MioTimeWheel>
 {
-    fn poll_once(&self, timeout: Option<Duration>) -> io::Result<Vec<(Token, Interest)>> {
+   pub fn poll_once(&self, timeout: Option<Duration>) -> io::Result<Vec<(Token, Interest)>> {
         let poll_timeout = timeout.unwrap_or(self.tick_duration);
 
         let mut events = mio::event::Events::with_capacity(1024);
 
-        self.poll.get_mut().poll(&mut events, Some(poll_timeout))?;
+        self.poll.lock_mut().poll(&mut events, Some(poll_timeout))?;
 
         let mut hala_events = vec![];
 
@@ -214,7 +209,7 @@ where
             hala_events.push((Token(event.token().0), interests));
         }
 
-        let timeout = self.time_wheel.get_mut().tick(self.tick_duration);
+        let timeout = self.time_wheel.lock_mut().tick(self.tick_duration);
 
         for token in timeout {
             hala_events.push((token, Interest::Readable));
@@ -223,7 +218,7 @@ where
         Ok(hala_events)
     }
 
-    fn register(&self, handle: Handle, interests: Interest) -> io::Result<()> {
+   pub fn register(&self, handle: Handle, interests: Interest) -> io::Result<()> {
         let mut mio_interests = mio::Interest::READABLE.add(mio::Interest::WRITABLE);
 
         if !interests.contains(Interest::Writable) {
@@ -260,7 +255,7 @@ where
                     timeout.start_time = Some(Instant::now());
                     timeout.tick_duration = Some(self.tick_duration);
 
-                    let mut time_wheel = self.time_wheel.get_mut();
+                    let mut time_wheel = self.time_wheel.lock_mut();
 
                     let timeout_duration = adjust_timeout(time_wheel.last_tick,time_wheel.time_wheel.tick,self.tick_duration,timeout.duration);
 
@@ -294,7 +289,7 @@ where
         }
     }
 
-    fn reregister(&self, handle: Handle, interests: Interest) -> io::Result<()> {
+   pub fn reregister(&self, handle: Handle, interests: Interest) -> io::Result<()> {
         let mut mio_interests = mio::Interest::READABLE.add(mio::Interest::WRITABLE);
 
         if !interests.contains(Interest::Writable) {
@@ -326,7 +321,7 @@ where
                 TypedHandle::<MioTimeout>::new(handle).with_mut(|timeout| {
                     assert!(!timeout.duration.is_zero());
 
-                    let mut time_wheel = self.time_wheel.get_mut();
+                    let mut time_wheel = self.time_wheel.lock_mut();
 
                     if let Some(slot) = timeout.slot {
                         time_wheel.time_wheel.remove(slot, handle.token);
@@ -359,7 +354,7 @@ where
             }
         }
     }
-    fn deregister(&self, handle: Handle) -> io::Result<()> {
+   pub fn deregister(&self, handle: Handle) -> io::Result<()> {
         match handle.desc {
             crate::Description::File => todo!(),
             crate::Description::TcpListener => TypedHandle::<mio::net::TcpListener>::new(handle)
@@ -372,7 +367,7 @@ where
                 TypedHandle::<MioTimeout>::new(handle).with_mut(|timeout| {
                     assert!(!timeout.duration.is_zero());
 
-                    let mut time_wheel = self.time_wheel.get_mut();
+                    let mut time_wheel = self.time_wheel.lock_mut();
 
                     if let Some(slot) = timeout.slot {
                         time_wheel.time_wheel.remove(slot, handle.token);
@@ -391,6 +386,7 @@ where
     }
 }
 
-pub type STMioPoller = BasicMioPoller<STModel>;
 
-pub type MTMioPoller = BasicMioPoller<MTModel>;
+pub type LocalMioPoller = MioPoller<LocalShared<mio::Poll>,LocalShared<MioTimeWheel>>;
+
+pub type MutexMioPoller = MioPoller<MutexShared<mio::Poll>,MutexShared<MioTimeWheel>>;

@@ -231,6 +231,7 @@ mod tests {
 
     #[hala_test::test(io_test)]
     async fn test_timeout() {
+        pretty_env_logger::init_timed();
         let result = timeout(
             poll_fn(|_| -> Poll<io::Result<()>> { Poll::Pending }),
             Some(Duration::from_millis(20)),

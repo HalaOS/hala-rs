@@ -1,4 +1,5 @@
-use futures::{AsyncReadExt, AsyncWriteExt};
+use driver::mio_driver;
+use futures::{executor::LocalPool, AsyncReadExt, AsyncWriteExt};
 use hala_io_util::*;
 use hala_net::*;
 
@@ -80,4 +81,20 @@ async fn udp_echo_test() {
 
         assert_eq!(write_size, echo_data.len());
     }
+}
+
+#[test]
+fn test_bug() {
+    _ = register_driver(mio_driver());
+    _ = register_local_poller();
+
+    let _guard = PollLoopGuard::new(None).unwrap();
+
+    let mut local_pool = LocalPool::new();
+
+    let spawner = local_pool.spawner();
+
+    let echo_data = b"hello";
+
+    let tcp_listener = TcpListener::bind("127.0.0.1:0").unwrap();
 }

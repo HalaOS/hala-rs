@@ -1,22 +1,16 @@
 use std::{collections::HashMap, io, task::Waker};
 
+use shared::{LocalShared, MutexShared, Shared};
+
 use crate::{Interest, Token};
 
-use super::*;
-
-pub trait MioNotifier {
-    fn add_waker(&self, token: Token, interests: Interest, waker: Waker);
-    fn remove_waker(&self, token: Token, interests: Interest) -> io::Result<Option<Waker>>;
-    fn on(&self, token: Token, interests: Interest);
+pub struct MioNotifier<S> {
+    inner: S,
 }
 
-pub struct BasicMioNotifier<TM: ThreadModel> {
-    inner: TM::Guard<MioNotifierInner>,
-}
-
-impl<TM> Clone for BasicMioNotifier<TM>
+impl<S> Clone for MioNotifier<S>
 where
-    TM: ThreadModel,
+    S: Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -25,9 +19,9 @@ where
     }
 }
 
-impl<TM> Default for BasicMioNotifier<TM>
+impl<S> Default for MioNotifier<S>
 where
-    TM: ThreadModel,
+    S: Shared<Value = MioNotifierInner> + From<MioNotifierInner>,
 {
     fn default() -> Self {
         Self {
@@ -36,25 +30,25 @@ where
     }
 }
 
-impl<TM> MioNotifier for BasicMioNotifier<TM>
+impl<S> MioNotifier<S>
 where
-    TM: ThreadModel,
+    S: Shared<Value = MioNotifierInner> + From<MioNotifierInner>,
 {
-    fn add_waker(&self, token: Token, interests: Interest, waker: Waker) {
-        self.inner.get_mut().add_waker(token, interests, waker)
+    pub fn add_waker(&self, token: Token, interests: Interest, waker: Waker) {
+        self.inner.lock_mut().add_waker(token, interests, waker)
     }
 
-    fn remove_waker(&self, token: Token, interests: Interest) -> io::Result<Option<Waker>> {
-        self.inner.get_mut().remove_waker(token, interests)
+    pub fn remove_waker(&self, token: Token, interests: Interest) -> io::Result<Option<Waker>> {
+        self.inner.lock_mut().remove_waker(token, interests)
     }
 
-    fn on(&self, token: Token, interests: Interest) {
-        self.inner.get_mut().on(token, interests)
+    pub fn on(&self, token: Token, interests: Interest) {
+        self.inner.lock_mut().on(token, interests)
     }
 }
 
 #[derive(Clone, Default)]
-struct MioNotifierInner {
+pub(super) struct MioNotifierInner {
     read_wakers: HashMap<Token, Waker>,
     write_wakers: HashMap<Token, Waker>,
 }
@@ -95,6 +89,6 @@ impl MioNotifierInner {
     }
 }
 
-pub type STMioNotifier = BasicMioNotifier<STModel>;
+pub type LocalMioNotifier = MioNotifier<LocalShared<MioNotifierInner>>;
 
-pub type MTMioNotifier = BasicMioNotifier<MTModel>;
+pub type MutexMioNotifier = MioNotifier<MutexShared<MioNotifierInner>>;

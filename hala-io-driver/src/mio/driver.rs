@@ -1,55 +1,213 @@
 use std::{
     io::{self, Read, Write},
-    marker::PhantomData,
+    ops,
     task::Waker,
+    time::Duration,
 };
 
-use crate::{Description, Driver, Interest, IntoRawDriver, RawDriverExt, Token, TypedHandle};
+use crate::{
+    Description, Driver, Handle, Interest, IntoRawDriver, RawDriverExt, Token, TypedHandle,
+};
 
-use super::*;
+use super::{
+    notifier::{LocalMioNotifier, MutexMioNotifier},
+    *,
+};
 
-pub struct BasicMioDriver<N, P>
-where
-    N: Clone,
-    P: Clone,
-{
-    notifier: N,
-    _marked: PhantomData<P>,
+struct MioPollerWithNotifier {
+    local: bool,
+    data: *const (),
 }
 
-impl<N, P> BasicMioDriver<N, P>
-where
-    N: MioNotifier + Default + Clone,
-    P: MioPoller + Default + Clone,
-{
-    pub fn new() -> Self {
-        Self {
-            notifier: Default::default(),
-            _marked: Default::default(),
+impl MioPollerWithNotifier {
+    fn new(local: bool) -> Self {
+        if local {
+            let data = Box::into_raw(Box::new((
+                LocalMioPoller::default(),
+                LocalMioNotifier::default(),
+            ))) as *const ();
+
+            return MioPollerWithNotifier { local, data };
+        } else {
+            let data = Box::into_raw(Box::new((
+                MutexMioPoller::default(),
+                MutexMioNotifier::default(),
+            ))) as *const ();
+
+            return MioPollerWithNotifier { local, data };
+        }
+    }
+
+    fn with_local<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&LocalMioPoller, &LocalMioNotifier) -> R,
+    {
+        let boxed = unsafe { Box::from_raw(self.data as *mut (LocalMioPoller, LocalMioNotifier)) };
+
+        let r = f(&boxed.0, &boxed.1);
+
+        Box::into_raw(boxed);
+
+        r
+    }
+
+    fn with<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&MutexMioPoller, &MutexMioNotifier) -> R,
+    {
+        let boxed = unsafe { Box::from_raw(self.data as *mut (MutexMioPoller, MutexMioNotifier)) };
+
+        let r = f(&boxed.0, &boxed.1);
+
+        Box::into_raw(boxed);
+
+        r
+    }
+
+    fn add_waker(&self, token: Token, interests: Interest, waker: Waker) {
+        if self.local {
+            self.with_local(|_, notifier| notifier.add_waker(token, interests, waker))
+        } else {
+            self.with(|_, notifier| notifier.add_waker(token, interests, waker))
+        }
+    }
+
+    fn remove_waker(&self, token: Token, interests: Interest) -> io::Result<Option<Waker>> {
+        if self.local {
+            self.with_local(|_, notifier| notifier.remove_waker(token, interests))
+        } else {
+            self.with(|_, notifier| notifier.remove_waker(token, interests))
+        }
+    }
+
+    fn register(&self, handle: Handle, interests: Interest) -> io::Result<()> {
+        if self.local {
+            self.with_local(|poller, _| poller.register(handle, interests))
+        } else {
+            self.with(|poller, _| poller.register(handle, interests))
+        }
+    }
+
+    fn reregister(&self, handle: Handle, interests: Interest) -> io::Result<()> {
+        if self.local {
+            self.with_local(|poller, _| poller.reregister(handle, interests))
+        } else {
+            self.with(|poller, _| poller.reregister(handle, interests))
+        }
+    }
+
+    fn deregister(&self, handle: Handle) -> io::Result<()> {
+        if self.local {
+            self.with_local(|poller, _| poller.deregister(handle))
+        } else {
+            self.with(|poller, _| poller.deregister(handle))
+        }
+    }
+
+    fn poll_once(&self, timeout: Option<Duration>) -> io::Result<Vec<(Token, Interest)>> {
+        if self.local {
+            self.with_local(|poller, _| poller.poll_once(timeout))
+        } else {
+            self.with(|poller, _| poller.poll_once(timeout))
+        }
+    }
+
+    fn on(&self, token: Token, interests: Interest) {
+        if self.local {
+            self.with_local(|_, notifier| notifier.on(token, interests))
+        } else {
+            self.with(|_, notifier| notifier.on(token, interests))
         }
     }
 }
 
-impl<N, P> Clone for BasicMioDriver<N, P>
-where
-    N: Clone,
-    P: Clone,
-{
+impl Clone for MioPollerWithNotifier {
     fn clone(&self) -> Self {
-        Self {
-            notifier: self.notifier.clone(),
-            _marked: Default::default(),
+        if self.local {
+            let data = self.with_local(|poller, notifer| {
+                Box::into_raw(Box::new((poller.clone(), notifer.clone()))) as *const ()
+            });
+
+            return Self {
+                local: self.local,
+                data,
+            };
+        } else {
+            let data = self.with(|poller, notifer| {
+                Box::into_raw(Box::new((poller.clone(), notifer.clone()))) as *const ()
+            });
+
+            return Self {
+                local: self.local,
+                data,
+            };
         }
     }
 }
 
-impl<N, P> BasicMioDriver<N, P>
-where
-    N: MioNotifier + Clone,
-    P: MioPoller + Clone,
-{
+impl Drop for MioPollerWithNotifier {
+    fn drop(&mut self) {
+        if self.local {
+            _ = unsafe { Box::from_raw(self.data as *mut (LocalMioPoller, LocalMioNotifier)) };
+        } else {
+            _ = unsafe { Box::from_raw(self.data as *mut (MutexMioPoller, MutexMioNotifier)) };
+        }
+    }
+}
+
+struct WithPoller<T> {
+    value: T,
+    poller: Option<MioPollerWithNotifier>,
+}
+
+impl<T> WithPoller<T> {
+    fn new(value: T) -> Self {
+        Self {
+            value,
+            poller: None,
+        }
+    }
+
+    fn get_poller(&self) -> io::Result<&MioPollerWithNotifier> {
+        self.poller.as_ref().ok_or(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Call poll register first",
+        ))
+    }
+}
+
+impl<T> ops::Deref for WithPoller<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
+}
+
+impl<T> ops::DerefMut for WithPoller<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.value
+    }
+}
+
+pub struct MioDriver {}
+
+impl MioDriver {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl Clone for MioDriver {
+    fn clone(&self) -> Self {
+        Self {}
+    }
+}
+
+impl MioDriver {
     fn nonblocking_call<R, F>(
         &self,
+        poller: &MioPollerWithNotifier,
         token: Token,
         interests: Interest,
         waker: Waker,
@@ -58,7 +216,7 @@ where
     where
         F: FnMut() -> io::Result<R>,
     {
-        self.notifier.add_waker(token, interests, waker);
+        poller.add_waker(token, interests, waker);
 
         loop {
             match f() {
@@ -68,7 +226,7 @@ where
                 Err(err) if err.kind() == io::ErrorKind::WouldBlock => return Err(err),
 
                 r => {
-                    _ = self.notifier.remove_waker(token, interests);
+                    _ = poller.remove_waker(token, interests);
 
                     return r;
                 }
@@ -77,11 +235,7 @@ where
     }
 }
 
-impl<N, P> RawDriverExt for BasicMioDriver<N, P>
-where
-    N: MioNotifier + Clone,
-    P: MioPoller + Default + Clone,
-{
+impl RawDriverExt for MioDriver {
     fn fd_user_define_open(&self, id: usize, _buf: &[u8]) -> std::io::Result<crate::Handle> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
@@ -133,13 +287,17 @@ where
     }
 
     fn timeout_open(&self, duration: std::time::Duration) -> std::io::Result<crate::Handle> {
-        Ok((Description::Timeout, MioTimeout::new(duration)).into())
+        Ok((
+            Description::Timeout,
+            WithPoller::new(MioTimeout::new(duration)),
+        )
+            .into())
     }
 
     fn timeout(&self, waker: Waker, handle: crate::Handle) -> std::io::Result<bool> {
         handle.expect(Description::Timeout)?;
 
-        TypedHandle::<MioTimeout>::new(handle).with(|timeout| {
+        TypedHandle::<WithPoller<MioTimeout>>::new(handle).with(|timeout| {
             if !timeout.is_register() {
                 return Err(io::Error::new(
                     io::ErrorKind::Other,
@@ -147,13 +305,14 @@ where
                 ));
             }
 
-            log::debug!("{:?}", timeout);
+            log::debug!("{:?}", timeout.value);
 
             if timeout.is_expired() {
                 return Ok(true);
             }
 
-            self.notifier
+            timeout
+                .get_poller()?
                 .add_waker(handle.token, Interest::Readable, waker);
 
             Ok(false)
@@ -163,7 +322,7 @@ where
     fn timeout_close(&self, handle: crate::Handle) -> std::io::Result<()> {
         handle.expect(Description::Timeout)?;
 
-        handle.drop_as::<MioTimeout>();
+        handle.drop_as::<WithPoller<MioTimeout>>();
 
         Ok(())
     }
@@ -175,7 +334,7 @@ where
 
         let tcp_lisener = mio::net::TcpListener::from_std(tcp_listener);
 
-        Ok((Description::TcpListener, tcp_lisener).into())
+        Ok((Description::TcpListener, WithPoller::new(tcp_lisener)).into())
     }
 
     fn tcp_listener_accept(
@@ -187,18 +346,29 @@ where
 
         handle.expect(Description::TcpListener)?;
 
-        let typed_handle = TypedHandle::<mio::net::TcpListener>::new(handle);
+        let typed_handle = TypedHandle::<WithPoller<mio::net::TcpListener>>::new(handle);
 
-        self.nonblocking_call(handle.token, Interest::Readable, waker, || {
-            typed_handle.with(|socket| socket.accept())
+        typed_handle.with(|socket| {
+            self.nonblocking_call(
+                socket.get_poller()?,
+                handle.token,
+                Interest::Readable,
+                waker,
+                || socket.accept(),
+            )
+            .map(|(stream, raddr)| {
+                (
+                    (Description::TcpStream, WithPoller::new(stream)).into(),
+                    raddr,
+                )
+            })
         })
-        .map(|(stream, raddr)| ((Description::TcpStream, stream).into(), raddr))
     }
 
     fn tcp_listener_close(&self, handle: crate::Handle) -> std::io::Result<()> {
         handle.expect(Description::TcpListener)?;
 
-        handle.drop_as::<mio::net::TcpListener>();
+        handle.drop_as::<WithPoller<mio::net::TcpListener>>();
 
         Ok(())
     }
@@ -213,7 +383,7 @@ where
 
         let tcp_stream = mio::net::TcpStream::from_std(tcp_stream);
 
-        Ok((Description::TcpStream, tcp_stream).into())
+        Ok((Description::TcpStream, WithPoller::new(tcp_stream)).into())
     }
 
     fn tcp_stream_write(
@@ -224,10 +394,13 @@ where
     ) -> std::io::Result<usize> {
         handle.expect(Description::TcpStream)?;
 
-        let typed_handle = TypedHandle::<mio::net::TcpStream>::new(handle);
+        let typed_handle = TypedHandle::<WithPoller<mio::net::TcpStream>>::new(handle);
 
-        self.nonblocking_call(handle.token, Interest::Writable, waker, || {
-            typed_handle.with_mut(|socket| socket.write(buf))
+        typed_handle.with_mut(|socket| {
+            let poller = socket.get_poller()?.clone();
+            self.nonblocking_call(&poller, handle.token, Interest::Writable, waker, || {
+                socket.write(buf)
+            })
         })
     }
 
@@ -239,17 +412,21 @@ where
     ) -> std::io::Result<usize> {
         handle.expect(Description::TcpStream)?;
 
-        let typed_handle = TypedHandle::<mio::net::TcpStream>::new(handle);
+        let typed_handle = TypedHandle::<WithPoller<mio::net::TcpStream>>::new(handle);
 
-        self.nonblocking_call(handle.token, Interest::Readable, waker, || {
-            typed_handle.with_mut(|socket| socket.read(buf))
+        typed_handle.with_mut(|socket| {
+            let poller = socket.get_poller()?.clone();
+
+            self.nonblocking_call(&poller, handle.token, Interest::Readable, waker, || {
+                socket.read(buf)
+            })
         })
     }
 
     fn tcp_stream_close(&self, handle: crate::Handle) -> std::io::Result<()> {
         handle.expect(Description::TcpStream)?;
 
-        handle.drop_as::<mio::net::TcpStream>();
+        handle.drop_as::<WithPoller<mio::net::TcpStream>>();
 
         Ok(())
     }
@@ -261,7 +438,7 @@ where
 
         let upd_socket = mio::net::UdpSocket::from_std(udp_socket);
 
-        Ok((Description::UdpSocket, upd_socket).into())
+        Ok((Description::UdpSocket, WithPoller::new(upd_socket)).into())
     }
 
     fn udp_socket_sendto(
@@ -273,10 +450,16 @@ where
     ) -> std::io::Result<usize> {
         handle.expect(Description::UdpSocket)?;
 
-        let typed_handle = TypedHandle::<mio::net::UdpSocket>::new(handle);
+        let typed_handle = TypedHandle::<WithPoller<mio::net::UdpSocket>>::new(handle);
 
-        self.nonblocking_call(handle.token, Interest::Writable, waker, || {
-            typed_handle.with_mut(|socket| socket.send_to(buf, raddr))
+        typed_handle.with_mut(|socket| {
+            self.nonblocking_call(
+                socket.get_poller()?,
+                handle.token,
+                Interest::Writable,
+                waker,
+                || socket.send_to(buf, raddr),
+            )
         })
     }
 
@@ -288,31 +471,36 @@ where
     ) -> std::io::Result<(usize, std::net::SocketAddr)> {
         handle.expect(Description::UdpSocket)?;
 
-        let typed_handle = TypedHandle::<mio::net::UdpSocket>::new(handle);
+        let typed_handle = TypedHandle::<WithPoller<mio::net::UdpSocket>>::new(handle);
 
-        self.nonblocking_call(handle.token, Interest::Readable, waker, || {
-            typed_handle.with_mut(|socket| socket.recv_from(buf))
+        typed_handle.with_mut(|socket| {
+            self.nonblocking_call(
+                socket.get_poller()?,
+                handle.token,
+                Interest::Readable,
+                waker,
+                || socket.recv_from(buf),
+            )
         })
     }
 
     fn udp_socket_close(&self, handle: crate::Handle) -> std::io::Result<()> {
         handle.expect(Description::UdpSocket)?;
 
-        handle.drop_as::<mio::net::UdpSocket>();
+        handle.drop_as::<WithPoller<mio::net::UdpSocket>>();
 
         Ok(())
     }
 
-    fn poller_open(&self) -> std::io::Result<crate::Handle> {
-        let poller = P::default();
-
-        Ok((Description::Poller, poller).into())
+    fn poller_open(&self, local: bool) -> std::io::Result<crate::Handle> {
+        Ok((Description::Poller, MioPollerWithNotifier::new(local)).into())
     }
 
     fn poller_clone(&self, handle: crate::Handle) -> std::io::Result<crate::Handle> {
         handle.expect(Description::Poller)?;
 
-        let cloned = TypedHandle::<P>::new(handle).with(|poller| poller.clone());
+        let cloned =
+            TypedHandle::<MioPollerWithNotifier>::new(handle).with(|poller| poller.clone());
 
         Ok((Description::Poller, cloned).into())
     }
@@ -325,7 +513,36 @@ where
     ) -> std::io::Result<()> {
         poller.expect(Description::Poller)?;
 
-        TypedHandle::<P>::new(poller).with(|poller| poller.register(source, interests))
+        TypedHandle::<MioPollerWithNotifier>::new(poller).with(|poller| {
+            match source.desc {
+                Description::File => todo!(),
+                Description::TcpListener => {
+                    let typed_handle =
+                        TypedHandle::<WithPoller<mio::net::TcpListener>>::new(source);
+
+                    typed_handle.with_mut(|with_poller| with_poller.poller = Some(poller.clone()));
+                }
+                Description::TcpStream => {
+                    let typed_handle = TypedHandle::<WithPoller<mio::net::TcpStream>>::new(source);
+
+                    typed_handle.with_mut(|with_poller| with_poller.poller = Some(poller.clone()));
+                }
+                Description::UdpSocket => {
+                    let typed_handle = TypedHandle::<WithPoller<mio::net::UdpSocket>>::new(source);
+
+                    typed_handle.with_mut(|with_poller| with_poller.poller = Some(poller.clone()));
+                }
+                Description::Timeout => {
+                    let typed_handle = TypedHandle::<WithPoller<MioTimeout>>::new(source);
+
+                    typed_handle.with_mut(|with_poller| with_poller.poller = Some(poller.clone()));
+                }
+                Description::Poller => panic!("Register poller on poller"),
+                Description::External(_) => todo!(),
+            }
+
+            poller.register(source, interests)
+        })
     }
 
     fn poller_reregister(
@@ -336,7 +553,8 @@ where
     ) -> std::io::Result<()> {
         poller.expect(Description::Poller)?;
 
-        TypedHandle::<P>::new(poller).with(|poller| poller.reregister(source, interests))
+        TypedHandle::<MioPollerWithNotifier>::new(poller)
+            .with(|poller| poller.reregister(source, interests))
     }
 
     fn poller_deregister(
@@ -346,7 +564,7 @@ where
     ) -> std::io::Result<()> {
         poller.expect(Description::Poller)?;
 
-        TypedHandle::<P>::new(poller).with(|poller| poller.deregister(source))
+        TypedHandle::<MioPollerWithNotifier>::new(poller).with(|poller| poller.deregister(source))
     }
 
     fn poller_poll_once(
@@ -356,11 +574,11 @@ where
     ) -> std::io::Result<()> {
         poller.expect(Description::Poller)?;
 
-        TypedHandle::<P>::new(poller).with(|poller| {
+        TypedHandle::<MioPollerWithNotifier>::new(poller).with(|poller| {
             let events = poller.poll_once(timeout)?;
 
             for (token, interests) in events {
-                self.notifier.on(token, interests);
+                poller.on(token, interests);
             }
 
             Ok(())
@@ -370,7 +588,7 @@ where
     fn poller_close(&self, poller: crate::Handle) -> std::io::Result<()> {
         poller.expect(Description::Poller)?;
 
-        poller.drop_as::<P>();
+        poller.drop_as::<MioPollerWithNotifier>();
 
         Ok(())
     }
@@ -378,36 +596,32 @@ where
     fn tcp_listener_local_addr(&self, handle: crate::Handle) -> io::Result<std::net::SocketAddr> {
         handle.expect(Description::TcpListener)?;
 
-        TypedHandle::<mio::net::TcpListener>::new(handle).with(|socket| socket.local_addr())
+        TypedHandle::<WithPoller<mio::net::TcpListener>>::new(handle)
+            .with(|socket| socket.local_addr())
     }
 
     fn tcp_stream_local_addr(&self, handle: crate::Handle) -> io::Result<std::net::SocketAddr> {
         handle.expect(Description::TcpStream)?;
 
-        TypedHandle::<mio::net::TcpStream>::new(handle).with(|socket| socket.local_addr())
+        TypedHandle::<WithPoller<mio::net::TcpStream>>::new(handle)
+            .with(|socket| socket.local_addr())
     }
 
     fn tcp_stream_remote_addr(&self, handle: crate::Handle) -> io::Result<std::net::SocketAddr> {
         handle.expect(Description::TcpStream)?;
 
-        TypedHandle::<mio::net::TcpStream>::new(handle).with(|socket| socket.peer_addr())
+        TypedHandle::<WithPoller<mio::net::TcpStream>>::new(handle)
+            .with(|socket| socket.peer_addr())
     }
 
     fn udp_local_addr(&self, handle: crate::Handle) -> io::Result<std::net::SocketAddr> {
         handle.expect(Description::UdpSocket)?;
 
-        TypedHandle::<mio::net::UdpSocket>::new(handle).with(|socket| socket.local_addr())
+        TypedHandle::<WithPoller<mio::net::UdpSocket>>::new(handle)
+            .with(|socket| socket.local_addr())
     }
 }
 
-type STMioDriver = BasicMioDriver<STMioNotifier, STMioPoller>;
-
-type MTMioDriver = BasicMioDriver<MTMioNotifier, MTMioPoller>;
-
-pub fn local_mio_driver() -> Driver {
-    STMioDriver::new().into_raw_driver().into()
-}
-
 pub fn mio_driver() -> Driver {
-    MTMioDriver::new().into_raw_driver().into()
+    MioDriver::new().into_raw_driver().into()
 }

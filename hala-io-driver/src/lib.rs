@@ -17,5 +17,3 @@ pub use file::*;
 mod driver_ext;
 #[cfg(feature = "driver_ext")]
 pub use driver_ext::*;
-
-pub mod thread_model;
