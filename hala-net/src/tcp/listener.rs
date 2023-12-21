@@ -25,13 +25,15 @@ impl Debug for TcpListener {
 impl TcpListener {
     /// Create new tcp listener with calling underly bind method.
     pub fn bind<S: ToSocketAddrs>(laddrs: S) -> io::Result<Self> {
+        Self::bind_with(laddrs, get_poller()?)
+    }
+
+    pub fn bind_with<S: ToSocketAddrs>(laddrs: S, poller: Handle) -> io::Result<Self> {
         let driver = get_driver()?;
 
         let laddrs = laddrs.to_socket_addrs()?.into_iter().collect::<Vec<_>>();
 
         let fd = driver.fd_open(Description::TcpListener, OpenFlags::Bind(&laddrs))?;
-
-        let poller = get_poller()?;
 
         match driver.fd_cntl(
             poller,

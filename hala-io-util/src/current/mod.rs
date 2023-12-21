@@ -28,9 +28,10 @@ static INIT_DRIVER: Once = Once::new();
 static POOL: OnceLock<ThreadPool> = OnceLock::new();
 
 /// Run a hala io future for multi-thread mode.
-pub fn block_on<Fut>(fut: Fut, pool_size: usize) -> io::Result<()>
+pub fn block_on<Fut, R>(fut: Fut, pool_size: usize) -> R
 where
-    Fut: Future<Output = io::Result<()>> + Send + 'static,
+    Fut: Future<Output = R> + Send + 'static,
+    R: Send + 'static,
 {
     INIT_DRIVER.call_once(|| {
         register_driver(mio_driver()).unwrap();
@@ -52,12 +53,13 @@ where
 
     let dropping_cloned = dropping.clone();
 
-    let handle = pool.spawn_with_handle(fut).map_err(|err| {
-        io::Error::new(io::ErrorKind::Other, format!("Spawn local error: {}", err))
-    })?;
+    let handle = pool
+        .spawn_with_handle(fut)
+        .map_err(|err| io::Error::new(io::ErrorKind::Other, format!("Spawn local error: {}", err)))
+        .unwrap();
 
-    let driver = get_driver()?;
-    let poller = get_poller()?;
+    let driver = get_driver().unwrap();
+    let poller = get_poller().unwrap();
 
     std::thread::spawn(move || {
         while !dropping_cloned.load(Ordering::SeqCst) {
@@ -87,9 +89,10 @@ impl IoSpawner for BlockOnIoSpawner {
 }
 
 /// Run a hala io future for single-thread mode.
-pub fn local_block_on<Fut>(fut: Fut) -> io::Result<()>
+pub fn local_block_on<Fut, R>(fut: Fut) -> R
 where
-    Fut: Future<Output = ()> + 'static,
+    Fut: Future<Output = R> + 'static,
+    R: 'static,
 {
     INIT_DRIVER.call_once(|| {
         register_driver(mio_driver()).unwrap();
@@ -104,24 +107,28 @@ where
     let dropping_cloned = dropping.clone();
 
     let start_fut = async move {
-        fut.await;
+        let r = fut.await;
 
         *dropping_cloned.borrow_mut() = true;
+
+        r
     };
 
-    pool.spawner().spawn_local(start_fut).map_err(|err| {
-        io::Error::new(io::ErrorKind::Other, format!("Spawn local error: {}", err))
-    })?;
+    let handle = pool
+        .spawner()
+        .spawn_local_with_handle(Box::pin(start_fut))
+        .map_err(|err| io::Error::new(io::ErrorKind::Other, format!("Spawn local error: {}", err)))
+        .unwrap();
 
-    let driver = get_driver()?;
-    let poller = get_local_poller()?;
+    let driver = get_driver().unwrap();
+    let poller = get_local_poller().unwrap();
 
     while !*dropping.borrow() {
         driver.fd_cntl(poller, Cmd::PollOnce(None)).unwrap();
         pool.run_until_stalled();
     }
 
-    Ok(())
+    pool.run_until(handle)
 }
 
 struct LocalBlockOnIoSpawner(LocalSpawner);

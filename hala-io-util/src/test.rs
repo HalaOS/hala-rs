@@ -12,14 +12,7 @@ where
 
     let fut = test();
 
-    crate::current::block_on(
-        async move {
-            fut.await;
-            Ok(())
-        },
-        10,
-    )
-    .unwrap();
+    _ = crate::current::block_on(fut, 10);
 }
 
 /// Test runner with multithread spawner and global poll event loop
@@ -32,5 +25,5 @@ where
 
     let fut = test();
 
-    crate::current::local_block_on(fut).unwrap();
+    _ = crate::current::local_block_on(fut);
 }
