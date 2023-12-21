@@ -33,7 +33,7 @@ pub trait Shared {
     fn try_lock_mut(&self) -> Option<Self::MutRef<'_>>;
 }
 
-/// Shared data that using in single thread mode
+/// Shared data that using in single thread mode and without [`Clone`] support
 #[derive(Debug)]
 pub struct LocalSharedNonClone<T> {
     value: RefCell<T>,
@@ -111,7 +111,7 @@ impl<T> ops::Deref for LocalShared<T> {
     }
 }
 
-/// Shared data that using in multi-thread mode
+/// Shared data that using in multi-thread mode and without [`Clone`] support
 #[derive(Debug)]
 pub struct MutexSharedNonClone<T> {
     value: Mutex<T>,
