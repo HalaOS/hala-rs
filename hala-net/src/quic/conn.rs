@@ -1,11 +1,11 @@
 use std::{fmt::Debug, io};
 
-use super::{QuicConnState, QuicStream};
+use super::{AsyncQuicConnState, QuicStream};
 
 /// Quic connection between a local and a remote.
 #[derive(Clone)]
 pub struct QuicConn {
-    pub(super) state: QuicConnState,
+    pub(super) state: AsyncQuicConnState,
 }
 
 impl Debug for QuicConn {
@@ -15,7 +15,7 @@ impl Debug for QuicConn {
 }
 
 impl QuicConn {
-    pub(crate) fn new(state: QuicConnState) -> Self {
+    pub(crate) fn new(state: AsyncQuicConnState) -> Self {
         Self { state }
     }
     /// Accept new incoming stream.

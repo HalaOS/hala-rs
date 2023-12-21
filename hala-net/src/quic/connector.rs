@@ -13,7 +13,7 @@ use ring::rand::{SecureRandom, SystemRandom};
 
 use crate::{errors::into_io_error, UdpGroup};
 
-use super::{Config, QuicConn, QuicConnState};
+use super::{AsyncQuicConnState, Config, QuicConn};
 
 /// Quic client connector
 pub(crate) struct InnerConnector {
@@ -94,7 +94,7 @@ impl InnerConnector {
 
 impl From<InnerConnector> for QuicConn {
     fn from(value: InnerConnector) -> Self {
-        QuicConn::new(QuicConnState::new(value.quiche_conn, 4))
+        QuicConn::new(AsyncQuicConnState::new(value.quiche_conn, 4))
     }
 }
 
@@ -211,7 +211,7 @@ impl QuicConnector {
 }
 
 #[derive(Clone)]
-pub(super) struct QuicConnEventLoop {
+pub struct QuicConnEventLoop {
     pub(super) conn: QuicConn,
     pub(super) udp_group: Arc<UdpGroup>,
 }
@@ -220,16 +220,16 @@ impl QuicConnEventLoop {
     fn run_loop(&self) -> io::Result<()> {
         let clonsed = self.clone();
 
-        io_spawn(async move { clonsed.clone().recv_loop().await })?;
+        local_io_spawn(async move { clonsed.clone().recv_loop().await })?;
 
         let clonsed = self.clone();
 
-        io_spawn(async move { clonsed.clone().send_loop().await })?;
+        local_io_spawn(async move { clonsed.clone().send_loop().await })?;
 
         Ok(())
     }
 
-    async fn recv_loop(&self) -> io::Result<()> {
+    pub async fn recv_loop(&self) -> io::Result<()> {
         let mut buf = [0; 65535];
 
         loop {
@@ -260,7 +260,7 @@ impl QuicConnEventLoop {
         }
     }
 
-    pub(super) async fn send_loop(&self) -> io::Result<()> {
+    pub async fn send_loop(&self) -> io::Result<()> {
         let mut buf = [0; 65535];
 
         loop {

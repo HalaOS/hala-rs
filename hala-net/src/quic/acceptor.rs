@@ -14,7 +14,7 @@ use crate::{
     quic::{Config, QuicConn},
 };
 
-use super::QuicConnState;
+use super::conn_state::AsyncQuicConnState;
 
 enum InitAck {
     NegotiationVersion {
@@ -67,7 +67,7 @@ impl QuicAcceptor {
         let mut conns = vec![];
 
         for id in ids {
-            let state = QuicConn::new(QuicConnState::new(self.conns.remove(&id).unwrap(), 5));
+            let state = QuicConn::new(AsyncQuicConnState::new(self.conns.remove(&id).unwrap(), 5));
             conns.push((id, state));
         }
 

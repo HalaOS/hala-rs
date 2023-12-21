@@ -2,8 +2,8 @@ use std::{cell::RefCell, io, rc::Rc};
 
 use futures::{
     executor::{LocalPool, LocalSpawner},
-    future::BoxFuture,
-    task::{LocalSpawnExt, SpawnExt},
+    future::LocalBoxFuture,
+    task::LocalSpawnExt,
     Future,
 };
 use hala_io_util::{
@@ -57,9 +57,10 @@ where
 struct ThreadPerCoreSpawner(LocalSpawner);
 
 impl IoSpawner for ThreadPerCoreSpawner {
-    fn spawn(&self, fut: BoxFuture<'static, std::io::Result<()>>) -> std::io::Result<()> {
+    type Fut = LocalBoxFuture<'static, std::io::Result<()>>;
+    fn spawn(&self, fut: LocalBoxFuture<'static, std::io::Result<()>>) -> std::io::Result<()> {
         self.0
-            .spawn(async move {
+            .spawn_local(async move {
                 match fut.await {
                     Ok(_) => {}
                     Err(err) => {

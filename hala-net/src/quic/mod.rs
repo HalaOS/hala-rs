@@ -140,7 +140,7 @@ mod tests {
     async fn test_async_quic() {
         let (mut listener, laddrs) = create_listener(10).await;
 
-        io_spawn(async move {
+        local_io_spawn(async move {
             let mut connector = QuicConnector::bind("127.0.0.1:0", config(false)).unwrap();
 
             let conn = connector.connect(laddrs.as_slice()).await.unwrap();
@@ -190,7 +190,7 @@ mod tests {
 
         let mut connector = QuicConnector::bind("127.0.0.1:0", config(false)).unwrap();
 
-        io_spawn(async move {
+        local_io_spawn(async move {
             let _ = listener.accept().await.unwrap();
 
             log::trace!("Accept one incoming");

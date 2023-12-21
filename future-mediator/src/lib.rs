@@ -85,12 +85,60 @@ impl<T, E> DerefMut for Shared<T, E> {
 }
 
 /// A mediator is a central hub for communication between futures.
-pub struct MediatorTM<Raw, Wakers> {
+pub trait Mediator {
+    type Value: Unpin + 'static;
+    type Event: Eq + Hash + Clone + Unpin + Debug;
+
+    type OnEvent<F, R>: Future<Output = R>
+    where
+        F: FnMut(&mut Shared<Self::Value, Self::Event>, &mut Context<'_>) -> Poll<R> + Unpin,
+        R: Unpin;
+
+    /// Create new `Mediator` instance with shared value.
+    fn new(value: Self::Value) -> Self;
+
+    /// Acquire the lock and access immutable shared data.
+    fn with<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&Self::Value) -> R;
+
+    /// Acquire the lock and access mutable shared data.
+    fn with_mut<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut Self::Value) -> R;
+
+    /// Attempt to acquire the shared data lock immediately.
+    ///
+    /// If the lock is currently held, this will return `None`.
+    fn try_lock_with<F, R>(&self, f: F) -> Option<R>
+    where
+        F: FnOnce(&mut Self::Value) -> R;
+
+    /// Notify one listener event on
+    fn notify(&self, event: Self::Event);
+
+    /// Notify listeners events on
+    fn notify_all<Events: AsRef<[Self::Event]>>(&self, events: Events);
+
+    /// Create a new event handle future with poll function `f` and run once immediately
+    ///
+    /// If `f` returns [`Pending`](Poll::Pending), the system will move the
+    /// handle into the event waiting map, and the future returns `Pending` status.
+    ///
+    /// You can call [`notify`](Mediator::notify) to wake up this poll function and run once again.
+    fn on_fn<F, R>(&self, event: Self::Event, f: F) -> Self::OnEvent<F, R>
+    where
+        F: FnMut(&mut Shared<Self::Value, Self::Event>, &mut Context<'_>) -> Poll<R> + Unpin,
+        R: Unpin;
+}
+
+/// A mediator is a central hub for communication between futures.
+pub struct Hub<Raw, Wakers> {
     raw: Raw,
     wakers: Wakers,
 }
 
-impl<Raw, Wakers> Clone for MediatorTM<Raw, Wakers>
+impl<Raw, Wakers> Clone for Hub<Raw, Wakers>
 where
     Raw: Clone,
     Wakers: Clone,
@@ -103,21 +151,29 @@ where
     }
 }
 
-impl<T, E, Raw, Wakers> MediatorTM<Raw, Wakers>
+impl<T, E, Raw, Wakers> Mediator for Hub<Raw, Wakers>
 where
-    Raw: shared::Shared<Value = Shared<T, E>> + From<Shared<T, E>> + Clone,
-    Wakers: shared::Shared<Value = VecDeque<Waker>> + From<VecDeque<Waker>> + Clone,
+    T: Unpin + 'static,
+    E: Eq + Clone + Unpin + Hash + Debug,
+    Raw: shared::Shared<Value = Shared<T, E>> + From<Shared<T, E>> + Unpin + Clone,
+    Wakers: shared::Shared<Value = VecDeque<Waker>> + From<VecDeque<Waker>> + Unpin + Clone,
 {
+    type Event = E;
+    type Value = T;
+
+    type OnEvent<F, R> = OnEvent<Raw, Wakers, E, F> where
+        F: FnMut(&mut Shared<Self::Value, Self::Event>, &mut Context<'_>) -> Poll<R> + Unpin,
+        R: Unpin;
+
     /// Create new mediator with shared value.
-    pub fn new(value: T) -> Self {
+    fn new(value: T) -> Self {
         Self {
             raw: Shared::new(value).into(),
             wakers: VecDeque::default().into(),
         }
     }
 
-    /// Acquire the lock and access immutable shared data.
-    pub fn with<F, R>(&self, f: F) -> R
+    fn with<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&T) -> R,
     {
@@ -127,7 +183,7 @@ where
     }
 
     /// Acquire the lock and access mutable shared data.
-    pub fn with_mut<F, R>(&self, f: F) -> R
+    fn with_mut<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&mut T) -> R,
     {
@@ -136,10 +192,7 @@ where
         f(&mut raw.value)
     }
 
-    /// Attempt to acquire the shared data lock immediately.
-    ///
-    /// If the lock is currently held, this will return `None`.
-    pub fn try_lock_with<F, R>(&self, f: F) -> Option<R>
+    fn try_lock_with<F, R>(&self, f: F) -> Option<R>
     where
         F: FnOnce(&mut T) -> R,
     {
@@ -151,7 +204,7 @@ where
     }
 
     /// Emit one event on.
-    pub async fn notify(&self, event: E)
+    fn notify(&self, event: E)
     where
         E: Eq + Hash + Debug,
     {
@@ -161,10 +214,7 @@ where
     }
 
     /// Emit all events
-    pub async fn notify_all<Events: AsRef<[E]>>(&self, events: Events)
-    where
-        E: Eq + Hash + Clone + Debug,
-    {
+    fn notify_all<Events: AsRef<[Self::Event]>>(&self, events: Events) {
         let mut raw = self.raw.lock_mut();
 
         for event in events.as_ref() {
@@ -172,14 +222,8 @@ where
         }
     }
 
-    /// Create a new event handle future with poll function `f` and run once immediately
-    ///
-    /// If `f` returns [`Pending`](Poll::Pending), the system will move the
-    /// handle into the event waiting map, and the future returns `Pending` status.
-    ///
-    /// You can call [`notify`](Mediator::notify) to wake up this poll function and run once again.
     #[inline]
-    pub fn on_fn<F, R>(&self, event: E, f: F) -> OnEvent<Raw, Wakers, E, F>
+    fn on_fn<F, R>(&self, event: E, f: F) -> OnEvent<Raw, Wakers, E, F>
     where
         F: FnMut(&mut Shared<T, E>, &mut Context<'_>) -> Poll<R> + Unpin,
         T: Unpin + 'static,
@@ -288,15 +332,10 @@ macro_rules! on {
 }
 
 pub type LocalMediator<T, E> =
-    MediatorTM<shared::LocalShared<Shared<T, E>>, shared::LocalShared<VecDeque<Waker>>>;
+    Hub<shared::LocalShared<Shared<T, E>>, shared::LocalShared<VecDeque<Waker>>>;
+
 pub type MutexMediator<T, E> =
-    MediatorTM<shared::MutexShared<Shared<T, E>>, shared::MutexShared<VecDeque<Waker>>>;
-
-#[cfg(not(feature = "single-thread"))]
-pub type Mediator<T, E> = MutexMediator<T, E>;
-
-#[cfg(feature = "single-thread")]
-pub type Mediator<T, E> = LocalMediator<T, E>;
+    Hub<shared::MutexShared<Shared<T, E>>, shared::MutexShared<VecDeque<Waker>>>;
 
 #[cfg(test)]
 mod tests {
@@ -306,7 +345,7 @@ mod tests {
 
     use futures::task::SpawnExt;
 
-    use crate::{LocalMediator, MutexMediator, Shared};
+    use crate::{LocalMediator, Mediator, MutexMediator, Shared};
 
     #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
     enum Event {

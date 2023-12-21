@@ -32,7 +32,7 @@ impl QuicListener {
 
         let mut acceptor_loop = QuicListenerEventLoop::new(udp_group, s, config)?;
 
-        io_spawn(async move { acceptor_loop.run_loop().await })?;
+        local_io_spawn(async move { acceptor_loop.run_loop().await })?;
 
         Ok(Self {
             incoming: r,
@@ -41,15 +41,15 @@ impl QuicListener {
     }
 
     /// Create new quic server listener and bind to `laddrs`
-    pub fn bind<S: ToSocketAddrs>(laddrs: S, config: Config) -> io::Result<Self> {
+    pub fn bind<Addrs: ToSocketAddrs>(laddrs: Addrs, config: Config) -> io::Result<Self> {
         Self::bind_with(laddrs, config, get_poller()?)
     }
 
     /// Create new quic server listener and bind to `laddrs`
     ///
     /// `poller` is the reactor event notify handle bind to this socket.
-    pub fn bind_with<S: ToSocketAddrs>(
-        laddrs: S,
+    pub fn bind_with<Addrs: ToSocketAddrs>(
+        laddrs: Addrs,
         config: Config,
         poller: Handle,
     ) -> io::Result<Self> {
@@ -171,7 +171,7 @@ impl QuicListenerEventLoop {
                 udp_group: self.udp_group.clone(),
             };
 
-            io_spawn(async move { event_loop.send_loop().await })?;
+            local_io_spawn(async move { event_loop.send_loop().await })?;
 
             // register conn
             self.conns.insert(id, conn);
