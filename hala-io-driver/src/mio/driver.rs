@@ -155,8 +155,8 @@ impl Drop for MioPollerWithNotifier {
     }
 }
 
-struct WithPoller<T> {
-    value: T,
+pub(super) struct WithPoller<T> {
+    pub(super) value: T,
     poller: Option<MioPollerWithNotifier>,
 }
 

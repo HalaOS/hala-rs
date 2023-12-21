@@ -1,17 +1,8 @@
-use hala_io_driver::{Cmd, Description, Handle, OpenFlags};
+use hala_io_driver::{Description, Handle, OpenFlags};
 
 use super::*;
 
-use std::{
-    cell::RefCell,
-    io,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, OnceLock,
-    },
-    thread::JoinHandle,
-    time::Duration,
-};
+use std::{cell::RefCell, io, sync::OnceLock};
 
 thread_local! {
     static LOCAL_POLLER: RefCell<Option<Poller>> = RefCell::new(None);
@@ -27,99 +18,32 @@ impl Drop for Poller {
     }
 }
 
-pub fn register_local_poller() -> io::Result<()> {
-    LOCAL_POLLER.with_borrow_mut(|poller| {
-        let driver = get_driver()?;
-
-        let handle = driver.fd_open(Description::Poller, OpenFlags::None)?;
-
-        *poller = Some(Poller(handle));
-
-        Ok(())
-    })
-}
-
-pub fn register_poller() -> io::Result<()> {
-    let driver = get_driver().expect("call register_driver first");
-
-    let handle = driver
-        .fd_open(Description::Poller, OpenFlags::None)
-        .unwrap();
-
-    if let Err(_) = POLLER.set(Poller(handle)) {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            "Call register_poller more than once",
-        ));
-    }
-
-    Ok(())
-}
-
 /// Get poller instance from global context.
 pub fn get_poller() -> io::Result<Handle> {
-    LOCAL_POLLER.with_borrow(|spawner| {
-        if let Some(poller) = spawner {
-            return Ok(poller.0);
-        }
+    let poller = POLLER.get_or_init(|| {
+        let driver = get_driver().expect("call register_driver first");
 
-        if let Some(poller) = POLLER.get() {
-            return Ok(poller.0);
-        }
+        let handle = driver
+            .fd_open(Description::Poller, OpenFlags::None)
+            .unwrap();
 
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            "Call register_local_poller / register_poller first",
-        ));
-    })
+        Poller(handle)
+    });
+
+    Ok(poller.0)
 }
 
 /// Get poller instance from local thread context.
 pub fn get_local_poller() -> io::Result<Handle> {
     LOCAL_POLLER.with_borrow_mut(|poller| {
-        let poller = poller.as_ref().ok_or(io::Error::new(
-            io::ErrorKind::NotFound,
-            "Call register_local_poller first",
-        ))?;
+        if poller.is_none() {
+            let driver = get_driver()?;
 
-        Ok(poller.0)
+            let handle = driver.fd_open(Description::Poller, OpenFlags::LocalPoller)?;
+
+            *poller = Some(Poller(handle));
+        }
+
+        Ok(poller.as_ref().unwrap().0)
     })
-}
-
-/// An RAII guard to control global context `poller` event loop.
-pub struct PollLoopGuard {
-    drop: Arc<AtomicBool>,
-    handle: Option<JoinHandle<()>>,
-}
-
-impl PollLoopGuard {
-    /// Create new `PollerLoopGuard` with event loop `timeout`
-    pub fn new(timeout: Option<Duration>) -> io::Result<Self> {
-        let drop = Arc::new(AtomicBool::new(false));
-
-        let drop_cloned = drop.clone();
-
-        let driver = get_driver().unwrap();
-        let poller = get_poller().unwrap();
-
-        let handle = std::thread::spawn(move || {
-            while !drop_cloned.load(Ordering::SeqCst) {
-                // log::trace!("[PollGuard] poll_once");
-                driver.fd_cntl(poller, Cmd::PollOnce(timeout)).unwrap();
-            }
-        });
-
-        Ok(Self {
-            drop,
-            handle: Some(handle),
-        })
-    }
-}
-
-impl Drop for PollLoopGuard {
-    fn drop(&mut self) {
-        self.drop.store(true, Ordering::SeqCst);
-
-        self.handle.take().unwrap().join().unwrap();
-    }
 }

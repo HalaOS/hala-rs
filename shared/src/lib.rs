@@ -248,7 +248,7 @@ impl<T> Shared for MutexShared<T> {
 impl<T> Clone for MutexShared<T> {
     fn clone(&self) -> Self {
         Self {
-            value: self.value.clone(),
+            value: Arc::clone(&self.value),
         }
     }
 }

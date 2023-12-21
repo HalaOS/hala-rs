@@ -1,10 +1,6 @@
 use hala_io_driver::Driver;
 
-use std::{cell::RefCell, io, sync::OnceLock};
-
-thread_local! {
-    static LOCAL_DRIVER: RefCell<Option<Driver>> = RefCell::new(None);
-}
+use std::{io, sync::OnceLock};
 
 static DRIVER: OnceLock<Driver> = OnceLock::new();
 

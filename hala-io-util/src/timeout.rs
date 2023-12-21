@@ -216,9 +216,30 @@ where
     }
 }
 
+/// Add timeout feature for exists `Fut`
+pub async fn timeout_with<'a, Fut, R>(
+    fut: Fut,
+    expired: Option<Duration>,
+    poller: Handle,
+) -> io::Result<R>
+where
+    Fut: Future<Output = io::Result<R>> + 'a,
+    R: Debug,
+{
+    if let Some(expired) = expired {
+        Timeout::new_with(fut, poller, expired)?.await
+    } else {
+        fut.await
+    }
+}
+
 /// Sleep for a while
 pub async fn sleep(duration: Duration) -> io::Result<()> {
     Sleep::new_with(get_poller()?, duration)?.await
+}
+
+pub async fn sleep_with(duration: Duration, poller: Handle) -> io::Result<()> {
+    Sleep::new_with(poller, duration)?.await
 }
 
 #[cfg(test)]
@@ -231,7 +252,6 @@ mod tests {
 
     #[hala_test::test(io_test)]
     async fn test_timeout() {
-        pretty_env_logger::init_timed();
         let result = timeout(
             poll_fn(|_| -> Poll<io::Result<()>> { Poll::Pending }),
             Some(Duration::from_millis(20)),

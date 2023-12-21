@@ -12,6 +12,8 @@ use timewheel::TimeWheel;
 
 use crate::{Handle, Interest, Token, TypedHandle};
 
+use super::WithPoller;
+
 fn duration_to_ticks(duration: Duration, tick_duration: Duration, round_up: bool) -> u128 {
     let duration_m = duration.as_nanos();
     let tick_duration_m = tick_duration.as_nanos();
@@ -231,23 +233,23 @@ where
 
         match handle.desc {
             crate::Description::File => todo!(),
-            crate::Description::TcpListener => TypedHandle::<mio::net::TcpListener>::new(handle)
+            crate::Description::TcpListener => TypedHandle::<WithPoller<mio::net::TcpListener>>::new(handle)
                 .with_mut(|source| {
                     self.registry
-                        .register(source, mio::Token(handle.token.0), mio_interests)
+                        .register(&mut source.value, mio::Token(handle.token.0), mio_interests)
                 }),
-            crate::Description::TcpStream => TypedHandle::<mio::net::TcpStream>::new(handle)
+            crate::Description::TcpStream => TypedHandle::<WithPoller<mio::net::TcpStream>>::new(handle)
                 .with_mut(|source| {
                     self.registry
-                        .register(source, mio::Token(handle.token.0), mio_interests)
+                        .register(&mut source.value, mio::Token(handle.token.0), mio_interests)
                 }),
-            crate::Description::UdpSocket => TypedHandle::<mio::net::UdpSocket>::new(handle)
+            crate::Description::UdpSocket => TypedHandle::<WithPoller<mio::net::UdpSocket>>::new(handle)
                 .with_mut(|source| {
                     self.registry
-                        .register(source, mio::Token(handle.token.0), mio_interests)
+                        .register(&mut source.value, mio::Token(handle.token.0), mio_interests)
                 }),
             crate::Description::Timeout => {
-                TypedHandle::<MioTimeout>::new(handle).with_mut(|timeout| {
+                TypedHandle::<WithPoller<MioTimeout>>::new(handle).with_mut(|timeout| {
                     assert!(!timeout.duration.is_zero());
 
 
@@ -268,7 +270,7 @@ where
                     log::trace!(
                         "{:?} register as {:?}, slot={}, tick_duration={:?}, ticks={},time_wheel_elapsed={:?}, time_wheel_ticks={}, time_wheel_steps={}",
                         handle.token,
-                        timeout,
+                        timeout.value,
                         timeout.slot.unwrap(),
                         self.tick_duration,
                         ticks,
@@ -302,23 +304,23 @@ where
 
         match handle.desc {
             crate::Description::File => todo!(),
-            crate::Description::TcpListener => TypedHandle::<mio::net::TcpListener>::new(handle)
+            crate::Description::TcpListener => TypedHandle::<WithPoller<mio::net::TcpListener>>::new(handle)
                 .with_mut(|source| {
                     self.registry
-                        .reregister(source, mio::Token(handle.token.0), mio_interests)
+                        .reregister(&mut source.value, mio::Token(handle.token.0), mio_interests)
                 }),
-            crate::Description::TcpStream => TypedHandle::<mio::net::TcpStream>::new(handle)
+            crate::Description::TcpStream => TypedHandle::<WithPoller<mio::net::TcpStream>>::new(handle)
                 .with_mut(|source| {
                     self.registry
-                        .reregister(source, mio::Token(handle.token.0), mio_interests)
+                        .reregister(&mut source.value, mio::Token(handle.token.0), mio_interests)
                 }),
-            crate::Description::UdpSocket => TypedHandle::<mio::net::UdpSocket>::new(handle)
+            crate::Description::UdpSocket => TypedHandle::<WithPoller<mio::net::UdpSocket>>::new(handle)
                 .with_mut(|source| {
                     self.registry
-                        .reregister(source, mio::Token(handle.token.0), mio_interests)
+                        .reregister(&mut source.value, mio::Token(handle.token.0), mio_interests)
                 }),
             crate::Description::Timeout => {
-                TypedHandle::<MioTimeout>::new(handle).with_mut(|timeout| {
+                TypedHandle::<WithPoller<MioTimeout>>::new(handle).with_mut(|timeout| {
                     assert!(!timeout.duration.is_zero());
 
                     let mut time_wheel = self.time_wheel.lock_mut();
@@ -357,14 +359,14 @@ where
    pub fn deregister(&self, handle: Handle) -> io::Result<()> {
         match handle.desc {
             crate::Description::File => todo!(),
-            crate::Description::TcpListener => TypedHandle::<mio::net::TcpListener>::new(handle)
-                .with_mut(|source| self.registry.deregister(source)),
-            crate::Description::TcpStream => TypedHandle::<mio::net::TcpStream>::new(handle)
-                .with_mut(|source| self.registry.deregister(source)),
-            crate::Description::UdpSocket => TypedHandle::<mio::net::UdpSocket>::new(handle)
-                .with_mut(|source| self.registry.deregister(source)),
+            crate::Description::TcpListener => TypedHandle::<WithPoller<mio::net::TcpListener>>::new(handle)
+                .with_mut(|source| self.registry.deregister(&mut source.value)),
+            crate::Description::TcpStream => TypedHandle::<WithPoller<mio::net::TcpStream>>::new(handle)
+                .with_mut(|source| self.registry.deregister(&mut source.value)),
+            crate::Description::UdpSocket => TypedHandle::<WithPoller<mio::net::UdpSocket>>::new(handle)
+                .with_mut(|source| self.registry.deregister(&mut source.value)),
             crate::Description::Timeout => {
-                TypedHandle::<MioTimeout>::new(handle).with_mut(|timeout| {
+                TypedHandle::<WithPoller<MioTimeout>>::new(handle).with_mut(|timeout| {
                     assert!(!timeout.duration.is_zero());
 
                     let mut time_wheel = self.time_wheel.lock_mut();

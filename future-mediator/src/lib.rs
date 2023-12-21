@@ -15,12 +15,12 @@ use std::{
 pub use futures::FutureExt;
 
 /// Shared raw data between futures.
-pub struct Shared<T, E> {
+pub struct SharedData<T, E> {
     value: T,
     wakers: HashMap<E, Waker>,
 }
 
-impl<T, E> Shared<T, E> {
+impl<T, E> SharedData<T, E> {
     fn new(value: T) -> Self {
         Self {
             value: value.into(),
@@ -71,14 +71,14 @@ impl<T, E> Shared<T, E> {
     }
 }
 
-impl<T, E> Deref for Shared<T, E> {
+impl<T, E> Deref for SharedData<T, E> {
     type Target = T;
     fn deref(&self) -> &Self::Target {
         &self.value
     }
 }
 
-impl<T, E> DerefMut for Shared<T, E> {
+impl<T, E> DerefMut for SharedData<T, E> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.value
     }
@@ -91,7 +91,7 @@ pub trait Mediator {
 
     type OnEvent<F, R>: Future<Output = R>
     where
-        F: FnMut(&mut Shared<Self::Value, Self::Event>, &mut Context<'_>) -> Poll<R> + Unpin,
+        F: FnMut(&mut SharedData<Self::Value, Self::Event>, &mut Context<'_>) -> Poll<R> + Unpin,
         R: Unpin;
 
     /// Create new `Mediator` instance with shared value.
@@ -128,7 +128,7 @@ pub trait Mediator {
     /// You can call [`notify`](Mediator::notify) to wake up this poll function and run once again.
     fn on_fn<F, R>(&self, event: Self::Event, f: F) -> Self::OnEvent<F, R>
     where
-        F: FnMut(&mut Shared<Self::Value, Self::Event>, &mut Context<'_>) -> Poll<R> + Unpin,
+        F: FnMut(&mut SharedData<Self::Value, Self::Event>, &mut Context<'_>) -> Poll<R> + Unpin,
         R: Unpin;
 }
 
@@ -155,20 +155,20 @@ impl<T, E, Raw, Wakers> Mediator for Hub<Raw, Wakers>
 where
     T: Unpin + 'static,
     E: Eq + Clone + Unpin + Hash + Debug,
-    Raw: shared::Shared<Value = Shared<T, E>> + From<Shared<T, E>> + Unpin + Clone,
+    Raw: shared::Shared<Value = SharedData<T, E>> + From<SharedData<T, E>> + Unpin + Clone,
     Wakers: shared::Shared<Value = VecDeque<Waker>> + From<VecDeque<Waker>> + Unpin + Clone,
 {
     type Event = E;
     type Value = T;
 
     type OnEvent<F, R> = OnEvent<Raw, Wakers, E, F> where
-        F: FnMut(&mut Shared<Self::Value, Self::Event>, &mut Context<'_>) -> Poll<R> + Unpin,
+        F: FnMut(&mut SharedData<Self::Value, Self::Event>, &mut Context<'_>) -> Poll<R> + Unpin,
         R: Unpin;
 
     /// Create new mediator with shared value.
     fn new(value: T) -> Self {
         Self {
-            raw: Shared::new(value).into(),
+            raw: SharedData::new(value).into(),
             wakers: VecDeque::default().into(),
         }
     }
@@ -225,7 +225,7 @@ where
     #[inline]
     fn on_fn<F, R>(&self, event: E, f: F) -> OnEvent<Raw, Wakers, E, F>
     where
-        F: FnMut(&mut Shared<T, E>, &mut Context<'_>) -> Poll<R> + Unpin,
+        F: FnMut(&mut SharedData<T, E>, &mut Context<'_>) -> Poll<R> + Unpin,
         T: Unpin + 'static,
         E: Unpin + Eq + Hash + Debug,
         R: Unpin,
@@ -252,20 +252,11 @@ where
     event: E,
 }
 
-impl<Raw, Wakers, E, F> Drop for OnEvent<Raw, Wakers, E, F>
-where
-    E: Debug,
-{
-    fn drop(&mut self) {
-        log::trace!("Dropping OnEvent: {:?}", self.event);
-    }
-}
-
 impl<Raw, Wakers, T, E, F, R> Future for OnEvent<Raw, Wakers, E, F>
 where
-    Raw: shared::Shared<Value = Shared<T, E>> + Unpin + Clone,
+    Raw: shared::Shared<Value = SharedData<T, E>> + Unpin + Clone,
     Wakers: shared::Shared<Value = VecDeque<Waker>> + Unpin + Clone,
-    F: FnMut(&mut Shared<T, E>, &mut Context<'_>) -> Poll<R> + Unpin,
+    F: FnMut(&mut SharedData<T, E>, &mut Context<'_>) -> Poll<R> + Unpin,
     T: Unpin,
     E: Unpin + Eq + Hash + Clone,
     R: Unpin,
@@ -277,46 +268,37 @@ where
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Self::Output> {
-        log::trace!("{:?} poll", self.event);
+        let poll = {
+            let raw = self.raw.clone();
 
-        let raw = self.raw.clone();
+            let mut raw = match raw.try_lock_mut() {
+                Some(raw) => raw,
+                _ => {
+                    self.wakers.lock_mut().push_back(cx.waker().clone());
+                    return Poll::Pending;
+                }
+            };
 
-        let mut raw = match raw.try_lock_mut() {
-            Some(raw) => raw,
-            _ => {
-                self.wakers.lock_mut().push_back(cx.waker().clone());
-                return Poll::Pending;
+            let mut f = self.f.take().unwrap();
+
+            match f(&mut raw, cx) {
+                Poll::Pending => {
+                    self.f = Some(f);
+
+                    raw.register_event_listener(self.event.clone(), cx.waker().clone());
+
+                    Poll::Pending
+                }
+                poll => poll,
             }
         };
 
-        log::trace!("{:?} poll locked", self.event);
-
-        let mut f = self.f.take().unwrap();
-
-        match f(&mut raw, cx) {
-            Poll::Pending => {
-                self.f = Some(f);
-
-                raw.register_event_listener(self.event.clone(), cx.waker().clone());
-
-                log::trace!("{:?} poll unlock, returns pending", self.event);
-
-                if let Some(waker) = self.wakers.lock_mut().pop_front() {
-                    waker.wake();
-                }
-
-                return Poll::Pending;
-            }
-            poll => {
-                log::trace!("{:?} poll unlock, returns ready", self.event);
-
-                if let Some(waker) = self.wakers.lock_mut().pop_front() {
-                    waker.wake();
-                }
-
-                return poll;
-            }
+        let mut wakers = self.wakers.lock_mut();
+        if let Some(waker) = wakers.pop_front() {
+            waker.wake();
         }
+
+        poll
     }
 }
 
@@ -332,20 +314,21 @@ macro_rules! on {
 }
 
 pub type LocalMediator<T, E> =
-    Hub<shared::LocalShared<Shared<T, E>>, shared::LocalShared<VecDeque<Waker>>>;
+    Hub<shared::LocalShared<SharedData<T, E>>, shared::LocalShared<VecDeque<Waker>>>;
 
 pub type MutexMediator<T, E> =
-    Hub<shared::MutexShared<Shared<T, E>>, shared::MutexShared<VecDeque<Waker>>>;
+    Hub<shared::MutexShared<SharedData<T, E>>, shared::MutexShared<VecDeque<Waker>>>;
 
 #[cfg(test)]
 mod tests {
     use std::task::Poll;
 
-    use futures::executor::{block_on, ThreadPool};
+    use futures::{
+        executor::{block_on, ThreadPool},
+        task::SpawnExt,
+    };
 
-    use futures::task::SpawnExt;
-
-    use crate::{LocalMediator, Mediator, MutexMediator, Shared};
+    use crate::{LocalMediator, Mediator, MutexMediator, SharedData};
 
     #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
     enum Event {
@@ -353,47 +336,58 @@ mod tests {
         B,
     }
 
-    #[futures_test::test]
-    async fn test_mediator() {
+    #[test]
+    fn test_mediator() {
         let mediator: MutexMediator<i32, Event> = MutexMediator::new(1);
 
         let thread_pool = ThreadPool::builder().pool_size(10).create().unwrap();
 
         let mediator_cloned = mediator.clone();
 
-        thread_pool
-            .spawn(async move {
-                mediator_cloned
-                    .on_fn(Event::B, |mediator_cx, _| {
-                        if *mediator_cx.value() == 1 {
-                            *mediator_cx.value_mut() = 2;
-                            mediator_cx.notify(Event::A);
+        thread_pool.spawn_ok(async move {
+            mediator_cloned
+                .on_fn(Event::B, |mediator_cx, _| {
+                    if *mediator_cx.value() == 1 {
+                        *mediator_cx.value_mut() = 2;
+                        mediator_cx.notify(Event::A);
 
-                            return Poll::Ready(());
+                        return Poll::Ready(());
+                    }
+
+                    mediator_cx.notify(Event::A);
+
+                    return Poll::Pending;
+                })
+                .await
+        });
+
+        let mediator_cloned = mediator.clone();
+
+        let handle = thread_pool
+            .spawn_with_handle(async move {
+                mediator_cloned
+                    .on_fn(Event::A, |mediator_cx, _| {
+                        if *mediator_cx.value() == 1 {
+                            mediator_cx.notify(Event::B);
+                            return Poll::Pending;
                         }
 
-                        return Poll::Pending;
+                        return Poll::Ready(());
                     })
-                    .await
+                    .await;
             })
             .unwrap();
 
-        mediator
-            .on_fn(Event::A, |mediator_cx, _| {
-                if *mediator_cx.value() == 1 {
-                    return Poll::Pending;
-                }
+        block_on(handle);
 
-                return Poll::Ready(());
-            })
-            .await;
+        assert_eq!(mediator.with(|data| *data), 2);
     }
 
     #[test]
     fn test_mediator_async() {
         let mediator: LocalMediator<i32, Event> = LocalMediator::new(1);
 
-        async fn assign_2(cx: &mut Shared<i32, Event>) {
+        async fn assign_2(cx: &mut SharedData<i32, Event>) {
             *cx.value_mut() = 2;
         }
 

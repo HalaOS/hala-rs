@@ -10,7 +10,7 @@ fn main() {
 }
 
 #[inline(never)]
-fn poll_fn(_: &mut Shared<(), i32>, _: &mut Context<'_>) -> Poll<()> {
+fn poll_fn(_: &mut SharedData<(), i32>, _: &mut Context<'_>) -> Poll<()> {
     Poll::Ready(())
 }
 

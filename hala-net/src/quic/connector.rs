@@ -16,14 +16,14 @@ use crate::{errors::into_io_error, UdpGroup};
 use super::{AsyncQuicConnState, Config, QuicConn};
 
 /// Quic client connector
-pub(crate) struct InnerConnector {
+pub struct InnerConnector {
     /// source connection id.
     pub(super) quiche_conn: quiche::Connection,
 }
 
 impl InnerConnector {
     /// Create new quic connector
-    pub(crate) fn new(
+    pub fn new(
         config: &mut Config,
         laddr: SocketAddr,
         raddr: SocketAddr,
@@ -43,7 +43,7 @@ impl InnerConnector {
     }
 
     /// Generate send data.
-    pub(crate) fn send(&mut self, buf: &mut [u8]) -> io::Result<(usize, SendInfo)> {
+    pub fn send(&mut self, buf: &mut [u8]) -> io::Result<(usize, SendInfo)> {
         self.quiche_conn.send(buf).map_err(|err| {
             if err == quiche::Error::Done {
                 io::Error::new(io::ErrorKind::TimedOut, err)
@@ -54,7 +54,7 @@ impl InnerConnector {
     }
 
     /// Accept remote peer data.
-    pub(crate) fn recv(&mut self, buf: &mut [u8], recv_info: RecvInfo) -> io::Result<usize> {
+    pub fn recv(&mut self, buf: &mut [u8], recv_info: RecvInfo) -> io::Result<usize> {
         let len = self
             .quiche_conn
             .recv(buf, recv_info)
@@ -71,7 +71,7 @@ impl InnerConnector {
     }
 
     /// Check if underly connection is established.
-    pub(crate) fn is_established(&self) -> bool {
+    pub fn is_established(&self) -> bool {
         self.quiche_conn.is_established()
     }
 
@@ -80,14 +80,14 @@ impl InnerConnector {
     /// Once the given duration has elapsed, the [`on_timeout()`] method should
     /// be called. A timeout of `None` means that the timer should be disarmed.
     ///
-    pub(crate) fn timeout(&self) -> Option<Duration> {
+    pub fn timeout(&self) -> Option<Duration> {
         self.quiche_conn.timeout()
     }
 
     /// Processes a timeout event.
     ///
     /// If no timeout has occurred it returns 0.
-    pub(crate) fn on_timeout(&mut self) {
+    pub fn on_timeout(&mut self) {
         self.quiche_conn.on_timeout();
     }
 }
@@ -107,7 +107,7 @@ pub struct QuicConnector {
 impl QuicConnector {
     /// Create a new connector and bind to `laddrs`
     pub fn bind<L: ToSocketAddrs>(laddrs: L, config: Config) -> io::Result<Self> {
-        Self::bind_with(laddrs, config, get_poller()?)
+        Self::bind_with(laddrs, config, get_local_poller()?)
     }
 
     /// Create a new connector and bind to `laddrs`
@@ -125,6 +125,7 @@ impl QuicConnector {
     }
 
     /// Connect to remote addrs.
+    #[inline]
     pub async fn connect<R>(&mut self, raddrs: R) -> io::Result<QuicConn>
     where
         R: ToSocketAddrs,
@@ -139,7 +140,7 @@ impl QuicConnector {
         let mut last_error = None;
 
         for raddr in raddrs.to_socket_addrs()? {
-            let connector = match InnerConnector::new(&mut self.config, laddr.clone(), raddr) {
+            let connector = match InnerConnector::new(&mut self.config, laddr, raddr) {
                 Ok(c) => c,
                 Err(err) => {
                     log::error!("Create connector, raddr={}, error={}", raddr, err);
@@ -181,19 +182,24 @@ impl QuicConnector {
 
             let recv_timeout = connector.timeout();
 
-            let (laddr, read_size, raddr) =
-                match timeout(self.udp_group.recv_from(&mut buf), recv_timeout).await {
-                    Ok(r) => r,
-                    Err(err) if err.kind() == io::ErrorKind::TimedOut => {
-                        log::trace!("connector={} timeout", connector.quiche_conn.trace_id());
-                        // generate timeout retry package
-                        connector.on_timeout();
-                        continue;
-                    }
-                    Err(err) => {
-                        return Err(err);
-                    }
-                };
+            let (laddr, read_size, raddr) = match timeout_with(
+                self.udp_group.recv_from(&mut buf),
+                recv_timeout,
+                get_local_poller()?,
+            )
+            .await
+            {
+                Ok(r) => r,
+                Err(err) if err.kind() == io::ErrorKind::TimedOut => {
+                    log::trace!("connector={} timeout", connector.quiche_conn.trace_id());
+                    // generate timeout retry package
+                    connector.on_timeout();
+                    continue;
+                }
+                Err(err) => {
+                    return Err(err);
+                }
+            };
 
             connector.recv(
                 &mut buf[..read_size],

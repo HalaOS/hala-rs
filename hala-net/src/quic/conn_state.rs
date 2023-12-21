@@ -8,9 +8,9 @@ use std::{
     task::Poll,
 };
 
-use future_mediator::{LocalMediator, Mediator, Shared};
+use future_mediator::{LocalMediator, Mediator, SharedData};
 use futures::FutureExt;
-use hala_io_util::{get_poller, Sleep};
+use hala_io_util::{get_local_poller, Sleep};
 use quiche::{RecvInfo, SendInfo};
 
 use crate::{errors::into_io_error, quic::QuicStream};
@@ -52,7 +52,7 @@ pub enum QuicConnEvents {
     Accept(String),
 }
 
-fn handle_accept(cx: &mut Shared<QuicConnState, QuicConnEvents>, stream_id: u64) {
+fn handle_accept(cx: &mut SharedData<QuicConnState, QuicConnEvents>, stream_id: u64) {
     if !cx.opened_streams.contains(&stream_id) {
         cx.opened_streams.insert(stream_id);
         cx.incoming_streams.push_back(stream_id);
@@ -61,7 +61,7 @@ fn handle_accept(cx: &mut Shared<QuicConnState, QuicConnEvents>, stream_id: u64)
     }
 }
 
-fn handle_stream(cx: &mut Shared<QuicConnState, QuicConnEvents>) {
+fn handle_stream(cx: &mut SharedData<QuicConnState, QuicConnEvents>) {
     for stream_id in cx.quiche_conn.readable() {
         handle_accept(cx, stream_id);
         cx.notify(QuicConnEvents::StreamRecv(
@@ -80,7 +80,7 @@ fn handle_stream(cx: &mut Shared<QuicConnState, QuicConnEvents>) {
     }
 }
 
-fn handle_close(cx: &mut Shared<QuicConnState, QuicConnEvents>) {
+fn handle_close(cx: &mut SharedData<QuicConnState, QuicConnEvents>) {
     let ids = cx.opened_streams.iter().map(|id| *id).collect::<Vec<_>>();
 
     for stream_id in &ids {
@@ -99,7 +99,7 @@ fn handle_close(cx: &mut Shared<QuicConnState, QuicConnEvents>) {
     cx.notify(QuicConnEvents::Accept(cx.quiche_conn.trace_id().into()));
 }
 
-fn handle_stream_close(cx: &mut Shared<QuicConnState, QuicConnEvents>, stream_id: u64) {
+fn handle_stream_close(cx: &mut SharedData<QuicConnState, QuicConnEvents>, stream_id: u64) {
     cx.notify(QuicConnEvents::StreamRecv(
         cx.quiche_conn.trace_id().into(),
         stream_id,
@@ -182,7 +182,8 @@ impl AsyncQuicConnState {
                                         expired
                                     );
 
-                                    let mut timeout = Sleep::new_with(get_poller()?, expired)?;
+                                    let mut timeout =
+                                        Sleep::new_with(get_local_poller()?, expired)?;
 
                                     match timeout.poll_unpin(cx) {
                                         Poll::Ready(_) => {

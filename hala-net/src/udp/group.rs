@@ -35,8 +35,6 @@ impl UdpGroup {
 
         let mut addr_to_handle = HashMap::new();
 
-        // let poller = get_poller()?;
-
         for addr in laddrs.to_socket_addrs()? {
             let fd = driver.fd_open(Description::UdpSocket, OpenFlags::Bind(&[addr]))?;
 

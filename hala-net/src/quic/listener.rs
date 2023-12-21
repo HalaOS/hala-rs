@@ -42,7 +42,7 @@ impl QuicListener {
 
     /// Create new quic server listener and bind to `laddrs`
     pub fn bind<Addrs: ToSocketAddrs>(laddrs: Addrs, config: Config) -> io::Result<Self> {
-        Self::bind_with(laddrs, config, get_poller()?)
+        Self::bind_with(laddrs, config, get_local_poller()?)
     }
 
     /// Create new quic server listener and bind to `laddrs`
