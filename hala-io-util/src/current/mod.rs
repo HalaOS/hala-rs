@@ -80,7 +80,7 @@ impl IoSpawner for BlockOnIoSpawner {
                 match fut.await {
                     Ok(_) => {}
                     Err(err) => {
-                        log::error!("IoSpawner catch err={}", err);
+                        log::error!("{}", err);
                     }
                 }
             })
@@ -141,7 +141,7 @@ impl IoSpawner for LocalBlockOnIoSpawner {
                 match fut.await {
                     Ok(_) => {}
                     Err(err) => {
-                        log::error!("ThreadPerCoreSpawner catch err={}", err);
+                        log::error!("{}", err);
                     }
                 }
             })

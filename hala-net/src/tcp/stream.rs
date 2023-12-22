@@ -6,7 +6,7 @@ use hala_io_util::*;
 
 /// A TCP stream between a local and a remote socket.
 pub struct TcpStream {
-    fd: Handle,
+    pub fd: Handle,
     poller: Handle,
     driver: Driver,
 }
@@ -50,6 +50,60 @@ impl TcpStream {
         let fd = driver.fd_open(Description::TcpStream, OpenFlags::Connect(&raddrs))?;
 
         Self::new_with(driver, fd, poller)
+    }
+}
+
+impl AsyncWrite for &TcpStream {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<io::Result<usize>> {
+        poll(|| {
+            self.driver
+                .fd_cntl(
+                    self.fd,
+                    Cmd::Write {
+                        waker: cx.waker().clone(),
+                        buf,
+                    },
+                )?
+                .try_into_datalen()
+        })
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_close(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+}
+
+impl AsyncRead for &TcpStream {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        poll(|| {
+            self.driver
+                .fd_cntl(
+                    self.fd,
+                    Cmd::Read {
+                        waker: cx.waker().clone(),
+                        buf,
+                    },
+                )?
+                .try_into_datalen()
+        })
     }
 }
 

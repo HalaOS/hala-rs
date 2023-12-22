@@ -18,3 +18,5 @@ pub use config::*;
 
 mod listener;
 pub use listener::*;
+
+pub use quiche::{RecvInfo, SendInfo};
