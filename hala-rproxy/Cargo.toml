@@ -10,6 +10,7 @@ version.workspace = true
 
 [dependencies]
 bytes = {workspace = true}
+future-mediator = {workspace = true}
 futures = {workspace = true}
 hala-io-util = {workspace = true}
 hala-net = {workspace = true}

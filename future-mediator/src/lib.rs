@@ -100,12 +100,12 @@ pub trait Mediator {
     /// Acquire the lock and access immutable shared data.
     fn with<F, R>(&self, f: F) -> R
     where
-        F: FnOnce(&Self::Value) -> R;
+        F: FnOnce(&SharedData<Self::Value, Self::Event>) -> R;
 
     /// Acquire the lock and access mutable shared data.
     fn with_mut<F, R>(&self, f: F) -> R
     where
-        F: FnOnce(&mut Self::Value) -> R;
+        F: FnOnce(&mut SharedData<Self::Value, Self::Event>) -> R;
 
     /// Attempt to acquire the shared data lock immediately.
     ///
@@ -175,21 +175,21 @@ where
 
     fn with<F, R>(&self, f: F) -> R
     where
-        F: FnOnce(&T) -> R,
+        F: FnOnce(&SharedData<T, E>) -> R,
     {
         let raw = self.raw.lock();
 
-        f(&raw.value)
+        f(&raw)
     }
 
     /// Acquire the lock and access mutable shared data.
     fn with_mut<F, R>(&self, f: F) -> R
     where
-        F: FnOnce(&mut T) -> R,
+        F: FnOnce(&mut SharedData<T, E>) -> R,
     {
         let mut raw = self.raw.lock_mut();
 
-        f(&mut raw.value)
+        f(&mut raw)
     }
 
     fn try_lock_with<F, R>(&self, f: F) -> Option<R>
@@ -380,7 +380,7 @@ mod tests {
 
         block_on(handle);
 
-        assert_eq!(mediator.with(|data| *data), 2);
+        assert_eq!(mediator.with(|data| data.value), 2);
     }
 
     #[test]
@@ -395,6 +395,6 @@ mod tests {
 
         block_on(async move { on!(mediator_cloned, Event::A, assign_2).await });
 
-        assert_eq!(mediator.with(|value| *value), 2);
+        assert_eq!(mediator.with(|value| value.value), 2);
     }
 }

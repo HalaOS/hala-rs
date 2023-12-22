@@ -11,9 +11,12 @@ use bytes::BytesMut;
 use futures::channel::mpsc::{Receiver, Sender};
 
 pub enum OpenFlag<'a> {
-    Addr(SocketAddr),
+    TcpServer(SocketAddr),
 
-    AddrStr(&'a str),
+    QuicServer {
+        peer_name: &'a str,
+        raddrs: &'a [SocketAddr],
+    },
 
     Wasm(&'a Path),
 }
