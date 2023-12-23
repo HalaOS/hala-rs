@@ -25,7 +25,7 @@ fn st_mediator_on_fn(bench: Bencher) {
 
     let mut pool = LocalPool::new();
 
-    bench.bench_local(|| pool.run_until(async { mediator.on_fn(1, poll_fn) }));
+    bench.bench_local(|| pool.run_until(async { mediator.on_poll(1, poll_fn) }));
 }
 
 #[divan::bench(sample_size = 10000)]
@@ -34,7 +34,7 @@ fn mt_mediator_on_fn(bench: Bencher) {
 
     let mut pool = LocalPool::new();
 
-    bench.bench_local(|| pool.run_until(async { mediator.on_fn(1, poll_fn) }));
+    bench.bench_local(|| pool.run_until(async { mediator.on_poll(1, poll_fn) }));
 }
 
 #[divan::bench(sample_size = 10000)]

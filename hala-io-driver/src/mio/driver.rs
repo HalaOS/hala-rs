@@ -221,6 +221,7 @@ impl MioDriver {
         loop {
             match f() {
                 Err(err) if err.kind() == io::ErrorKind::Interrupted => {
+                    log::trace!("");
                     continue;
                 }
                 Err(err) if err.kind() == io::ErrorKind::WouldBlock => return Err(err),

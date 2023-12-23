@@ -145,7 +145,7 @@ pub trait Mediator {
     /// handle into the event waiting map, and the future returns `Pending` status.
     ///
     /// You can call [`notify`](Mediator::notify) to wake up this poll function and run once again.
-    fn on_fn<F, R>(&self, event: Self::Event, f: F) -> Self::OnEvent<F, R>
+    fn on_poll<F, R>(&self, event: Self::Event, f: F) -> Self::OnEvent<F, R>
     where
         F: FnMut(&mut SharedData<Self::Value, Self::Event>, &mut Context<'_>) -> Poll<R> + Unpin,
         R: Unpin;
@@ -255,7 +255,7 @@ where
     }
 
     #[inline]
-    fn on_fn<F, R>(&self, event: E, f: F) -> OnEvent<Raw, Wakers, E, F>
+    fn on_poll<F, R>(&self, event: E, f: F) -> OnEvent<Raw, Wakers, E, F>
     where
         F: FnMut(&mut SharedData<T, E>, &mut Context<'_>) -> Poll<R> + Unpin,
         T: Unpin + 'static,
@@ -338,7 +338,7 @@ where
 #[macro_export]
 macro_rules! on {
     ($mediator: expr, $event: expr, $fut: expr) => {
-        $mediator.on_fn(Event::A, |mediator_cx, cx| {
+        $mediator.on_poll(Event::A, |mediator_cx, cx| {
             use $crate::FutureExt;
             Box::pin($fut(mediator_cx)).poll_unpin(cx)
         })
@@ -378,7 +378,7 @@ mod tests {
 
         thread_pool.spawn_ok(async move {
             mediator_cloned
-                .on_fn(Event::B, |mediator_cx, _| {
+                .on_poll(Event::B, |mediator_cx, _| {
                     if *mediator_cx.value() == 1 {
                         *mediator_cx.value_mut() = 2;
                         mediator_cx.notify(Event::A);
@@ -398,7 +398,7 @@ mod tests {
         let handle = thread_pool
             .spawn_with_handle(async move {
                 mediator_cloned
-                    .on_fn(Event::A, |mediator_cx, _| {
+                    .on_poll(Event::A, |mediator_cx, _| {
                         if *mediator_cx.value() == 1 {
                             mediator_cx.notify(Event::B);
                             return Poll::Pending;

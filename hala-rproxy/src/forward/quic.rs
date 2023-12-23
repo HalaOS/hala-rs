@@ -123,6 +123,8 @@ impl QuicForwardMediator {
 
         self.hub.with_mut(|shared| {
             if let Some(conn_ops) = shared.opened_conns.get_mut(peer_name) {
+                log::trace!("Quic forward open stream peer_name={}", peer_name);
+
                 conn_ops.push_back(ConnOps::OpenStream(sender_forward, receiver_forward));
 
                 shared.notify(QuicForwardEvents::OpenStream(peer_name.to_string()));
@@ -175,7 +177,7 @@ impl QuicForwardConnector {
         loop {
             let (requires, dropping) = self
                 .mediator
-                .on_fn(QuicForwardEvents::Connect, |shared, _| {
+                .on_poll(QuicForwardEvents::Connect, |shared, _| {
                     if shared.dropping {
                         return Poll::Ready((vec![], true));
                     }
@@ -226,30 +228,50 @@ async fn conn_loop(require: ConnectRequire, mediator: QuicForwardMediator) -> io
     stream_loop(stream, require.stream_sender, require.stream_receiver).await?;
 
     loop {
+        log::trace!("quic forward conn loop, peer_name={}", require.peer_name);
+
         let (ops, dropping) = mediator
-            .on_fn(
+            .on_poll(
                 QuicForwardEvents::OpenStream(require.peer_name.clone()),
                 |shared, _| {
                     if shared.dropping {
                         return Poll::Ready((vec![], true));
                     }
 
+                    log::trace!("quic forward OpenStream poll");
+
                     if let Some(ops) = shared.opened_conns.get_mut(&require.peer_name) {
+                        log::trace!("quic forward OpenStream, peer_name={}", &require.peer_name);
+
                         let ops = ops.drain(..).collect::<Vec<_>>();
 
                         if ops.is_empty() {
+                            log::trace!(
+                                "quic forward OpenStream, peer_name={}, pending",
+                                &require.peer_name
+                            );
                             return Poll::Pending;
                         }
+
+                        log::trace!(
+                            "quic forward OpenStream, peer_name={}, ops={}",
+                            &require.peer_name,
+                            ops.len()
+                        );
 
                         return Poll::Ready((ops, false));
                     }
 
-                    return Poll::Ready((vec![], false));
+                    panic!("not here")
                 },
             )
             .await;
 
         if dropping {
+            log::trace!(
+                "quic forward conn loop dropping, peer_name={}",
+                require.peer_name
+            );
             return Ok(());
         }
 

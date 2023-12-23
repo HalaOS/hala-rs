@@ -62,7 +62,7 @@ fn config() -> Config {
         .set_application_protos(&[b"hq-interop", b"hq-29", b"hq-28", b"hq-27", b"http/0.9"])
         .unwrap();
 
-    config.set_max_idle_timeout(2000);
+    config.set_max_idle_timeout(5000);
     config.set_max_recv_udp_payload_size(MAX_DATAGRAM_SIZE);
     config.set_max_send_udp_payload_size(MAX_DATAGRAM_SIZE);
     config.set_initial_max_data(10_000_000);
@@ -218,14 +218,14 @@ async fn run_server(rproxy: ReverseProxy) -> io::Result<()> {
 mod tests {
     use std::{path::Path, sync::Once, time::Duration};
 
-    use futures::{AsyncReadExt, AsyncWriteExt};
+    use futures::{channel::mpsc::channel, AsyncReadExt, AsyncWriteExt, SinkExt, StreamExt};
     use hala_io_util::{io_spawn, io_test, sleep};
     use hala_net::{TcpListener, TcpStream};
 
     use super::*;
 
     fn setup() {
-        // pretty_env_logger::init_timed();
+        pretty_env_logger::init_timed();
 
         let root_path = Path::new(env!("CARGO_MANIFEST_DIR"));
 
@@ -303,6 +303,44 @@ mod tests {
             let read_size = stream.read(&mut buf).await.unwrap();
 
             assert_eq!(&buf[..read_size], b"hello world");
+        }
+    }
+
+    #[hala_test::test(io_test)]
+    async fn test_echo_multi_client() {
+        INIT.call_once(|| setup());
+
+        // Wait for the rproxy listener to finish starting.
+        sleep(Duration::from_secs(1)).await.unwrap();
+
+        let (s, mut r) = channel::<()>(0);
+
+        let count = 10;
+
+        for i in 0..count {
+            let mut s = s.clone();
+            io_spawn(async move {
+                let data: String = format!("hello world {}", i);
+
+                let mut stream = TcpStream::connect("127.0.0.1:1812").unwrap();
+
+                stream.write(data.as_bytes()).await.unwrap();
+
+                let mut buf = [0; 1024];
+
+                let read_size = stream.read(&mut buf).await.unwrap();
+
+                assert_eq!(&buf[..read_size], data.as_bytes());
+
+                s.send(()).await.unwrap();
+
+                Ok(())
+            })
+            .unwrap();
+        }
+
+        for _ in 0..count {
+            r.next().await.unwrap();
         }
     }
 }

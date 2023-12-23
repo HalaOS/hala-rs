@@ -25,7 +25,7 @@ impl QuicConn {
 
     /// Open new outgoing stream.
     pub async fn open_stream(&self) -> io::Result<QuicStream> {
-        Ok(self.state.open_stream())
+        self.state.open_stream().await
     }
 
     /// Close current quic connection.

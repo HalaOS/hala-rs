@@ -130,10 +130,14 @@ where
     }
 
     async fn handle_incoming(&self, mut stream: TcpStream, raddr: SocketAddr) -> io::Result<()> {
+        log::trace!("tcp gateway incoming, raddr={}", raddr);
+
         let (sender, receiver) = self
             .handshake
             .handshake(&mut stream, raddr.clone(), &self.routing_table)
             .await?;
+
+        log::trace!("tcp gateway incoming, raddr={}, handshake succeed", raddr);
 
         let stream = Arc::new(stream);
 

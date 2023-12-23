@@ -66,10 +66,11 @@ impl TcpListener {
         .await?
         .try_into_incoming()?;
 
-        Ok((
-            TcpStream::new_with(self.driver.clone(), handle, poller)?,
-            raddr,
-        ))
+        let stream = TcpStream::new_with(self.driver.clone(), handle, poller)?;
+
+        log::trace!("tcp incoming token={:?}, raddr={}", handle.token, raddr);
+
+        Ok((stream, raddr))
     }
 
     /// Returns the local socket address of this listener.

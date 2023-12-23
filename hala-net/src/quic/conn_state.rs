@@ -50,6 +50,7 @@ pub enum QuicConnEvents {
     StreamSend(String, u64),
     StreamRecv(String, u64),
     Accept(String),
+    OpenStream,
 }
 
 fn handle_accept(cx: &mut SharedData<QuicConnState, QuicConnEvents>, stream_id: u64) {
@@ -81,22 +82,24 @@ fn handle_stream(cx: &mut SharedData<QuicConnState, QuicConnEvents>) {
 }
 
 fn handle_close(cx: &mut SharedData<QuicConnState, QuicConnEvents>) {
-    let ids = cx.opened_streams.iter().map(|id| *id).collect::<Vec<_>>();
+    // let ids = cx.opened_streams.iter().map(|id| *id).collect::<Vec<_>>();
 
-    for stream_id in &ids {
-        cx.notify(QuicConnEvents::StreamRecv(
-            cx.quiche_conn.trace_id().into(),
-            *stream_id,
-        ));
-        cx.notify(QuicConnEvents::StreamSend(
-            cx.quiche_conn.trace_id().into(),
-            *stream_id,
-        ));
-    }
+    // for stream_id in &ids {
+    //     cx.notify(QuicConnEvents::StreamRecv(
+    //         cx.quiche_conn.trace_id().into(),
+    //         *stream_id,
+    //     ));
+    //     cx.notify(QuicConnEvents::StreamSend(
+    //         cx.quiche_conn.trace_id().into(),
+    //         *stream_id,
+    //     ));
+    // }
 
-    cx.notify(QuicConnEvents::Recv(cx.quiche_conn.trace_id().into()));
-    cx.notify(QuicConnEvents::Send(cx.quiche_conn.trace_id().into()));
-    cx.notify(QuicConnEvents::Accept(cx.quiche_conn.trace_id().into()));
+    // cx.notify(QuicConnEvents::Recv(cx.quiche_conn.trace_id().into()));
+    // cx.notify(QuicConnEvents::Send(cx.quiche_conn.trace_id().into()));
+    // cx.notify(QuicConnEvents::Accept(cx.quiche_conn.trace_id().into()));
+
+    cx.wakeup_all();
 }
 
 fn handle_stream_close(cx: &mut SharedData<QuicConnState, QuicConnEvents>, stream_id: u64) {
@@ -135,7 +138,7 @@ impl AsyncQuicConnState {
         let mut sleep: Option<Sleep> = None;
 
         self.state
-            .on_fn(
+            .on_poll(
                 QuicConnEvents::Send(self.trace_id.to_string()),
                 |state, cx| {
                     if state.quiche_conn.is_closed() {
@@ -225,7 +228,7 @@ impl AsyncQuicConnState {
     /// Create new future for recv connection data
     pub async fn recv<'a>(&self, buf: &'a mut [u8], recv_info: RecvInfo) -> io::Result<usize> {
         self.state
-            .on_fn(
+            .on_poll(
                 QuicConnEvents::Recv(self.trace_id.to_string()),
                 |state, _| {
                     if state.quiche_conn.is_closed() {
@@ -280,7 +283,7 @@ impl AsyncQuicConnState {
         fin: bool,
     ) -> io::Result<usize> {
         self.state
-            .on_fn(
+            .on_poll(
                 QuicConnEvents::StreamSend(self.trace_id.to_string(), stream_id),
                 |state, _| {
                     if state.quiche_conn.is_closed() {
@@ -332,7 +335,7 @@ impl AsyncQuicConnState {
         buf: &'a mut [u8],
     ) -> io::Result<(usize, bool)> {
         self.state
-            .on_fn(
+            .on_poll(
                 QuicConnEvents::StreamRecv(self.trace_id.to_string(), stream_id),
                 |state, _| {
                     if state.quiche_conn.is_closed() {
@@ -382,10 +385,21 @@ impl AsyncQuicConnState {
     }
 
     /// Open new stream to communicate with remote peer.
-    pub fn open_stream(&self) -> QuicStream {
+    pub async fn open_stream(&self) -> io::Result<QuicStream> {
         let id = self.stream_id_seed.fetch_add(2, Ordering::SeqCst);
 
-        QuicStream::new(id, self.clone())
+        self.state
+            .on_poll(QuicConnEvents::OpenStream, |state, _| {
+                if state.quiche_conn.is_closed() {
+                    Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        format!("Quic conn closed: {}", state.quiche_conn.trace_id()),
+                    )))
+                } else {
+                    Poll::Ready(Ok(QuicStream::new(id, self.clone())))
+                }
+            })
+            .await
     }
 
     pub fn close_stream(&self, stream_id: u64) {
@@ -426,7 +440,7 @@ impl AsyncQuicConnState {
 
     pub async fn accept(&self) -> Option<QuicStream> {
         self.state
-            .on_fn(
+            .on_poll(
                 QuicConnEvents::Accept(self.trace_id.to_string()),
                 |state, _| {
                     if state.quiche_conn.is_closed() {
