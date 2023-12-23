@@ -12,9 +12,9 @@ use futures::channel::mpsc::{Receiver, Sender};
 use hala_net::quic::Config;
 
 pub enum OpenFlag<'a> {
-    TcpServer(SocketAddr),
+    TcpConnect(&'a [SocketAddr]),
 
-    QuicServer {
+    QuicConnect {
         peer_name: &'a str,
         raddrs: &'a [SocketAddr],
         config: Config,
@@ -29,7 +29,7 @@ pub enum OpenFlag<'a> {
 pub trait Forward {
     /// Forward display name, the name must be unique in `RoutingTable` scope.
     fn name(&self) -> &str;
-    /// Create new forward tunnels by remote address list.
+    /// Create new forward tunnels by [`OpenFlag`].
     fn open_forward_tunnel(
         &self,
         open_flag: OpenFlag<'_>,

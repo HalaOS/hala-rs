@@ -1,7 +1,7 @@
 use std::{io, net::SocketAddr, task::Poll};
 
 use bytes::BytesMut;
-use clap::{Parser, ValueEnum};
+use clap::{CommandFactory, Parser, ValueEnum};
 use futures::{
     channel::mpsc::{Receiver, Sender},
     future::{poll_fn, BoxFuture},
@@ -16,7 +16,7 @@ use hala_rproxy::{
     },
 };
 
-/// Simple program to greet a person
+/// reverse proxy server program for `HalaOS`
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct ReverseProxy {
@@ -97,7 +97,7 @@ impl TcpGatewayHandshake for TcpToQuicHandshake {
         Box::pin(async {
             routing_table.open_forward_tunnel(
                 "quic-forward",
-                OpenFlag::QuicServer {
+                OpenFlag::QuicConnect {
                     peer_name: "quic-remote",
                     raddrs: &self.raddrs.as_slice(),
                     config: config(),
@@ -131,14 +131,8 @@ impl QuicGatewayHandshake for QuicToTcpHandshake {
         config.verify_peer(false);
 
         Box::pin(async {
-            routing_table.open_forward_tunnel(
-                "tcp-forward",
-                OpenFlag::QuicServer {
-                    peer_name: "tcp-remote",
-                    raddrs: &self.raddrs.as_slice(),
-                    config,
-                },
-            )
+            routing_table
+                .open_forward_tunnel("tcp-forward", OpenFlag::TcpConnect(&self.raddrs.as_slice()))
         })
     }
 }
@@ -151,6 +145,24 @@ fn main() {
 
 async fn main_future() -> io::Result<()> {
     let rproxy = ReverseProxy::parse();
+
+    run_server(rproxy).await
+}
+
+async fn run_server(rproxy: ReverseProxy) -> io::Result<()> {
+    if rproxy.laddrs.is_empty() {
+        println!("arg `laddrs` can't be empty.");
+        println!("");
+        ReverseProxy::command().print_long_help()?;
+        return Ok(());
+    }
+
+    if rproxy.raddrs.is_empty() {
+        println!("arg `raddrs` can't be empty.");
+        println!("");
+        ReverseProxy::command().print_long_help()?;
+        return Ok(());
+    }
 
     let mut builder = GatewayServicesBuilder::default();
 
@@ -200,4 +212,97 @@ async fn main_future() -> io::Result<()> {
     poll_fn(|_| -> Poll<()> { std::task::Poll::Pending }).await;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{path::Path, sync::Once, time::Duration};
+
+    use futures::{AsyncReadExt, AsyncWriteExt};
+    use hala_io_util::{io_spawn, io_test, sleep};
+    use hala_net::{TcpListener, TcpStream};
+
+    use super::*;
+
+    fn setup() {
+        // pretty_env_logger::init_timed();
+
+        let root_path = Path::new(env!("CARGO_MANIFEST_DIR"));
+
+        let cert_chain = root_path
+            .join("cert/cert.crt")
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        let key = root_path
+            .join("cert/cert.key")
+            .to_str()
+            .unwrap()
+            .to_string();
+
+        let client_rproxy = ReverseProxy {
+            laddrs: vec!["127.0.0.1:1812".parse().unwrap()],
+            raddrs: vec!["127.0.0.1:1813".parse().unwrap()],
+            gateway: Protocol::Tcp,
+            forward: Protocol::Quic,
+            cert_chain: None,
+            key: None,
+        };
+
+        let server_rproxy = ReverseProxy {
+            laddrs: vec!["127.0.0.1:1813".parse().unwrap()],
+            raddrs: vec!["127.0.0.1:1814".parse().unwrap()],
+            gateway: Protocol::Quic,
+            forward: Protocol::Tcp,
+            cert_chain: Some(cert_chain.into()),
+            key: Some(key.into()),
+        };
+
+        io_spawn(run_server(client_rproxy)).unwrap();
+        io_spawn(run_server(server_rproxy)).unwrap();
+        io_spawn(echo_server()).unwrap();
+    }
+
+    async fn echo_server() -> io::Result<()> {
+        let listener = TcpListener::bind("127.0.0.1:1814")?;
+
+        loop {
+            let (mut incoming, raddr) = listener.accept().await?;
+
+            log::trace!("echo_server, raddr={}", raddr);
+
+            io_spawn(async move {
+                loop {
+                    let mut buf = vec![0; 1024];
+
+                    let read_size = incoming.read(&mut buf).await?;
+
+                    incoming.write(&buf[..read_size]).await?;
+                }
+            })?;
+        }
+    }
+
+    static INIT: Once = Once::new();
+
+    #[hala_test::test(io_test)]
+    async fn test_echo_one_client() {
+        INIT.call_once(|| setup());
+
+        // Wait for the rproxy listener to finish starting.
+        sleep(Duration::from_secs(1)).await.unwrap();
+
+        let mut stream = TcpStream::connect("127.0.0.1:1812").unwrap();
+
+        for _ in 0..10 {
+            stream.write(b"hello world").await.unwrap();
+
+            let mut buf = [0; 1024];
+
+            let read_size = stream.read(&mut buf).await.unwrap();
+
+            assert_eq!(&buf[..read_size], b"hello world");
+        }
+    }
 }

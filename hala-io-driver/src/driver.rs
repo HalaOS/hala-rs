@@ -1,4 +1,10 @@
-use std::{io, net::SocketAddr, ptr::NonNull, task::Waker, time::Duration};
+use std::{
+    io,
+    net::{Shutdown, SocketAddr},
+    ptr::NonNull,
+    task::Waker,
+    time::Duration,
+};
 
 use bitmask_enum::bitmask;
 
@@ -133,6 +139,8 @@ pub enum Cmd<'a> {
     Timeout(Waker),
     LocalAddr,
     RemoteAddr,
+
+    Shutdown(Shutdown),
 }
 
 /// The response of `fd_cntl` .

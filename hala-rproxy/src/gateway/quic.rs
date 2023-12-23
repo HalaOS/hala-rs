@@ -208,6 +208,9 @@ impl QuicGatewaySendTunnel {
 
             match self.sender.send(bytes).await {
                 Err(err) => {
+                    // close stream.
+                    (&*self.stream).close().await?;
+
                     return Err(io::Error::new(
                         io::ErrorKind::BrokenPipe,
                         format!(
@@ -233,6 +236,8 @@ impl QuicGatewayRecvTunnel {
         loop {
             match self.receiver.next().await {
                 None => {
+                    (&*self.stream).close().await?;
+
                     return Err(io::Error::new(
                         io::ErrorKind::BrokenPipe,
                         format!("broken gateway recv tunnel: {}", self.stream.trace_id()),

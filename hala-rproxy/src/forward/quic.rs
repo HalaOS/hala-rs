@@ -33,7 +33,7 @@ impl Forward for QuicForward {
         open_flag: super::OpenFlag<'_>,
     ) -> io::Result<(Sender<bytes::BytesMut>, Receiver<bytes::BytesMut>)> {
         match open_flag {
-            OpenFlag::QuicServer {
+            OpenFlag::QuicConnect {
                 peer_name,
                 raddrs,
                 config,
@@ -41,7 +41,7 @@ impl Forward for QuicForward {
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
-                    "Only flag `QuicServer` accept",
+                    "Only flag `QuicConnect` accept",
                 ));
             }
         }
@@ -185,6 +185,12 @@ impl QuicForwardConnector {
 
                     let requires = shared.connect_requires.drain(..).collect::<Vec<_>>();
 
+                    for require in requires.iter() {
+                        shared
+                            .opened_conns
+                            .insert(require.peer_name.clone(), Default::default());
+                    }
+
                     std::task::Poll::Ready((requires, false))
                 })
                 .await;
@@ -194,7 +200,17 @@ impl QuicForwardConnector {
             }
 
             for require in requires {
-                local_io_spawn(conn_loop(require, self.mediator.clone()))?;
+                let mediator = self.mediator.clone();
+                local_io_spawn(async move {
+                    let peer_name = require.peer_name.clone();
+
+                    let r = conn_loop(require, mediator.clone()).await;
+
+                    // Clear up conns resources
+                    mediator.with_mut(|shared| shared.opened_conns.remove(&peer_name));
+
+                    r
+                })?;
             }
         }
     }
@@ -220,6 +236,10 @@ async fn conn_loop(require: ConnectRequire, mediator: QuicForwardMediator) -> io
 
                     if let Some(ops) = shared.opened_conns.get_mut(&require.peer_name) {
                         let ops = ops.drain(..).collect::<Vec<_>>();
+
+                        if ops.is_empty() {
+                            return Poll::Pending;
+                        }
 
                         return Poll::Ready((ops, false));
                     }
@@ -250,14 +270,11 @@ async fn stream_loop(
     sender: Sender<BytesMut>,
     receiver: Receiver<BytesMut>,
 ) -> io::Result<()> {
-    let recv_tunnel = QuicStreamRecvTunnel {
-        stream: stream.clone(),
-        sender,
+    let send_tunnel = QuicStreamSendTunnel {
+        stream,
+        receiver,
+        sender: Some(sender),
     };
-
-    let send_tunnel = QuicStreamSendTunnel { stream, receiver };
-
-    local_io_spawn(recv_tunnel.run_loop())?;
 
     local_io_spawn(send_tunnel.run_loop())?;
 
@@ -267,13 +284,31 @@ async fn stream_loop(
 pub struct QuicStreamSendTunnel {
     stream: QuicStream,
     receiver: Receiver<BytesMut>,
+    sender: Option<Sender<BytesMut>>,
 }
 
 impl QuicStreamSendTunnel {
     async fn run_loop(mut self) -> io::Result<()> {
         while let Some(buf) = self.receiver.next().await {
+            log::trace!(
+                "quic stream forward data: len={}, trace_id={}",
+                buf.len(),
+                self.stream.trace_id()
+            );
             self.stream.write_all(&buf).await?;
+
+            // QuicConn stream must recv first data after send first data.
+            if let Some(sender) = self.sender.take() {
+                let recv_tunnel = QuicStreamRecvTunnel {
+                    stream: self.stream.clone(),
+                    sender,
+                };
+
+                local_io_spawn(recv_tunnel.run_loop())?;
+            }
         }
+
+        self.stream.close().await?;
 
         Ok(())
     }
@@ -289,11 +324,7 @@ impl QuicStreamRecvTunnel {
         loop {
             let mut buf = ReadBuf::with_capacity(65535);
 
-            let read_size = (&self.stream).read(buf.as_mut()).await?;
-
-            let buf = buf.into_bytes_mut(Some(read_size));
-
-            self.sender.send(buf).await.map_err(|err| {
+            let read_size = self.stream.read(buf.as_mut()).await.map_err(|err| {
                 io::Error::new(
                     io::ErrorKind::BrokenPipe,
                     format!(
@@ -303,6 +334,24 @@ impl QuicStreamRecvTunnel {
                     ),
                 )
             })?;
+
+            let buf = buf.into_bytes_mut(Some(read_size));
+
+            match self.sender.send(buf).await {
+                Err(err) => {
+                    self.stream.close().await?;
+
+                    return Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        format!(
+                            "broken quic forward recv tunnel: trace_id={}, err={}",
+                            self.stream.trace_id(),
+                            err
+                        ),
+                    ));
+                }
+                _ => {}
+            }
         }
     }
 }

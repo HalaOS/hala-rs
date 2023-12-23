@@ -1,4 +1,8 @@
-use std::{io, net::SocketAddr};
+use std::{
+    io,
+    net::{Shutdown, SocketAddr},
+    sync::Arc,
+};
 
 use bytes::BytesMut;
 use futures::{
@@ -28,19 +32,23 @@ impl Forward for TcpForward {
         open_flag: super::OpenFlag<'_>,
     ) -> io::Result<(Sender<bytes::BytesMut>, Receiver<bytes::BytesMut>)> {
         match open_flag {
-            OpenFlag::TcpServer(raddr) => {
+            OpenFlag::TcpConnect(raddrs) => {
                 let (sender_forward, receiver_gateway) = channel(1024);
 
                 let (sender_gateway, receiver_forward) = channel(1024);
 
-                io_spawn(run_loop(raddr, sender_forward, receiver_forward))?;
+                io_spawn(run_loop(
+                    raddrs.to_owned(),
+                    sender_forward,
+                    receiver_forward,
+                ))?;
 
                 Ok((sender_gateway, receiver_gateway))
             }
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
-                    "Only flag `QuicServer` accept",
+                    "Only flag `TcpConnect` accept",
                 ));
             }
         }
@@ -48,23 +56,18 @@ impl Forward for TcpForward {
 }
 
 async fn run_loop(
-    raddr: SocketAddr,
+    raddrs: Vec<SocketAddr>,
     sender: Sender<BytesMut>,
     receiver: Receiver<BytesMut>,
 ) -> io::Result<()> {
-    let stream = TcpStream::connect(raddr)?;
+    let stream = Arc::new(TcpStream::connect(raddrs.as_slice())?);
 
     let recv_tunnel = TcpForwardRecvTunnel {
         stream: stream.clone(),
         sender,
-        raddr: raddr.clone(),
     };
 
-    let send_tunnel = TcpForwardSendTunnel {
-        stream,
-        receiver,
-        raddr,
-    };
+    let send_tunnel = TcpForwardSendTunnel { stream, receiver };
 
     io_spawn(recv_tunnel.run_loop())?;
 
@@ -74,9 +77,8 @@ async fn run_loop(
 }
 
 struct TcpForwardRecvTunnel {
-    stream: TcpStream,
+    stream: Arc<TcpStream>,
     sender: Sender<BytesMut>,
-    raddr: SocketAddr,
 }
 
 impl TcpForwardRecvTunnel {
@@ -84,17 +86,20 @@ impl TcpForwardRecvTunnel {
         loop {
             let mut buf = ReadBuf::with_capacity(65535);
 
-            let read_size = (&self.stream).read(buf.as_mut()).await?;
+            let read_size = (&*self.stream).read(buf.as_mut()).await?;
 
             let bytes = buf.into_bytes_mut(Some(read_size));
 
             match self.sender.send(bytes).await {
                 Err(err) => {
+                    self.stream.shutdown(Shutdown::Both)?;
+
                     return Err(io::Error::new(
                         io::ErrorKind::BrokenPipe,
                         format!(
                             "broken forward recv tunnel: raddr={}, err={}",
-                            self.raddr, err
+                            self.stream.local_addr()?,
+                            err
                         ),
                     ));
                 }
@@ -105,9 +110,8 @@ impl TcpForwardRecvTunnel {
 }
 
 struct TcpForwardSendTunnel {
-    stream: TcpStream,
+    stream: Arc<TcpStream>,
     receiver: Receiver<BytesMut>,
-    raddr: SocketAddr,
 }
 
 impl TcpForwardSendTunnel {
@@ -115,12 +119,17 @@ impl TcpForwardSendTunnel {
         loop {
             match self.receiver.next().await {
                 None => {
+                    self.stream.shutdown(Shutdown::Both)?;
+
                     return Err(io::Error::new(
                         io::ErrorKind::BrokenPipe,
-                        format!("broken tunnel backward loop: raddr={}", self.raddr),
+                        format!(
+                            "broken tunnel backward loop: raddr={}",
+                            self.stream.local_addr()?
+                        ),
                     ));
                 }
-                Some(buf) => (&self.stream).write_all(&buf).await?,
+                Some(buf) => (&*self.stream).write_all(&buf).await?,
             };
         }
     }

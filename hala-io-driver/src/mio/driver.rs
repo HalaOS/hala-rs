@@ -620,6 +620,13 @@ impl RawDriverExt for MioDriver {
         TypedHandle::<WithPoller<mio::net::UdpSocket>>::new(handle)
             .with(|socket| socket.local_addr())
     }
+
+    fn tcp_stream_shutdown(&self, handle: Handle, how: std::net::Shutdown) -> io::Result<()> {
+        handle.expect(Description::TcpStream)?;
+
+        TypedHandle::<WithPoller<mio::net::TcpStream>>::new(handle)
+            .with(|socket| socket.shutdown(how))
+    }
 }
 
 pub fn mio_driver() -> Driver {

@@ -1,11 +1,15 @@
-use std::{fmt::Debug, io, net::ToSocketAddrs, task::Poll};
+use std::{
+    fmt::Debug,
+    io,
+    net::{Shutdown, SocketAddr, ToSocketAddrs},
+    task::Poll,
+};
 
 use futures::{AsyncRead, AsyncWrite};
 use hala_io_driver::*;
 use hala_io_util::*;
 
 /// A TCP stream between a local and a remote socket.
-#[derive(Clone)]
 pub struct TcpStream {
     pub fd: Handle,
     poller: Handle,
@@ -51,6 +55,18 @@ impl TcpStream {
         let fd = driver.fd_open(Description::TcpStream, OpenFlags::Connect(&raddrs))?;
 
         Self::new_with(driver, fd, poller)
+    }
+
+    pub fn local_addr(&self) -> io::Result<SocketAddr> {
+        self.driver
+            .fd_cntl(self.fd, Cmd::LocalAddr)?
+            .try_into_sockaddr()
+    }
+
+    pub fn shutdown(&self, how: Shutdown) -> io::Result<()> {
+        self.driver.fd_cntl(self.fd, Cmd::Shutdown(how))?;
+
+        Ok(())
     }
 }
 

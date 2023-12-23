@@ -1,4 +1,8 @@
-use std::{io, net::SocketAddr, sync::Arc};
+use std::{
+    io,
+    net::{Shutdown, SocketAddr},
+    sync::Arc,
+};
 
 use bytes::BytesMut;
 use futures::{
@@ -165,10 +169,17 @@ impl TcpGatewaySendTunnel {
 
             let read_size = (&*self.stream).read(buf.as_mut()).await?;
 
+            // tcp stream read shutdown
+            if read_size == 0 {
+                return Ok(());
+            }
+
             let bytes = buf.into_bytes_mut(Some(read_size));
 
             match self.sender.send(bytes).await {
                 Err(err) => {
+                    self.stream.shutdown(Shutdown::Both)?;
+
                     return Err(io::Error::new(
                         io::ErrorKind::BrokenPipe,
                         format!(
@@ -194,6 +205,7 @@ impl TcpGatewayRecvTunnel {
         loop {
             match self.receiver.next().await {
                 None => {
+                    self.stream.shutdown(Shutdown::Both)?;
                     return Err(io::Error::new(
                         io::ErrorKind::BrokenPipe,
                         format!("broken gateway recv tunnel: raddr={}", self.raddr),

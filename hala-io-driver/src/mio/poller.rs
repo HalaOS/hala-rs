@@ -250,7 +250,9 @@ where
                 }),
             crate::Description::Timeout => {
                 TypedHandle::<WithPoller<MioTimeout>>::new(handle).with_mut(|timeout| {
-                    assert!(!timeout.duration.is_zero());
+                    if timeout.duration.is_zero() {
+                        return Err(io::Error::new(io::ErrorKind::InvalidInput, "Timeout is zero"));
+                    }
 
 
                     
@@ -321,7 +323,9 @@ where
                 }),
             crate::Description::Timeout => {
                 TypedHandle::<WithPoller<MioTimeout>>::new(handle).with_mut(|timeout| {
-                    assert!(!timeout.duration.is_zero());
+                    if timeout.duration.is_zero() {
+                        return Err(io::Error::new(io::ErrorKind::InvalidInput, "Timeout is zero"));
+                    }
 
                     let mut time_wheel = self.time_wheel.lock_mut();
 

@@ -1,6 +1,6 @@
-use std::io;
 use std::task::Waker;
 use std::time::Duration;
+use std::{io, net::Shutdown};
 
 use std::net::SocketAddr;
 
@@ -110,6 +110,8 @@ pub trait RawDriverExt {
     fn tcp_stream_local_addr(&self, handle: Handle) -> io::Result<SocketAddr>;
 
     fn tcp_stream_remote_addr(&self, handle: Handle) -> io::Result<SocketAddr>;
+
+    fn tcp_stream_shutdown(&self, handle: Handle, shutdown: Shutdown) -> io::Result<()>;
 
     fn udp_local_addr(&self, handle: Handle) -> io::Result<SocketAddr>;
 }
@@ -300,6 +302,18 @@ impl<T: RawDriverExt + Clone> RawDriver for RawDriverExtProxy<T> {
                     .inner
                     .tcp_stream_remote_addr(handle)
                     .map(|laddr| CmdResp::SockAddr(laddr)),
+                _ => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("Expect File / TcpStream , but got {:?}", handle.desc),
+                    ));
+                }
+            },
+            crate::Cmd::Shutdown(shutdown) => match handle.desc {
+                Description::TcpStream => self
+                    .inner
+                    .tcp_stream_shutdown(handle, shutdown)
+                    .map(|_| CmdResp::None),
                 _ => {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidInput,
