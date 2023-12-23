@@ -12,6 +12,12 @@ use super::{Forward, OpenFlag};
 
 pub struct TcpForward {}
 
+impl TcpForward {
+    pub fn new() -> Self {
+        TcpForward {}
+    }
+}
+
 impl Forward for TcpForward {
     fn name(&self) -> &str {
         "tcp-forward"

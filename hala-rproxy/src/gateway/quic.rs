@@ -17,22 +17,36 @@ use crate::forward::RoutingTable;
 use super::{GatewayConfig, GatewayController};
 
 pub trait QuicGatewayHandshake {
-    type Fut: Future<Output = io::Result<(Sender<BytesMut>, Receiver<BytesMut>)>> + Send + Unpin;
+    type Fut<'a>: Future<Output = io::Result<(Sender<BytesMut>, Receiver<BytesMut>)>>
+        + Send
+        + Unpin
+        + 'a
+    where
+        Self: 'a;
 
     /// Invoke async handshake procedure.
-    fn handshake(&self, stream: &mut QuicStream, routing_table: &RoutingTable) -> Self::Fut;
+    fn handshake<'a>(
+        &'a self,
+        stream: &'a mut QuicStream,
+        routing_table: &'a RoutingTable,
+    ) -> Self::Fut<'a>;
 }
 
 /// Config for [`TcpGateway`]
-pub struct QuicGatewayConfig<L, H> {
+pub struct QuicGatewayConfig<H> {
     key: String,
-    laddrs: Option<L>,
+    laddrs: Option<Vec<SocketAddr>>,
     handshake: Option<H>,
     config: Option<Config>,
 }
 
-impl<L, H> QuicGatewayConfig<L, H> {
-    pub fn new<K: Into<String>>(key: K, laddrs: L, handshake: H, config: Config) -> Self {
+impl<H> QuicGatewayConfig<H> {
+    pub fn new<K: Into<String>>(
+        key: K,
+        laddrs: Vec<SocketAddr>,
+        handshake: H,
+        config: Config,
+    ) -> Self {
         Self {
             key: key.into(),
             laddrs: Some(laddrs),
@@ -42,9 +56,8 @@ impl<L, H> QuicGatewayConfig<L, H> {
     }
 }
 
-impl<L, H> GatewayConfig for QuicGatewayConfig<L, H>
+impl<H> GatewayConfig for QuicGatewayConfig<H>
 where
-    L: ToSocketAddrs + Send + 'static,
     H: QuicGatewayHandshake + Send + Clone + 'static,
 {
     fn key(&self) -> &str {
@@ -62,19 +75,19 @@ where
 
         let laddrs = self.laddrs.take().unwrap();
 
-        let laddrs = laddrs.to_socket_addrs()?.collect::<Vec<SocketAddr>>();
+        let laddrs = laddrs.clone();
 
         std::thread::spawn(move || {
-            let gateway = QuicGateway::new(
-                &laddrs.as_slice(),
-                routing_table,
-                stop_notifier,
-                handshake,
-                config,
-            )
-            .unwrap();
-
             local_block_on(async move {
+                let gateway = QuicGateway::new(
+                    &laddrs.as_slice(),
+                    routing_table,
+                    stop_notifier,
+                    handshake,
+                    config,
+                )
+                .unwrap();
+
                 gateway.run_loop().await.unwrap();
             })
         });

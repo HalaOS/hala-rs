@@ -10,11 +10,17 @@ version.workspace = true
 
 [dependencies]
 bytes = {workspace = true}
+clap = {workspace = true}
 future-mediator = {workspace = true}
 futures = {workspace = true}
 hala-io-util = {workspace = true}
 hala-net = {workspace = true}
 log = {workspace = true}
+pretty_env_logger = {workspace = true}
 
 [dev-dependencies]
 pretty_env_logger = {workspace = true}
+
+[[bin]]
+name = "rproxy"
+path = "bin/rproxy/main.rs"

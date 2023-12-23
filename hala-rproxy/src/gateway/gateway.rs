@@ -43,7 +43,7 @@ pub trait GatewayConfig {
 }
 
 /// An owned dynamically typed [`GatewayConfig`] used by [`GatewayServicesBuilder`]
-pub type BoxedGatewayConfig = Box<dyn GatewayConfig + 'static>;
+pub type BoxedGatewayConfig = Box<dyn GatewayConfig + Send + 'static>;
 
 /// Helper structure to build gateway services.
 #[derive(Default)]
@@ -56,7 +56,7 @@ impl GatewayServicesBuilder {
     ///
     /// If the [`key`](GatewayConfig::key) value duplicate,
     /// returns err of [`PermissionDenied`](io::ErrorKind::PermissionDenied)
-    pub fn register<C: GatewayConfig + 'static>(&mut self, config: C) -> io::Result<()> {
+    pub fn register<C: GatewayConfig + Send + 'static>(&mut self, config: C) -> io::Result<()> {
         if self.configs.contains_key(config.key()) {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,

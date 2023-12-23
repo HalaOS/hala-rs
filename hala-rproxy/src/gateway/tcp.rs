@@ -1,15 +1,11 @@
-use std::{
-    io,
-    net::{SocketAddr, ToSocketAddrs},
-    sync::Arc,
-};
+use std::{io, net::SocketAddr, sync::Arc};
 
 use bytes::BytesMut;
 use futures::{
     channel::mpsc::{Receiver, Sender},
     select, AsyncReadExt, AsyncWriteExt, Future, FutureExt, SinkExt, StreamExt,
 };
-use hala_io_util::{block_on, io_spawn, ReadBuf};
+use hala_io_util::{io_spawn, ReadBuf};
 use hala_net::{TcpListener, TcpStream};
 
 use crate::forward::RoutingTable;
@@ -18,26 +14,31 @@ use super::{GatewayConfig, GatewayController};
 
 /// The gateway handshake protocol must implement this trait.
 pub trait TcpGatewayHandshake {
-    type Fut: Future<Output = io::Result<(Sender<BytesMut>, Receiver<BytesMut>)>> + Send + Unpin;
+    type Fut<'a>: Future<Output = io::Result<(Sender<BytesMut>, Receiver<BytesMut>)>>
+        + Send
+        + Unpin
+        + 'a
+    where
+        Self: 'a;
 
     /// Invoke async handshake procedure.
-    fn handshake(
-        &self,
-        stream: &mut TcpStream,
+    fn handshake<'a>(
+        &'a self,
+        stream: &'a mut TcpStream,
         raddr: SocketAddr,
-        routing_table: &RoutingTable,
-    ) -> Self::Fut;
+        routing_table: &'a RoutingTable,
+    ) -> Self::Fut<'a>;
 }
 
 /// Config for [`TcpGateway`]
-pub struct TcpGatewayConfig<L, H> {
+pub struct TcpGatewayConfig<H> {
     key: String,
-    laddrs: L,
+    laddrs: Vec<SocketAddr>,
     handshake: Option<H>,
 }
 
-impl<L, H> TcpGatewayConfig<L, H> {
-    pub fn new<K: Into<String>>(key: K, laddrs: L, handshake: H) -> Self {
+impl<H> TcpGatewayConfig<H> {
+    pub fn new<K: Into<String>>(key: K, laddrs: Vec<SocketAddr>, handshake: H) -> Self {
         Self {
             key: key.into(),
             laddrs,
@@ -46,9 +47,8 @@ impl<L, H> TcpGatewayConfig<L, H> {
     }
 }
 
-impl<L, H> GatewayConfig for TcpGatewayConfig<L, H>
+impl<H> GatewayConfig for TcpGatewayConfig<H>
 where
-    L: ToSocketAddrs,
     H: TcpGatewayHandshake + Send + Sync + 'static,
 {
     fn key(&self) -> &str {
@@ -81,8 +81,8 @@ pub struct TcpGateway<H> {
 }
 
 impl<H> TcpGateway<H> {
-    fn new<L: ToSocketAddrs>(
-        laddrs: &L,
+    fn new(
+        laddrs: &[SocketAddr],
         routing_table: RoutingTable,
         stop_notifier: Receiver<()>,
         handshake: H,
