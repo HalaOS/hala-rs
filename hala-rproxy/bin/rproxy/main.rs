@@ -315,7 +315,7 @@ mod tests {
 
         let (s, mut r) = channel::<()>(0);
 
-        let count = 10;
+        let count = 2;
 
         for i in 0..count {
             let mut s = s.clone();

@@ -165,6 +165,7 @@ where
 {
     async fn run_loop(self) -> io::Result<()> {
         while let Some(mut stream) = self.conn.accept().await {
+            log::trace!("quic gateway incoming stream: {:?}", stream);
             let (sender, receiver) = self
                 .handshake
                 .handshake(&mut stream, &self.routing_table)
@@ -186,6 +187,11 @@ where
             local_io_spawn(forward.run_loop())?;
 
             local_io_spawn(backword.run_loop())?;
+
+            log::trace!(
+                "quic gateway incoming stream: {:?} -- create channel",
+                stream
+            );
         }
 
         Ok(())

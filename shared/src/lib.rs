@@ -2,7 +2,7 @@ use std::{
     cell::RefCell,
     ops,
     rc::Rc,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, TryLockError},
 };
 
 /// A trait represents a shared value that can be dynamically checked for borrowing rules
@@ -183,7 +183,15 @@ impl<T> Shared for MutexSharedNonClone<T> {
         match self.value.try_lock() {
             Ok(value) => Some(value),
             // the value is currently borrowed
-            _ => None,
+            Err(err) => {
+                log::trace!("{}", err);
+
+                if let TryLockError::Poisoned(_) = err {
+                    panic!("Poisoned");
+                }
+
+                None
+            }
         }
     }
 }

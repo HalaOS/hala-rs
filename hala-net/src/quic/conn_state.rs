@@ -8,7 +8,7 @@ use std::{
     task::Poll,
 };
 
-use future_mediator::{LocalMediator, Mediator, SharedData};
+use future_mediator::{LocalMediator, SharedData};
 use futures::FutureExt;
 use hala_io_util::{get_local_poller, Sleep};
 use quiche::{RecvInfo, SendInfo};
@@ -63,22 +63,24 @@ fn handle_accept(cx: &mut SharedData<QuicConnState, QuicConnEvents>, stream_id: 
 }
 
 fn handle_stream(cx: &mut SharedData<QuicConnState, QuicConnEvents>) {
-    for stream_id in cx.quiche_conn.readable() {
-        handle_accept(cx, stream_id);
-        cx.notify(QuicConnEvents::StreamRecv(
-            cx.quiche_conn.trace_id().into(),
-            stream_id,
-        ));
-    }
+    // for stream_id in cx.quiche_conn.readable() {
+    //     handle_accept(cx, stream_id);
+    //     cx.notify(QuicConnEvents::StreamRecv(
+    //         cx.quiche_conn.trace_id().into(),
+    //         stream_id,
+    //     ));
+    // }
 
-    for stream_id in cx.quiche_conn.writable() {
-        handle_accept(cx, stream_id);
+    // for stream_id in cx.quiche_conn.writable() {
+    //     handle_accept(cx, stream_id);
 
-        cx.notify(QuicConnEvents::StreamSend(
-            cx.quiche_conn.trace_id().into(),
-            stream_id,
-        ));
-    }
+    //     cx.notify(QuicConnEvents::StreamSend(
+    //         cx.quiche_conn.trace_id().into(),
+    //         stream_id,
+    //     ));
+    // }
+
+    cx.wakeup_all();
 }
 
 fn handle_close(cx: &mut SharedData<QuicConnState, QuicConnEvents>) {
@@ -252,6 +254,7 @@ impl AsyncQuicConnState {
                             if state.quiche_conn.is_closed() {
                                 handle_close(state);
                             } else {
+                                state.notify(QuicConnEvents::Send(self.trace_id.to_string()));
                                 handle_stream(state);
                             }
 
@@ -302,6 +305,12 @@ impl AsyncQuicConnState {
                             return Poll::Ready(Ok(recv_size));
                         }
                         Err(quiche::Error::Done) => {
+                            log::trace!(
+                                "StreamSend({}, {}) done ",
+                                self.trace_id.to_string(),
+                                stream_id
+                            );
+
                             if state.quiche_conn.is_closed() {
                                 handle_stream_close(state, stream_id);
 
@@ -412,6 +421,7 @@ impl AsyncQuicConnState {
                 })
                 .is_none()
             {
+                log::trace!("Close stream");
                 continue;
             }
 

@@ -155,7 +155,10 @@ pub trait Mediator {
 pub struct Hub<Raw, Wakers> {
     raw: Raw,
     wakers: Wakers,
+    trace_id: Option<&'static str>,
 }
+
+impl<Raw, Wakers> Hub<Raw, Wakers> {}
 
 impl<Raw, Wakers> Default for Hub<Raw, Wakers>
 where
@@ -166,6 +169,7 @@ where
         Self {
             raw: Default::default(),
             wakers: Default::default(),
+            trace_id: None,
         }
     }
 }
@@ -179,52 +183,81 @@ where
         Self {
             raw: self.raw.clone(),
             wakers: self.wakers.clone(),
+            trace_id: self.trace_id.clone(),
         }
     }
 }
 
-impl<T, E, Raw, Wakers> Mediator for Hub<Raw, Wakers>
+impl<T, E, Raw, Wakers> Hub<Raw, Wakers>
 where
     T: Unpin + 'static,
     E: Eq + Clone + Unpin + Hash + Debug,
     Raw: shared::Shared<Value = SharedData<T, E>> + From<SharedData<T, E>> + Unpin + Clone,
     Wakers: shared::Shared<Value = VecDeque<Waker>> + From<VecDeque<Waker>> + Unpin + Clone,
 {
-    type Event = E;
-    type Value = T;
-
-    type OnEvent<F, R> = OnEvent<Raw, Wakers, E, F> where
-        F: FnMut(&mut SharedData<Self::Value, Self::Event>, &mut Context<'_>) -> Poll<R> + Unpin,
-        R: Unpin;
-
     /// Create new mediator with shared value.
-    fn new(value: T) -> Self {
+    pub fn new(value: T) -> Self {
         Self {
             raw: SharedData::new(value).into(),
             wakers: VecDeque::default().into(),
+            trace_id: None,
         }
     }
 
-    fn with<F, R>(&self, f: F) -> R
+    pub fn new_with(value: T, trace_id: &'static str) -> Self {
+        Self {
+            raw: SharedData::new(value).into(),
+            wakers: VecDeque::default().into(),
+            trace_id: Some(trace_id),
+        }
+    }
+
+    pub fn with<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&SharedData<T, E>) -> R,
     {
         let raw = self.raw.lock();
 
-        f(&raw)
+        // log::trace!(target:self.trace_id.unwrap_or(""), "with locked");
+
+        let r = f(&raw);
+
+        // log::trace!(target:self.trace_id.unwrap_or(""), "with unlock");
+
+        let mut wakers = self.wakers.lock_mut();
+
+        if let Some(waker) = wakers.pop_front() {
+            // log::trace!(target:self.trace_id.unwrap_or(""), "with unlock, wakeup another");
+            waker.wake();
+        }
+
+        r
     }
 
     /// Acquire the lock and access mutable shared data.
-    fn with_mut<F, R>(&self, f: F) -> R
+    pub fn with_mut<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&mut SharedData<T, E>) -> R,
     {
         let mut raw = self.raw.lock_mut();
 
-        f(&mut raw)
+        // log::trace!(target:self.trace_id.unwrap_or(""), "with_mut locked");
+
+        let r = f(&mut raw);
+
+        // log::trace!(target:self.trace_id.unwrap_or(""), "with_mut unlock");
+
+        let mut wakers = self.wakers.lock_mut();
+
+        if let Some(waker) = wakers.pop_front() {
+            // log::trace!(target:self.trace_id.unwrap_or(""), "with_mut unlock, wakeup another");
+            waker.wake();
+        }
+
+        r
     }
 
-    fn try_lock_with<F, R>(&self, f: F) -> Option<R>
+    pub fn try_lock_with<F, R>(&self, f: F) -> Option<R>
     where
         F: FnOnce(&mut T) -> R,
     {
@@ -236,7 +269,7 @@ where
     }
 
     /// Emit one event on.
-    fn notify(&self, event: E)
+    pub fn notify(&self, event: E)
     where
         E: Eq + Hash + Debug,
     {
@@ -246,7 +279,7 @@ where
     }
 
     /// Emit all events
-    fn notify_all<Events: AsRef<[Self::Event]>>(&self, events: Events) {
+    pub fn notify_all<Events: AsRef<[E]>>(&self, events: Events) {
         let mut raw = self.raw.lock_mut();
 
         for event in events.as_ref() {
@@ -255,20 +288,21 @@ where
     }
 
     #[inline]
-    fn on_poll<F, R>(&self, event: E, f: F) -> OnEvent<Raw, Wakers, E, F>
+    pub fn on_poll<F, R>(&self, event: E, f: F) -> OnEvent<Raw, Wakers, E, F>
     where
         F: FnMut(&mut SharedData<T, E>, &mut Context<'_>) -> Poll<R> + Unpin,
         T: Unpin + 'static,
         E: Unpin + Eq + Hash + Debug,
         R: Unpin,
     {
-        log::trace!("call on_fn {:?}", event);
+        log::trace!(target:self.trace_id.unwrap_or(""), "call on_fn {:?}", event);
 
         OnEvent {
             f: Some(f),
             raw: self.raw.clone(),
             wakers: self.wakers.clone(),
             event,
+            trace_id: self.trace_id,
         }
     }
 }
@@ -282,6 +316,8 @@ where
     raw: Raw,
     wakers: Wakers,
     event: E,
+    #[allow(unused)]
+    trace_id: Option<&'static str>,
 }
 
 impl<Raw, Wakers, T, E, F, R> Future for OnEvent<Raw, Wakers, E, F>
@@ -300,16 +336,23 @@ where
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Self::Output> {
+        // let trace_id = self.trace_id.unwrap_or("");
+
+        // log::trace!(target: trace_id, "poll {:?}", self.event);
+
         let poll = {
             let raw = self.raw.clone();
 
             let mut raw = match raw.try_lock_mut() {
                 Some(raw) => raw,
                 _ => {
+                    // log::trace!(target: trace_id, "poll {:?}, lock pending", self.event);
                     self.wakers.lock_mut().push_back(cx.waker().clone());
                     return Poll::Pending;
                 }
             };
+
+            // log::trace!(target: trace_id, "poll {:?}, locked", self.event);
 
             let mut f = self.f.take().unwrap();
 
@@ -325,8 +368,12 @@ where
             }
         };
 
+        // log::trace!(target: trace_id, "poll {:?}, unlock", self.event);
+
         let mut wakers = self.wakers.lock_mut();
+
         if let Some(waker) = wakers.pop_front() {
+            // log::trace!("poll {:?}, unlock, wakeup other", self.event);
             waker.wake();
         }
 
@@ -360,7 +407,7 @@ mod tests {
         task::SpawnExt,
     };
 
-    use crate::{LocalMediator, Mediator, MutexMediator, SharedData};
+    use crate::{LocalMediator, MutexMediator, SharedData};
 
     #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
     enum Event {

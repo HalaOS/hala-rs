@@ -8,7 +8,7 @@ use std::{
 };
 
 use bytes::BytesMut;
-use future_mediator::{Mediator, MutexMediator};
+use future_mediator::MutexMediator;
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
     AsyncReadExt, AsyncWriteExt, SinkExt, StreamExt,
@@ -105,9 +105,17 @@ enum QuicForwardEvents {
     OpenStream(String),
 }
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 struct QuicForwardMediator {
     hub: MutexMediator<QuicForwardSharedData, QuicForwardEvents>,
+}
+
+impl Default for QuicForwardMediator {
+    fn default() -> Self {
+        Self {
+            hub: MutexMediator::new_with(Default::default(), "quic-forward-mediator"),
+        }
+    }
 }
 
 impl QuicForwardMediator {
@@ -121,10 +129,10 @@ impl QuicForwardMediator {
 
         let (sender_gateway, receiver_forward) = channel(1024);
 
+        log::trace!("Quic forward open channel, peer_name={}", peer_name);
+
         self.hub.with_mut(|shared| {
             if let Some(conn_ops) = shared.opened_conns.get_mut(peer_name) {
-                log::trace!("Quic forward open stream peer_name={}", peer_name);
-
                 conn_ops.push_back(ConnOps::OpenStream(sender_forward, receiver_forward));
 
                 shared.notify(QuicForwardEvents::OpenStream(peer_name.to_string()));
@@ -292,6 +300,8 @@ async fn stream_loop(
     sender: Sender<BytesMut>,
     receiver: Receiver<BytesMut>,
 ) -> io::Result<()> {
+    log::trace!("start quic stream loop, {:?}", stream);
+
     let send_tunnel = QuicStreamSendTunnel {
         stream,
         receiver,
@@ -313,11 +323,18 @@ impl QuicStreamSendTunnel {
     async fn run_loop(mut self) -> io::Result<()> {
         while let Some(buf) = self.receiver.next().await {
             log::trace!(
-                "quic stream forward data: len={}, trace_id={}",
+                "quic forward send data: len={}, {:?}",
                 buf.len(),
-                self.stream.trace_id()
+                self.stream
             );
+
             self.stream.write_all(&buf).await?;
+
+            log::trace!(
+                "quic forward send data: len={}, {:?} -- success",
+                buf.len(),
+                self.stream
+            );
 
             // QuicConn stream must recv first data after send first data.
             if let Some(sender) = self.sender.take() {
@@ -350,12 +367,17 @@ impl QuicStreamRecvTunnel {
                 io::Error::new(
                     io::ErrorKind::BrokenPipe,
                     format!(
-                        "broken quic forward recv tunnel: trace_id={}, err={}",
-                        self.stream.trace_id(),
-                        err
+                        "broken quic forward recv tunnel: {:?}, {}",
+                        self.stream, err
                     ),
                 )
             })?;
+
+            log::trace!(
+                "quic forward recv data: len={}, {:?}",
+                read_size,
+                self.stream
+            );
 
             let buf = buf.into_bytes_mut(Some(read_size));
 
