@@ -225,7 +225,7 @@ impl QuicGatewayBackwardTunnel {
                         format!("broken tunnel backward loop: {}", self.stream.trace_id()),
                     ));
                 }
-                Some(buf) => (&*self.stream).write(&buf).await?,
+                Some(buf) => (&*self.stream).write_all(&buf).await?,
             };
         }
     }

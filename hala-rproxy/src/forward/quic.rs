@@ -2,22 +2,25 @@ use std::{
     collections::{HashMap, VecDeque},
     io,
     net::SocketAddr,
+    ops,
+    task::Poll,
+    thread::JoinHandle,
 };
 
+use bytes::BytesMut;
 use future_mediator::{Mediator, MutexMediator};
-use futures::channel::mpsc::{channel, Receiver, Sender};
-use hala_io_util::local_block_on;
+use futures::{
+    channel::mpsc::{channel, Receiver, Sender},
+    AsyncReadExt, AsyncWriteExt, SinkExt, StreamExt,
+};
+use hala_io_util::{local_block_on, local_io_spawn, ReadBuf};
+use hala_net::quic::{Config, QuicConnector, QuicStream};
 
 use super::{Forward, OpenFlag};
 
-enum Cmd {
-    OpenStream(Sender<bytes::BytesMut>, Receiver<bytes::BytesMut>),
-}
-
-type CmdCenter = MutexMediator<HashMap<String, VecDeque<Cmd>>, String>;
-
 pub struct QuicForward {
-    cmd_center: CmdCenter,
+    mediator: QuicForwardMediator,
+    join_handle: Option<JoinHandle<()>>,
 }
 
 impl Forward for QuicForward {
@@ -28,66 +31,278 @@ impl Forward for QuicForward {
     fn open_forward_tunnel(
         &self,
         open_flag: super::OpenFlag<'_>,
-    ) -> std::io::Result<(Sender<bytes::BytesMut>, Receiver<bytes::BytesMut>)> {
-        let (peer_name, raddrs) = match open_flag {
-            OpenFlag::QuicServer { peer_name, raddrs } => (peer_name, raddrs),
+    ) -> io::Result<(Sender<bytes::BytesMut>, Receiver<bytes::BytesMut>)> {
+        match open_flag {
+            OpenFlag::QuicServer {
+                peer_name,
+                raddrs,
+                config,
+            } => self.mediator.open_forward_tunnel(peer_name, raddrs, config),
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     "Only flag `QuicServer` accept",
                 ));
             }
-        };
+        }
+    }
+}
 
-        let (sender_gatway, receiver_forward) = channel(1024);
+impl QuicForward {
+    pub fn new() -> Self {
+        let mediator: QuicForwardMediator = Default::default();
 
+        let connector = QuicForwardConnector::new(mediator.clone());
+
+        let join_handle = std::thread::spawn(move || {
+            connector.run_loop();
+        });
+
+        Self {
+            mediator,
+            join_handle: Some(join_handle),
+        }
+    }
+}
+
+impl Drop for QuicForward {
+    fn drop(&mut self) {
+        if let Some(join_handle) = self.join_handle.take() {
+            self.mediator.with_mut(|shared| {
+                shared.dropping = true;
+
+                shared.wakeup_all();
+            });
+            join_handle.join().unwrap();
+        }
+    }
+}
+
+enum ConnOps {
+    OpenStream(Sender<bytes::BytesMut>, Receiver<bytes::BytesMut>),
+}
+
+#[derive(Default)]
+struct QuicForwardSharedData {
+    dropping: bool,
+    opened_conns: HashMap<String, VecDeque<ConnOps>>,
+    connect_requires: VecDeque<ConnectRequire>,
+}
+
+struct ConnectRequire {
+    peer_name: String,
+    raddrs: Vec<SocketAddr>,
+    config: Config,
+    stream_sender: Sender<bytes::BytesMut>,
+    stream_receiver: Receiver<bytes::BytesMut>,
+}
+
+impl QuicForwardSharedData {}
+
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
+enum QuicForwardEvents {
+    Connect,
+    OpenStream(String),
+}
+
+#[derive(Default, Clone)]
+struct QuicForwardMediator {
+    hub: MutexMediator<QuicForwardSharedData, QuicForwardEvents>,
+}
+
+impl QuicForwardMediator {
+    fn open_forward_tunnel(
+        &self,
+        peer_name: &str,
+        raddrs: &[SocketAddr],
+        config: Config,
+    ) -> io::Result<(Sender<bytes::BytesMut>, Receiver<bytes::BytesMut>)> {
         let (sender_forward, receiver_gateway) = channel(1024);
 
-        let create_tunnel = self.cmd_center.with_mut(move |cmd_queues| {
-            if let Some(queue) = cmd_queues.get_mut(peer_name) {
-                queue.push_back(Cmd::OpenStream(sender_forward, receiver_forward));
+        let (sender_gateway, receiver_forward) = channel(1024);
 
-                cmd_queues.notify(peer_name.to_string());
+        self.hub.with_mut(|shared| {
+            if let Some(conn_ops) = shared.opened_conns.get_mut(peer_name) {
+                conn_ops.push_back(ConnOps::OpenStream(sender_forward, receiver_forward));
 
-                return true;
+                shared.notify(QuicForwardEvents::OpenStream(peer_name.to_string()));
             } else {
-                let mut queue = VecDeque::new();
+                let require = ConnectRequire {
+                    peer_name: peer_name.to_string(),
+                    raddrs: raddrs.to_owned(),
+                    stream_receiver: receiver_forward,
+                    stream_sender: sender_forward,
+                    config,
+                };
 
-                queue.push_back(Cmd::OpenStream(sender_forward, receiver_forward));
+                shared.connect_requires.push_back(require);
 
-                cmd_queues.insert(peer_name.to_string(), queue);
-
-                return false;
+                shared.notify(QuicForwardEvents::Connect);
             }
         });
 
-        let raddrs = raddrs.to_owned();
+        Ok((sender_gateway, receiver_gateway))
+    }
+}
 
-        let cmd_center = self.cmd_center.clone();
+impl ops::Deref for QuicForwardMediator {
+    type Target = MutexMediator<QuicForwardSharedData, QuicForwardEvents>;
+    fn deref(&self) -> &Self::Target {
+        &self.hub
+    }
+}
 
-        if create_tunnel {
-            std::thread::spawn(move || {
-                let channel = QuicForwardChannel::new(raddrs, cmd_center);
+struct QuicForwardConnector {
+    mediator: QuicForwardMediator,
+}
 
-                local_block_on(channel.run_loop()).unwrap();
-            });
+impl QuicForwardConnector {
+    fn new(mediator: QuicForwardMediator) -> Self {
+        Self { mediator }
+    }
+    fn run_loop(self) {
+        match local_block_on(self.run_loop_fut()) {
+            Ok(_) => {
+                log::error!("QuicForwardConnector dropping");
+            }
+            Err(err) => {
+                log::error!("QuicForwardConnector dropping with err: {}", err);
+            }
+        }
+    }
+
+    async fn run_loop_fut(self) -> io::Result<()> {
+        loop {
+            let (requires, dropping) = self
+                .mediator
+                .on_fn(QuicForwardEvents::Connect, |shared, _| {
+                    if shared.dropping {
+                        return Poll::Ready((vec![], true));
+                    }
+                    if shared.connect_requires.is_empty() {
+                        return Poll::Pending;
+                    }
+
+                    let requires = shared.connect_requires.drain(..).collect::<Vec<_>>();
+
+                    std::task::Poll::Ready((requires, false))
+                })
+                .await;
+
+            if dropping {
+                return Ok(());
+            }
+
+            for require in requires {
+                local_io_spawn(conn_loop(require, self.mediator.clone()))?;
+            }
+        }
+    }
+}
+
+async fn conn_loop(require: ConnectRequire, mediator: QuicForwardMediator) -> io::Result<()> {
+    let mut connector = QuicConnector::bind("127.0.0.1:0", require.config)?;
+
+    let conn = connector.connect(require.raddrs.as_slice()).await?;
+
+    let stream = conn.open_stream().await?;
+
+    stream_loop(stream, require.stream_sender, require.stream_receiver).await?;
+
+    loop {
+        let (ops, dropping) = mediator
+            .on_fn(
+                QuicForwardEvents::OpenStream(require.peer_name.clone()),
+                |shared, _| {
+                    if shared.dropping {
+                        return Poll::Ready((vec![], true));
+                    }
+
+                    if let Some(ops) = shared.opened_conns.get_mut(&require.peer_name) {
+                        let ops = ops.drain(..).collect::<Vec<_>>();
+
+                        return Poll::Ready((ops, false));
+                    }
+
+                    return Poll::Ready((vec![], false));
+                },
+            )
+            .await;
+
+        if dropping {
+            return Ok(());
         }
 
-        return Ok((sender_gatway, receiver_gateway));
+        for op in ops {
+            match op {
+                ConnOps::OpenStream(sender, receiver) => {
+                    let stream = conn.open_stream().await?;
+
+                    stream_loop(stream, sender, receiver).await?;
+                }
+            }
+        }
     }
 }
 
-struct QuicForwardChannel {
-    raddrs: Vec<SocketAddr>,
-    cmd_center: CmdCenter,
+async fn stream_loop(
+    stream: QuicStream,
+    sender: Sender<BytesMut>,
+    receiver: Receiver<BytesMut>,
+) -> io::Result<()> {
+    let recv_tunnel = QuicStreamRecvTunnel {
+        stream: stream.clone(),
+        sender,
+    };
+
+    let send_tunnel = QuicStreamSendTunnel { stream, receiver };
+
+    local_io_spawn(recv_tunnel.run_loop())?;
+
+    local_io_spawn(send_tunnel.run_loop())?;
+
+    Ok(())
 }
 
-impl QuicForwardChannel {
-    fn new(raddrs: Vec<SocketAddr>, cmd_center: CmdCenter) -> Self {
-        Self { raddrs, cmd_center }
-    }
+pub struct QuicStreamSendTunnel {
+    stream: QuicStream,
+    receiver: Receiver<BytesMut>,
+}
 
-    async fn run_loop(self) -> io::Result<()> {
-        todo!()
+impl QuicStreamSendTunnel {
+    async fn run_loop(mut self) -> io::Result<()> {
+        while let Some(buf) = self.receiver.next().await {
+            self.stream.write_all(&buf).await?;
+        }
+
+        Ok(())
+    }
+}
+
+pub struct QuicStreamRecvTunnel {
+    stream: QuicStream,
+    sender: Sender<BytesMut>,
+}
+
+impl QuicStreamRecvTunnel {
+    async fn run_loop(mut self) -> io::Result<()> {
+        loop {
+            let mut buf = ReadBuf::with_capacity(65535);
+
+            let read_size = (&self.stream).read(buf.as_mut()).await?;
+
+            let buf = buf.into_bytes_mut(Some(read_size));
+
+            self.sender.send(buf).await.map_err(|err| {
+                io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    format!(
+                        "broken quic forward recv tunnel: trace_id={}, err={}",
+                        self.stream.trace_id(),
+                        err
+                    ),
+                )
+            })?;
+        }
     }
 }

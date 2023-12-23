@@ -210,7 +210,7 @@ impl TcpGatewayBackwardTunnel {
                         format!("broken tunnel backward loop: raddr={}", self.raddr),
                     ));
                 }
-                Some(buf) => (&*self.stream).write(&buf).await?,
+                Some(buf) => (&*self.stream).write_all(&buf).await?,
             };
         }
     }

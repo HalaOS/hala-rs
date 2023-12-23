@@ -34,7 +34,7 @@ pub trait Shared {
 }
 
 /// Shared data that using in single thread mode and without [`Clone`] support
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct LocalSharedNonClone<T> {
     value: RefCell<T>,
 }
@@ -83,7 +83,7 @@ impl<T> From<T> for LocalSharedNonClone<T> {
 }
 
 /// Shared data that using in single thread mode
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct LocalShared<T> {
     value: Rc<LocalSharedNonClone<T>>,
 }
@@ -149,6 +149,17 @@ pub struct MutexSharedNonClone<T> {
     value: Mutex<T>,
 }
 
+impl<T> Default for MutexSharedNonClone<T>
+where
+    T: Default,
+{
+    fn default() -> Self {
+        Self {
+            value: Default::default(),
+        }
+    }
+}
+
 impl<T> Shared for MutexSharedNonClone<T> {
     type Value = T;
 
@@ -196,6 +207,17 @@ impl<T> MutexSharedNonClone<T> {
 #[derive(Debug)]
 pub struct MutexShared<T> {
     value: Arc<MutexSharedNonClone<T>>,
+}
+
+impl<T> Default for MutexShared<T>
+where
+    T: Default,
+{
+    fn default() -> Self {
+        Self {
+            value: Arc::new(MutexSharedNonClone::default()),
+        }
+    }
 }
 
 impl<T> ops::Deref for MutexShared<T> {

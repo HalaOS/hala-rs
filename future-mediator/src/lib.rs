@@ -20,6 +20,18 @@ pub struct SharedData<T, E> {
     wakers: HashMap<E, Waker>,
 }
 
+impl<T, E> Default for SharedData<T, E>
+where
+    T: Default,
+{
+    fn default() -> Self {
+        Self {
+            value: Default::default(),
+            wakers: Default::default(),
+        }
+    }
+}
+
 impl<T, E> SharedData<T, E> {
     fn new(value: T) -> Self {
         Self {
@@ -57,6 +69,13 @@ impl<T, E> SharedData<T, E> {
     {
         for event in events.as_ref() {
             self.notify(event.clone());
+        }
+    }
+
+    /// Wakeup all listener.
+    pub fn wakeup_all(&mut self) {
+        for (_, waker) in self.wakers.drain() {
+            waker.wake();
         }
     }
 
@@ -136,6 +155,19 @@ pub trait Mediator {
 pub struct Hub<Raw, Wakers> {
     raw: Raw,
     wakers: Wakers,
+}
+
+impl<Raw, Wakers> Default for Hub<Raw, Wakers>
+where
+    Raw: Default,
+    Wakers: Default,
+{
+    fn default() -> Self {
+        Self {
+            raw: Default::default(),
+            wakers: Default::default(),
+        }
+    }
 }
 
 impl<Raw, Wakers> Clone for Hub<Raw, Wakers>

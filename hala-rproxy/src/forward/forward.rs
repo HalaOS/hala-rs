@@ -9,6 +9,7 @@ use std::{
 
 use bytes::BytesMut;
 use futures::channel::mpsc::{Receiver, Sender};
+use hala_net::quic::Config;
 
 pub enum OpenFlag<'a> {
     TcpServer(SocketAddr),
@@ -16,6 +17,7 @@ pub enum OpenFlag<'a> {
     QuicServer {
         peer_name: &'a str,
         raddrs: &'a [SocketAddr],
+        config: Config,
     },
 
     Wasm(&'a Path),
