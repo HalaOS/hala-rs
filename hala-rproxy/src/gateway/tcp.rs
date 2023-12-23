@@ -33,16 +33,14 @@ pub trait TcpGatewayHandshake {
 pub struct TcpGatewayConfig<L, H> {
     key: String,
     laddrs: L,
-    pool_size: usize,
     handshake: Option<H>,
 }
 
 impl<L, H> TcpGatewayConfig<L, H> {
-    pub fn new<K: Into<String>>(key: K, laddrs: L, handshake: H, pool_size: usize) -> Self {
+    pub fn new<K: Into<String>>(key: K, laddrs: L, handshake: H) -> Self {
         Self {
             key: key.into(),
             laddrs,
-            pool_size,
             handshake: Some(handshake),
         }
     }
@@ -69,16 +67,7 @@ where
             self.handshake.take().unwrap(),
         )?;
 
-        let pool_size = self.pool_size;
-
-        std::thread::spawn(move || {
-            block_on(
-                async move {
-                    gateway.run_loop().await.unwrap();
-                },
-                pool_size,
-            )
-        });
+        io_spawn(gateway.run_loop())?;
 
         Ok(controller)
     }
@@ -144,13 +133,13 @@ where
 
         let stream = Arc::new(stream);
 
-        let forward = TcpGatewayForwardTunnel {
+        let forward = TcpGatewaySendTunnel {
             stream: stream.clone(),
             sender,
             raddr: raddr.clone(),
         };
 
-        let backword = TcpGatewayBackwardTunnel {
+        let backword = TcpGatewayRecvTunnel {
             stream: stream.clone(),
             receiver,
             raddr,
@@ -163,13 +152,13 @@ where
     }
 }
 
-struct TcpGatewayForwardTunnel {
+struct TcpGatewaySendTunnel {
     stream: Arc<TcpStream>,
     sender: Sender<BytesMut>,
     raddr: SocketAddr,
 }
 
-impl TcpGatewayForwardTunnel {
+impl TcpGatewaySendTunnel {
     async fn run_loop(mut self) -> io::Result<()> {
         loop {
             let mut buf = ReadBuf::with_capacity(65535);
@@ -183,7 +172,7 @@ impl TcpGatewayForwardTunnel {
                     return Err(io::Error::new(
                         io::ErrorKind::BrokenPipe,
                         format!(
-                            "broken tunnel forward loop: raddr={}, err={}",
+                            "broken gateway send tunnel: raddr={}, err={}",
                             self.raddr, err
                         ),
                     ));
@@ -194,20 +183,20 @@ impl TcpGatewayForwardTunnel {
     }
 }
 
-struct TcpGatewayBackwardTunnel {
+struct TcpGatewayRecvTunnel {
     stream: Arc<TcpStream>,
     receiver: Receiver<BytesMut>,
     raddr: SocketAddr,
 }
 
-impl TcpGatewayBackwardTunnel {
+impl TcpGatewayRecvTunnel {
     async fn run_loop(mut self) -> io::Result<()> {
         loop {
             match self.receiver.next().await {
                 None => {
                     return Err(io::Error::new(
                         io::ErrorKind::BrokenPipe,
-                        format!("broken tunnel backward loop: raddr={}", self.raddr),
+                        format!("broken gateway recv tunnel: raddr={}", self.raddr),
                     ));
                 }
                 Some(buf) => (&*self.stream).write_all(&buf).await?,

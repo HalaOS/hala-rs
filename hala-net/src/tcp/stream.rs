@@ -5,6 +5,7 @@ use hala_io_driver::*;
 use hala_io_util::*;
 
 /// A TCP stream between a local and a remote socket.
+#[derive(Clone)]
 pub struct TcpStream {
     pub fd: Handle,
     poller: Handle,

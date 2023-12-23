@@ -159,12 +159,12 @@ where
 
             let stream = Arc::new(stream);
 
-            let forward = QuicGatewayForwardTunnel {
+            let forward = QuicGatewaySendTunnel {
                 stream: stream.clone(),
                 sender,
             };
 
-            let backword = QuicGatewayBackwardTunnel {
+            let backword = QuicGatewayRecvTunnel {
                 stream: stream.clone(),
                 receiver,
             };
@@ -179,12 +179,12 @@ where
     }
 }
 
-struct QuicGatewayForwardTunnel {
+struct QuicGatewaySendTunnel {
     stream: Arc<QuicStream>,
     sender: Sender<BytesMut>,
 }
 
-impl QuicGatewayForwardTunnel {
+impl QuicGatewaySendTunnel {
     async fn run_loop(mut self) -> io::Result<()> {
         loop {
             let mut buf = ReadBuf::with_capacity(65535);
@@ -198,7 +198,7 @@ impl QuicGatewayForwardTunnel {
                     return Err(io::Error::new(
                         io::ErrorKind::BrokenPipe,
                         format!(
-                            "broken tunnel forward loop: trace_id={}, err={}",
+                            "broken gateway send tunnel: trace_id={}, err={}",
                             self.stream.trace_id(),
                             err
                         ),
@@ -210,19 +210,19 @@ impl QuicGatewayForwardTunnel {
     }
 }
 
-struct QuicGatewayBackwardTunnel {
+struct QuicGatewayRecvTunnel {
     stream: Arc<QuicStream>,
     receiver: Receiver<BytesMut>,
 }
 
-impl QuicGatewayBackwardTunnel {
+impl QuicGatewayRecvTunnel {
     async fn run_loop(mut self) -> io::Result<()> {
         loop {
             match self.receiver.next().await {
                 None => {
                     return Err(io::Error::new(
                         io::ErrorKind::BrokenPipe,
-                        format!("broken tunnel backward loop: {}", self.stream.trace_id()),
+                        format!("broken gateway recv tunnel: {}", self.stream.trace_id()),
                     ));
                 }
                 Some(buf) => (&*self.stream).write_all(&buf).await?,

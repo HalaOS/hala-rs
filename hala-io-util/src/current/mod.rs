@@ -24,7 +24,7 @@ pub use poller::*;
 mod spawner;
 pub use spawner::*;
 
-static INIT_DRIVER: Once = Once::new();
+pub static INIT_DRIVER: Once = Once::new();
 static POOL: OnceLock<ThreadPool> = OnceLock::new();
 
 /// Run a hala io future for multi-thread mode.
@@ -70,7 +70,7 @@ where
     futures::executor::block_on(handle)
 }
 
-struct BlockOnIoSpawner(ThreadPool);
+pub struct BlockOnIoSpawner(pub ThreadPool);
 
 impl IoSpawner for BlockOnIoSpawner {
     type Fut = BoxFuture<'static, std::io::Result<()>>;
