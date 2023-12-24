@@ -1,5 +1,5 @@
 [package]
-description = "The Mediator Pattern in Rust Asynchronous Programming"
+description = "The bridge between asynchronous program and synchronous program"
 documentation = "https://docs.rs/future-mediator"
 edition.workspace = true
 license = "MIT"

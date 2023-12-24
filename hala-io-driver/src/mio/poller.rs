@@ -269,7 +269,7 @@ where
                     timeout.slot = Some(slot);
 
                     log::trace!(
-                        "{:?} register as {:?}, slot={}, tick_duration={:?}, ticks={},time_wheel_elapsed={:?}, time_wheel_ticks={}, time_wheel_steps={}",
+                        "{:?} register timeout {:?}, slot={}, tick_duration={:?}, ticks={},time_wheel_elapsed={:?}, time_wheel_ticks={}, time_wheel_steps={}",
                         handle.token,
                         timeout.value,
                         timeout.slot.unwrap(),

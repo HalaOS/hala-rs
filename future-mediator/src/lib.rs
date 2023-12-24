@@ -102,15 +102,15 @@ impl<T, E> DerefMut for SharedData<T, E> {
 }
 
 /// A mediator is a central hub for communication between futures.
-pub struct Hub<Raw, Wakers> {
+pub struct Mediator<Raw, Wakers> {
     raw: Raw,
     wakers: Wakers,
     trace_id: Option<&'static str>,
 }
 
-impl<Raw, Wakers> Hub<Raw, Wakers> {}
+impl<Raw, Wakers> Mediator<Raw, Wakers> {}
 
-impl<Raw, Wakers> Default for Hub<Raw, Wakers>
+impl<Raw, Wakers> Default for Mediator<Raw, Wakers>
 where
     Raw: Default,
     Wakers: Default,
@@ -124,7 +124,7 @@ where
     }
 }
 
-impl<Raw, Wakers> Clone for Hub<Raw, Wakers>
+impl<Raw, Wakers> Clone for Mediator<Raw, Wakers>
 where
     Raw: Clone,
     Wakers: Clone,
@@ -138,7 +138,7 @@ where
     }
 }
 
-impl<T, E, Raw, Wakers> Hub<Raw, Wakers>
+impl<T, E, Raw, Wakers> Mediator<Raw, Wakers>
 where
     T: Unpin + 'static,
     E: Eq + Clone + Unpin + Hash + Debug,
@@ -154,6 +154,7 @@ where
         }
     }
 
+    /// Create new mediator instance with `trace_id`
     pub fn new_with(value: T, trace_id: &'static str) -> Self {
         Self {
             raw: SharedData::new(value).into(),
@@ -162,69 +163,44 @@ where
         }
     }
 
+    fn notify_one_lock_waiter(&self) {
+        let mut wakers = self.wakers.lock_mut();
+
+        if let Some(waker) = wakers.pop_front() {
+            waker.wake();
+        }
+    }
+
+    /// Acquires an immutable reference of `SharedData`.
+    ///
+    /// When this function returns, it will notify another locker `waiter`.
     pub fn with<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&SharedData<T, E>) -> R,
     {
         let raw = self.raw.lock();
 
-        // log::trace!(target:self.trace_id.unwrap_or(""), "with locked");
-
         let r = f(&raw);
 
-        // log::trace!(target:self.trace_id.unwrap_or(""), "with unlock");
-
-        let mut wakers = self.wakers.lock_mut();
-
-        if let Some(waker) = wakers.pop_front() {
-            // log::trace!(target:self.trace_id.unwrap_or(""), "with unlock, wakeup another");
-            waker.wake();
-        }
+        self.notify_one_lock_waiter();
 
         r
     }
 
-    /// Acquire the lock and access mutable shared data.
+    /// Acquires a mutable reference of `SharedData`.
+    ///
+    /// When this function returns, it will notify another locker `waiter`.
     pub fn with_mut<F, R>(&self, f: F) -> R
     where
         F: FnOnce(&mut SharedData<T, E>) -> R,
     {
         let mut raw = self.raw.lock_mut();
 
-        // log::trace!(target:self.trace_id.unwrap_or(""), "with_mut locked");
-
         let r = f(&mut raw);
 
-        // log::trace!(target:self.trace_id.unwrap_or(""), "with_mut unlock");
-
-        let mut wakers = self.wakers.lock_mut();
-
-        if let Some(waker) = wakers.pop_front() {
-            // log::trace!(target:self.trace_id.unwrap_or(""), "with_mut unlock, wakeup another");
-            waker.wake();
-        }
+        self.notify_one_lock_waiter();
 
         r
-    }
-
-    pub fn try_lock_with<F, R>(&self, f: F) -> Option<R>
-    where
-        F: FnOnce(&mut T) -> R,
-    {
-        if let Some(mut locked) = self.raw.try_lock_mut() {
-            let mut wakers = self.wakers.lock_mut();
-
-            let r = Some(f(&mut locked));
-
-            if let Some(waker) = wakers.pop_front() {
-                // log::trace!(target:self.trace_id.unwrap_or(""), "with unlock, wakeup another");
-                waker.wake();
-            }
-
-            r
-        } else {
-            None
-        }
     }
 
     /// Emit one event on.
@@ -244,6 +220,11 @@ where
         });
     }
 
+    /// Create a future that wraps a function that returns a Poll.
+    ///
+    /// When this function returns [`Pending`](Poll::Pending), `Mediator` registers this function in the `event` waitlist.
+    ///
+    /// You can call [`notify`](Mediator::notify) or [`notify_all`](Mediator::notify) to wakeup this poll function again.
     #[inline]
     pub fn on_poll<F, R>(&self, event: E, f: F) -> OnEvent<Raw, Wakers, E, F>
     where
@@ -352,10 +333,10 @@ macro_rules! on {
 }
 
 pub type LocalMediator<T, E> =
-    Hub<shared::LocalShared<SharedData<T, E>>, shared::LocalShared<VecDeque<Waker>>>;
+    Mediator<shared::LocalShared<SharedData<T, E>>, shared::LocalShared<VecDeque<Waker>>>;
 
 pub type MutexMediator<T, E> =
-    Hub<shared::MutexShared<SharedData<T, E>>, shared::MutexShared<VecDeque<Waker>>>;
+    Mediator<shared::MutexShared<SharedData<T, E>>, shared::MutexShared<VecDeque<Waker>>>;
 
 #[cfg(test)]
 mod tests {

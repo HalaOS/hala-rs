@@ -68,8 +68,8 @@ fn config() -> Config {
     config.set_initial_max_data(10_000_000);
     config.set_initial_max_stream_data_bidi_local(1_000_000);
     config.set_initial_max_stream_data_bidi_remote(1_000_000);
-    config.set_initial_max_streams_bidi(100);
-    config.set_initial_max_streams_uni(100);
+    config.set_initial_max_streams_bidi(1_000_000);
+    config.set_initial_max_streams_uni(1_000_000);
     config.set_initial_max_stream_data_uni(1_000_000);
     config.set_disable_active_migration(true);
 
@@ -316,7 +316,7 @@ mod tests {
 
         let (s, mut r) = channel::<()>(0);
 
-        let count = 2;
+        let count = 80;
 
         for i in 0..count {
             let mut s = s.clone();
@@ -325,13 +325,15 @@ mod tests {
 
                 let mut stream = TcpStream::connect("127.0.0.1:1812").unwrap();
 
-                stream.write(data.as_bytes()).await.unwrap();
+                for _ in 0..count {
+                    stream.write(data.as_bytes()).await.unwrap();
 
-                let mut buf = [0; 1024];
+                    let mut buf = [0; 1024];
 
-                let read_size = stream.read(&mut buf).await.unwrap();
+                    let read_size = stream.read(&mut buf).await.unwrap();
 
-                assert_eq!(&buf[..read_size], data.as_bytes());
+                    assert_eq!(&buf[..read_size], data.as_bytes());
+                }
 
                 s.send(()).await.unwrap();
 

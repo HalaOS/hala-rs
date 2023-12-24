@@ -1,1 +1,1 @@
-cargo run --bin "rproxy" -- -l 127.0.0.1:1813 -g quic -f tcp -r 127.0.0.1:1814 -c ./cert/cert.crt -k ./cert/cert.key
+cargo run --bin "rproxy" -- -l 127.0.0.1:1813 -g quic -f tcp -r 127.0.0.1:12948 -c ./cert/cert.crt -k ./cert/cert.key

@@ -10,7 +10,7 @@ use std::{
 
 use future_mediator::{LocalMediator, SharedData};
 use futures::FutureExt;
-use hala_io_util::{get_local_poller, Sleep};
+use hala_io_util::{get_local_poller, local_io_spawn, Sleep};
 use quiche::{RecvInfo, SendInfo};
 
 use crate::{errors::into_io_error, quic::QuicStream};
@@ -89,17 +89,6 @@ fn handle_stream(cx: &mut SharedData<QuicConnState, QuicConnEvents>) {
 
 fn handle_close(cx: &mut SharedData<QuicConnState, QuicConnEvents>) {
     cx.wakeup_all();
-}
-
-fn handle_stream_close(cx: &mut SharedData<QuicConnState, QuicConnEvents>, stream_id: u64) {
-    cx.notify(QuicConnEvents::StreamRecv(
-        cx.quiche_conn.trace_id().into(),
-        stream_id,
-    ));
-    cx.notify(QuicConnEvents::StreamSend(
-        cx.quiche_conn.trace_id().into(),
-        stream_id,
-    ));
 }
 
 /// Quic connection state object
@@ -285,6 +274,10 @@ impl AsyncQuicConnState {
                         Ok(recv_size) => {
                             state.notify(QuicConnEvents::Send(self.trace_id.to_string()));
 
+                            if fin {
+                                state.opened_streams.remove(&stream_id);
+                            }
+
                             return Poll::Ready(Ok(recv_size));
                         }
                         Err(quiche::Error::Done) => {
@@ -306,13 +299,15 @@ impl AsyncQuicConnState {
                             return Poll::Pending;
                         }
                         Err(err) => {
-                            return {
-                                if state.quiche_conn.is_closed() {
-                                    handle_stream_close(state, stream_id);
-                                }
-
-                                Poll::Ready(Err(into_io_error(err)))
+                            if fin {
+                                state.opened_streams.remove(&stream_id);
                             }
+
+                            if state.quiche_conn.is_closed() {
+                                handle_close(state);
+                            }
+
+                            Poll::Ready(Err(into_io_error(err)))
                         }
                     }
                 },
@@ -385,57 +380,34 @@ impl AsyncQuicConnState {
         self.state
             .on_poll(QuicConnEvents::OpenStream, |state, _| {
                 if state.quiche_conn.is_closed() {
-                    Poll::Ready(Err(io::Error::new(
+                    return Poll::Ready(Err(io::Error::new(
                         io::ErrorKind::BrokenPipe,
                         format!("Quic conn closed: {}", state.quiche_conn.trace_id()),
-                    )))
-                } else {
-                    log::trace!(
-                        "create new stream, stream_id={}, conn_id={}",
-                        id,
-                        state.quiche_conn.trace_id()
-                    );
-
-                    match state.quiche_conn.stream_send(id, b"", false) {
-                        Err(quiche::Error::Done) => {
-                            return Poll::Ready(Err(io::Error::new(
-                                io::ErrorKind::BrokenPipe,
-                                "stream blocked: {id}",
-                            )));
-                        }
-                        Err(err) => {
-                            return Poll::Ready(Err(io::Error::new(
-                                io::ErrorKind::BrokenPipe,
-                                err,
-                            )));
-                        }
-                        _ => {}
-                    }
-
-                    state.notify(QuicConnEvents::Send(self.trace_id.to_string()));
-
-                    Poll::Ready(Ok(QuicStream::new(id, self.clone())))
+                    )));
                 }
+
+                log::trace!(
+                    "create new stream, stream_id={}, conn_id={}",
+                    id,
+                    state.quiche_conn.trace_id()
+                );
+
+                state.notify(QuicConnEvents::Send(self.trace_id.to_string()));
+
+                Poll::Ready(Ok(QuicStream::new(id, self.clone())))
             })
             .await
     }
 
     pub fn close_stream(&self, stream_id: u64) {
-        // pin lock like
-        loop {
-            if self
-                .state
-                .try_lock_with(|state| {
-                    state.opened_streams.remove(&stream_id);
-                })
-                .is_none()
-            {
-                log::trace!("Close stream");
-                continue;
-            }
+        let this = self.clone();
 
-            break;
-        }
+        local_io_spawn(async move {
+            this.stream_send(stream_id, b"", true).await?;
+
+            Ok(())
+        })
+        .unwrap();
     }
 
     pub(super) async fn is_stream_closed(&self, stream_id: u64) -> bool {

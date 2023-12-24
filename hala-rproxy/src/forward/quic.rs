@@ -129,7 +129,11 @@ impl QuicForwardMediator {
 
         let (sender_gateway, receiver_forward) = channel(1024);
 
-        log::trace!("Quic forward open channel, peer_name={}", peer_name);
+        log::trace!(
+            "Quic forward open channel, peer_name={}, raddrs={:?}",
+            peer_name,
+            raddrs
+        );
 
         self.hub.with_mut(|shared| {
             if let Some(conn_ops) = shared.opened_conns.get_mut(peer_name) {
