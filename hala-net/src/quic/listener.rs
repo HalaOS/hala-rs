@@ -138,6 +138,12 @@ impl QuicListenerEventLoop {
                 header.dcid.into_owned()
             };
 
+            log::trace!(
+                "quic listener recv data, len={}, quic_conn={:?}",
+                read_size,
+                conn_id
+            );
+
             if let Some(conn) = self.conns.get(&conn_id) {
                 match conn.state.recv(&mut buf[..read_size], recv_info).await {
                     Ok(_) => {}

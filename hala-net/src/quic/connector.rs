@@ -2,7 +2,7 @@ use std::{
     io,
     net::{SocketAddr, ToSocketAddrs},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use hala_io_driver::Handle;
@@ -246,6 +246,13 @@ impl QuicConnEventLoop {
                 to: laddr,
             };
 
+            log::trace!(
+                "udp socket recv data, len={:?}, recv_info={:?}, {:?}",
+                read_size,
+                recv_info,
+                self.conn
+            );
+
             let mut start_offset = 0;
 
             let end_offset = read_size;
@@ -279,16 +286,28 @@ impl QuicConnEventLoop {
                 }
             };
 
-            log::trace!(
-                "Quiconn({:?}) send_size={}, send_info={:?}",
-                self.conn,
-                send_size,
-                send_info
-            );
+            let now = Instant::now();
 
-            self.udp_group
+            if now < send_info.at {
+                let duration = send_info.at - now;
+
+                if !duration.is_zero() {
+                    sleep_with(duration, get_local_poller()?).await?;
+                }
+            }
+
+            let sent_size = self
+                .udp_group
                 .send_to_on_path(&buf[..send_size], send_info.from, send_info.to)
                 .await?;
+
+            log::trace!(
+                "{:?} send_info={:?}, send_size={}, sent_size={}",
+                self.conn,
+                send_info,
+                send_size,
+                sent_size
+            );
         }
     }
 }

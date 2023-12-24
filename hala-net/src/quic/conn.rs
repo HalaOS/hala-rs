@@ -10,7 +10,7 @@ pub struct QuicConn {
 
 impl Debug for QuicConn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "trace_id={}", self.state.trace_id)
+        write!(f, "quic_conn={}", self.state.trace_id)
     }
 }
 

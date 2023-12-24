@@ -1,7 +1,9 @@
-use futures::{AsyncReadExt, AsyncWriteExt};
+use futures::{channel::mpsc::channel, AsyncReadExt, AsyncWriteExt, SinkExt, StreamExt};
 use hala_io_util::*;
 use hala_net::{
-    quic::{Config, InnerConnector, QuicAcceptor, QuicConnector, QuicListener},
+    quic::{
+        Config, InnerConnector, QuicAcceptor, QuicConn, QuicConnector, QuicListener, QuicStream,
+    },
     *,
 };
 
@@ -44,7 +46,7 @@ fn config(is_server: bool) -> Config {
     config.set_initial_max_stream_data_bidi_remote(1_000_000);
     config.set_initial_max_streams_bidi(100);
     config.set_initial_max_streams_uni(100);
-    config.set_disable_active_migration(true);
+    config.set_disable_active_migration(false);
 
     config
 }
@@ -166,6 +168,8 @@ async fn test_connector_timeout() {
 
 #[hala_test::test(local_io_test)]
 async fn test_conn_timeout() {
+    _ = pretty_env_logger::try_init_timed();
+
     let (mut listener, laddrs) = create_listener(1).await;
 
     let mut connector = QuicConnector::bind("127.0.0.1:0", config(false)).unwrap();
@@ -196,6 +200,77 @@ async fn test_conn_timeout() {
     let error = stream.read(&mut buf).await.unwrap_err();
 
     assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
+}
+
+async fn accept_stream(conn: QuicConn) -> io::Result<()> {
+    while let Some(stream) = conn.accept().await {
+        local_io_spawn(stream_echo(stream))?;
+    }
+
+    Ok(())
+}
+
+async fn stream_echo(mut stream: QuicStream) -> io::Result<()> {
+    loop {
+        let mut buf = vec![0; 65535];
+
+        let read_size = stream.read(&mut buf).await?;
+
+        stream.write_all(&buf[..read_size]).await?;
+    }
+}
+
+#[hala_test::test(local_io_test)]
+async fn test_multi_quic_stream() {
+    _ = pretty_env_logger::try_init_timed();
+
+    let (mut listener, laddrs) = create_listener(1).await;
+
+    let mut connector = QuicConnector::bind("127.0.0.1:0", config(false)).unwrap();
+
+    local_io_spawn(async move {
+        let conn = listener.accept().await.unwrap();
+
+        local_io_spawn(accept_stream(conn))?;
+
+        Ok(())
+    })
+    .unwrap();
+
+    let conn = connector.connect(laddrs.as_slice()).await.unwrap();
+
+    let (s, mut r) = channel::<()>(0);
+
+    let count = 2;
+
+    for i in 0..count {
+        let mut s = s.clone();
+
+        let mut stream = conn.open_stream().await.unwrap();
+
+        local_io_spawn(async move {
+            let data: String = format!("hello world {}", i);
+
+            stream.write(data.as_bytes()).await.unwrap();
+
+            let mut buf = [0; 1024];
+
+            let read_size = stream.read(&mut buf).await.unwrap();
+
+            assert_eq!(&buf[..read_size], data.as_bytes());
+
+            s.send(()).await.unwrap();
+
+            log::trace!("stream {} complete", i);
+
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    for _ in 0..count {
+        r.next().await.unwrap();
+    }
 }
 
 #[hala_test::test(io_test)]

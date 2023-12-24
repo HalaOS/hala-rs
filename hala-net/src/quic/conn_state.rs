@@ -63,24 +63,22 @@ fn handle_accept(cx: &mut SharedData<QuicConnState, QuicConnEvents>, stream_id: 
 }
 
 fn handle_stream(cx: &mut SharedData<QuicConnState, QuicConnEvents>) {
-    // for stream_id in cx.quiche_conn.readable() {
-    //     handle_accept(cx, stream_id);
-    //     cx.notify(QuicConnEvents::StreamRecv(
-    //         cx.quiche_conn.trace_id().into(),
-    //         stream_id,
-    //     ));
-    // }
+    for stream_id in cx.quiche_conn.readable() {
+        handle_accept(cx, stream_id);
+        cx.notify(QuicConnEvents::StreamRecv(
+            cx.quiche_conn.trace_id().into(),
+            stream_id,
+        ));
+    }
 
-    // for stream_id in cx.quiche_conn.writable() {
-    //     handle_accept(cx, stream_id);
+    for stream_id in cx.quiche_conn.writable() {
+        handle_accept(cx, stream_id);
 
-    //     cx.notify(QuicConnEvents::StreamSend(
-    //         cx.quiche_conn.trace_id().into(),
-    //         stream_id,
-    //     ));
-    // }
-
-    cx.wakeup_all();
+        cx.notify(QuicConnEvents::StreamSend(
+            cx.quiche_conn.trace_id().into(),
+            stream_id,
+        ));
+    }
 }
 
 fn handle_close(cx: &mut SharedData<QuicConnState, QuicConnEvents>) {
@@ -130,7 +128,10 @@ impl AsyncQuicConnState {
     pub fn new(quiche_conn: quiche::Connection, stream_id_seed: u64) -> Self {
         Self {
             trace_id: Arc::new(quiche_conn.trace_id().to_owned()),
-            state: LocalMediator::new(QuicConnState::new(quiche_conn)),
+            state: LocalMediator::new_with(
+                QuicConnState::new(quiche_conn),
+                "mediator: quic_conn_state",
+            ),
             stream_id_seed: Arc::new(stream_id_seed.into()),
         }
     }
@@ -139,91 +140,74 @@ impl AsyncQuicConnState {
     pub async fn send<'a>(&self, buf: &'a mut [u8]) -> io::Result<(usize, SendInfo)> {
         let mut sleep: Option<Sleep> = None;
 
+        let event = QuicConnEvents::Send(self.trace_id.to_string());
+
         self.state
-            .on_poll(
-                QuicConnEvents::Send(self.trace_id.to_string()),
-                |state, cx| {
-                    if state.quiche_conn.is_closed() {
-                        handle_close(state);
+            .on_poll(event.clone(), |state, cx| {
+                if state.quiche_conn.is_closed() {
+                    handle_close(state);
 
-                        return Poll::Ready(Err(io::Error::new(
-                            io::ErrorKind::BrokenPipe,
-                            format!("conn={} closed", state.quiche_conn.trace_id()),
-                        )));
-                    }
+                    return Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        format!("{:?} err=broken_pipe", event,),
+                    )));
+                }
 
-                    if let Some(mut sleep) = sleep.take() {
-                        match sleep.poll_unpin(cx) {
-                            Poll::Ready(_) => {
-                                log::trace!(
-                                    "QuicConnSend(conn_id={}) on_timeout",
-                                    state.quiche_conn.trace_id()
-                                );
-                                state.quiche_conn.on_timeout();
-                            }
-                            Poll::Pending => {}
+                if let Some(mut sleep) = sleep.take() {
+                    match sleep.poll_unpin(cx) {
+                        Poll::Ready(_) => {
+                            log::trace!("{:?} on_timeout", event);
+                            state.quiche_conn.on_timeout();
                         }
+                        Poll::Pending => {}
                     }
+                }
 
-                    loop {
-                        match state.quiche_conn.send(buf) {
-                            Ok((send_size, send_info)) => {
-                                log::trace!(
-                                    "QuicConnSend(conn_id={}), send_size={}, send_info={:?}",
-                                    state.quiche_conn.trace_id(),
-                                    send_size,
-                                    send_info
-                                );
+                loop {
+                    match state.quiche_conn.send(buf) {
+                        Ok((send_size, send_info)) => {
+                            log::trace!(
+                                "{:?}, send_size={}, send_info={:?}",
+                                event,
+                                send_size,
+                                send_info
+                            );
 
-                                handle_stream(state);
+                            state.wakeup_all();
 
-                                return Poll::Ready(Ok((send_size, send_info)));
+                            handle_stream(state);
+
+                            return Poll::Ready(Ok((send_size, send_info)));
+                        }
+                        Err(quiche::Error::Done) => {
+                            if state.quiche_conn.is_closed() {
+                                handle_close(state);
                             }
-                            Err(quiche::Error::Done) => {
-                                if let Some(expired) = state.quiche_conn.timeout() {
-                                    log::trace!(
-                                        "QuicConnSend(conn_id={}) add timeout({:?})",
-                                        state.quiche_conn.trace_id(),
-                                        expired
-                                    );
 
-                                    let mut timeout =
-                                        Sleep::new_with(get_local_poller()?, expired)?;
+                            if let Some(expired) = state.quiche_conn.timeout() {
+                                log::trace!("{:?} add timeout({:?})", event, expired);
 
-                                    match timeout.poll_unpin(cx) {
-                                        Poll::Ready(_) => {
-                                            log::trace!(
-                                                "QuicConnSend(conn_id={}) on_timeout",
-                                                state.quiche_conn.trace_id()
-                                            );
+                                let mut timeout = Sleep::new_with(get_local_poller()?, expired)?;
 
-                                            state.quiche_conn.on_timeout();
-                                            continue;
-                                        }
-                                        _ => {
-                                            sleep = Some(timeout);
-                                        }
+                                match timeout.poll_unpin(cx) {
+                                    Poll::Ready(_) => {
+                                        log::trace!("{:?} on_timeout immediately", event);
+
+                                        state.quiche_conn.on_timeout();
+                                        continue;
+                                    }
+                                    _ => {
+                                        sleep = Some(timeout);
                                     }
                                 }
-
-                                log::trace!(
-                                    "QuicConnSend(conn_id={}),stats={:?}, done, is_closed={:?}",
-                                    state.quiche_conn.trace_id(),
-                                    state.quiche_conn.stats(),
-                                    state.quiche_conn.is_closed()
-                                );
-
-                                if state.quiche_conn.is_closed() {
-                                    handle_close(state);
-                                }
-
-                                return Poll::Pending;
                             }
-                            Err(err) => return Poll::Ready(Err(into_io_error(err))),
+
+                            return Poll::Pending;
                         }
+                        Err(err) => return Poll::Ready(Err(into_io_error(err))),
                     }
-                },
-            )
+                }
+            })
             .await
     }
 
@@ -254,7 +238,7 @@ impl AsyncQuicConnState {
                             if state.quiche_conn.is_closed() {
                                 handle_close(state);
                             } else {
-                                state.notify(QuicConnEvents::Send(self.trace_id.to_string()));
+                                state.wakeup_all();
                                 handle_stream(state);
                             }
 
@@ -300,7 +284,7 @@ impl AsyncQuicConnState {
 
                     match state.quiche_conn.stream_send(stream_id, buf, fin) {
                         Ok(recv_size) => {
-                            state.notify(QuicConnEvents::Send(self.trace_id.to_string()));
+                            state.wakeup_all();
 
                             return Poll::Ready(Ok(recv_size));
                         }
@@ -357,7 +341,7 @@ impl AsyncQuicConnState {
 
                     match state.quiche_conn.stream_recv(stream_id, buf) {
                         Ok(recv_size) => {
-                            state.notify(QuicConnEvents::Recv(self.trace_id.to_string()));
+                            state.wakeup_all();
 
                             if state.quiche_conn.is_closed() {
                                 handle_stream_close(state, stream_id);

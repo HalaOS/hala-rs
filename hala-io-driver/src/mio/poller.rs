@@ -55,12 +55,13 @@ impl Debug for MioTimeout {
         if let Some(start_time) = self.start_time.as_ref() {
             write!(
                 f,
-                "timeout={:?},elapsed {:?}",
+                "duration={:?}, slot={}, elapsed={:?}",
                 self.duration,
+                self.slot.unwrap(),
                 start_time.elapsed()
             )
         } else {
-            write!(f, "timeout={:?}", self.duration)
+            write!(f, "duration={:?}", self.duration)
         }
     }
 }
@@ -253,8 +254,6 @@ where
                     if timeout.duration.is_zero() {
                         return Err(io::Error::new(io::ErrorKind::InvalidInput, "Timeout is zero"));
                     }
-
-
                     
                     timeout.start_time = Some(Instant::now());
                     timeout.tick_duration = Some(self.tick_duration);

@@ -299,14 +299,14 @@ impl RawDriverExt for MioDriver {
         handle.expect(Description::Timeout)?;
 
         TypedHandle::<WithPoller<MioTimeout>>::new(handle).with(|timeout| {
+            log::trace!("poll timeout status, {:?}, {:?}", handle, timeout.value);
+
             if !timeout.is_register() {
                 return Err(io::Error::new(
                     io::ErrorKind::Other,
                     "Call fd_cntl/Register first",
                 ));
             }
-
-            log::debug!("{:?}", timeout.value);
 
             if timeout.is_expired() {
                 return Ok(true);

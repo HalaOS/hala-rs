@@ -40,12 +40,10 @@ impl<T, E> SharedData<T, E> {
         }
     }
 
-    fn register_event_listener(&mut self, event: E, waker: Waker)
+    fn add_listener(&mut self, event: E, waker: Waker)
     where
         E: Eq + Hash + Debug,
     {
-        log::trace!("register event={:?}", event);
-
         self.wakers.insert(event, waker);
     }
 
@@ -101,54 +99,6 @@ impl<T, E> DerefMut for SharedData<T, E> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.value
     }
-}
-
-/// A mediator is a central hub for communication between futures.
-pub trait Mediator {
-    type Value: Unpin + 'static;
-    type Event: Eq + Hash + Clone + Unpin + Debug;
-
-    type OnEvent<F, R>: Future<Output = R>
-    where
-        F: FnMut(&mut SharedData<Self::Value, Self::Event>, &mut Context<'_>) -> Poll<R> + Unpin,
-        R: Unpin;
-
-    /// Create new `Mediator` instance with shared value.
-    fn new(value: Self::Value) -> Self;
-
-    /// Acquire the lock and access immutable shared data.
-    fn with<F, R>(&self, f: F) -> R
-    where
-        F: FnOnce(&SharedData<Self::Value, Self::Event>) -> R;
-
-    /// Acquire the lock and access mutable shared data.
-    fn with_mut<F, R>(&self, f: F) -> R
-    where
-        F: FnOnce(&mut SharedData<Self::Value, Self::Event>) -> R;
-
-    /// Attempt to acquire the shared data lock immediately.
-    ///
-    /// If the lock is currently held, this will return `None`.
-    fn try_lock_with<F, R>(&self, f: F) -> Option<R>
-    where
-        F: FnOnce(&mut Self::Value) -> R;
-
-    /// Notify one listener event on
-    fn notify(&self, event: Self::Event);
-
-    /// Notify listeners events on
-    fn notify_all<Events: AsRef<[Self::Event]>>(&self, events: Events);
-
-    /// Create a new event handle future with poll function `f` and run once immediately
-    ///
-    /// If `f` returns [`Pending`](Poll::Pending), the system will move the
-    /// handle into the event waiting map, and the future returns `Pending` status.
-    ///
-    /// You can call [`notify`](Mediator::notify) to wake up this poll function and run once again.
-    fn on_poll<F, R>(&self, event: Self::Event, f: F) -> Self::OnEvent<F, R>
-    where
-        F: FnMut(&mut SharedData<Self::Value, Self::Event>, &mut Context<'_>) -> Poll<R> + Unpin,
-        R: Unpin;
 }
 
 /// A mediator is a central hub for communication between futures.
@@ -262,7 +212,16 @@ where
         F: FnOnce(&mut T) -> R,
     {
         if let Some(mut locked) = self.raw.try_lock_mut() {
-            Some(f(&mut locked))
+            let mut wakers = self.wakers.lock_mut();
+
+            let r = Some(f(&mut locked));
+
+            if let Some(waker) = wakers.pop_front() {
+                // log::trace!(target:self.trace_id.unwrap_or(""), "with unlock, wakeup another");
+                waker.wake();
+            }
+
+            r
         } else {
             None
         }
@@ -273,18 +232,16 @@ where
     where
         E: Eq + Hash + Debug,
     {
-        let mut raw = self.raw.lock_mut();
-
-        raw.notify(event);
+        self.with_mut(|shared| shared.notify(event));
     }
 
     /// Emit all events
     pub fn notify_all<Events: AsRef<[E]>>(&self, events: Events) {
-        let mut raw = self.raw.lock_mut();
-
-        for event in events.as_ref() {
-            raw.notify(event.clone());
-        }
+        self.with_mut(|shared| {
+            for event in events.as_ref() {
+                shared.notify(event.clone());
+            }
+        });
     }
 
     #[inline]
@@ -336,7 +293,7 @@ where
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Self::Output> {
-        // let trace_id = self.trace_id.unwrap_or("");
+        let trace_id = self.trace_id.unwrap_or("");
 
         // log::trace!(target: trace_id, "poll {:?}", self.event);
 
@@ -360,7 +317,9 @@ where
                 Poll::Pending => {
                     self.f = Some(f);
 
-                    raw.register_event_listener(self.event.clone(), cx.waker().clone());
+                    log::trace!(target: trace_id,"register event listener, on={:?}",self.event);
+
+                    raw.add_listener(self.event.clone(), cx.waker().clone());
 
                     Poll::Pending
                 }
