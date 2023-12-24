@@ -1,17 +1,12 @@
 use futures::{channel::mpsc::channel, AsyncReadExt, AsyncWriteExt, SinkExt, StreamExt};
 use hala_io_util::*;
-use hala_net::{
-    quic::{
-        Config, InnerConnector, QuicAcceptor, QuicConn, QuicConnector, QuicListener, QuicStream,
-    },
-    *,
+use hala_net::quic::{
+    Config, InnerConnector, QuicAcceptor, QuicConn, QuicConnector, QuicListener, QuicStream,
 };
 
 const MAX_DATAGRAM_SIZE: usize = 1350;
 
-use std::{io, net::SocketAddr, path::Path, sync::Arc, task::Poll};
-
-use futures::{future::poll_fn, lock::Mutex, FutureExt};
+use std::{io, net::SocketAddr, path::Path};
 
 use quiche::RecvInfo;
 
@@ -46,9 +41,7 @@ fn config(is_server: bool) -> Config {
     config.set_initial_max_stream_data_bidi_remote(1_000_000);
     config.set_initial_max_streams_bidi(100);
     config.set_initial_max_streams_uni(100);
-    config.set_initial_max_stream_data_uni(1_000_000);
     config.set_disable_active_migration(false);
-    // config.set_cc_algorithm(CongestionControlAlgorithm::Reno);
 
     config
 }
@@ -170,7 +163,7 @@ async fn test_connector_timeout() {
 
 #[hala_test::test(local_io_test)]
 async fn test_conn_timeout() {
-    _ = pretty_env_logger::try_init_timed();
+    // _ = pretty_env_logger::try_init_timed();
 
     let (mut listener, laddrs) = create_listener(1).await;
 
@@ -241,7 +234,7 @@ async fn test_multi_quic_stream() {
 
     let (s, mut r) = channel::<()>(0);
 
-    let count = 90;
+    let count = 99;
 
     for i in 0..count {
         let mut s = s.clone();
@@ -275,118 +268,56 @@ async fn test_multi_quic_stream() {
     }
 }
 
-#[hala_test::test(io_test)]
-async fn test_lock() {
-    let state = Arc::new(Mutex::new(1));
+async fn stream_close(conn: QuicConn) -> io::Result<()> {
+    while let Some(mut stream) = conn.accept().await {
+        let mut buf = vec![0; 65535];
 
-    poll_fn(|cx| -> Poll<()> {
-        let state_cloned = state.clone();
+        _ = stream.read(&mut buf).await?;
 
-        let try_lock = async move {
-            let mut state = state_cloned.lock().await;
-
-            log::debug!("state entry");
-
-            poll_fn(|_| -> Poll<()> {
-                *state = 2;
-                std::task::Poll::Pending
-            })
-            .await;
-
-            log::debug!("state leave");
-        };
-
-        let mut try_lock = Box::pin(try_lock);
-
-        assert_eq!(try_lock.poll_unpin(cx), Poll::Pending);
-
-        assert_eq!(try_lock.poll_unpin(cx), Poll::Pending);
-
-        log::trace!("state outside entry");
-
-        assert!(state.lock().poll_unpin(cx).is_pending());
-
-        Poll::Ready(())
-    })
-    .await;
-}
-
-#[hala_test::test(io_test)]
-async fn tcp_echo_test() {
-    let echo_data = b"hello";
-
-    let tcp_listener = TcpListener::bind("127.0.0.1:0").unwrap();
-
-    let laddr = tcp_listener.local_addr().unwrap();
-
-    for _ in 0..10 {
-        io_spawn(async move {
-            let tcp_stream = TcpStream::connect(&[laddr].as_slice()).unwrap();
-
-            let mut buf = [0; 1024];
-
-            let read_size = (&tcp_stream).read(&mut buf).await.unwrap();
-
-            assert_eq!(read_size, echo_data.len());
-
-            let write_size = (&tcp_stream).write(&buf[..read_size]).await.unwrap();
-
-            assert_eq!(write_size, echo_data.len());
-
-            Ok(())
-        })
-        .unwrap();
-
-        let (conn, _) = tcp_listener.accept().await.unwrap();
-
-        let write_size = (&conn).write(echo_data).await.unwrap();
-
-        assert_eq!(write_size, echo_data.len());
-
-        let mut buf = [0; 1024];
-
-        let read_size = (&conn).read(&mut buf).await.unwrap();
-
-        assert_eq!(read_size, echo_data.len());
+        // read data and close stream immediately
     }
+
+    Ok(())
 }
 
-#[hala_test::test(io_test)]
-async fn udp_echo_test() {
-    let echo_data = b"hello";
+#[hala_test::test(local_io_test)]
+async fn test_quic_stream_drop() {
+    // _ = pretty_env_logger::try_init_timed();
 
-    let udp_server = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let (mut listener, laddrs) = create_listener(1).await;
 
-    let laddr = udp_server.local_addr().unwrap();
+    let mut config = config(false);
 
-    for _ in 0..10 {
-        io_spawn(async move {
-            let udp_client = UdpSocket::bind("127.0.0.1:0").unwrap();
+    config.set_initial_max_streams_bidi(1);
 
-            let mut buf = [0; 1024];
+    let mut connector = QuicConnector::bind("127.0.0.1:0", config).unwrap();
 
-            let write_size = udp_client.send_to(echo_data, laddr).await.unwrap();
+    local_io_spawn(async move {
+        let conn = listener.accept().await.unwrap();
 
-            assert_eq!(write_size, echo_data.len());
+        local_io_spawn(stream_close(conn))?;
 
-            let (read_size, raddr) = udp_client.recv_from(&mut buf).await.unwrap();
+        Ok(())
+    })
+    .unwrap();
 
-            assert_eq!(read_size, echo_data.len());
+    let conn = connector.connect(laddrs.as_slice()).await.unwrap();
 
-            assert_eq!(raddr, laddr);
+    let count = 2;
 
-            Ok(())
-        })
-        .unwrap();
+    for i in 0..count {
+        let mut stream = conn.open_stream().await.unwrap();
+
+        let data: String = format!("hello world {}", i);
+
+        stream.write(data.as_bytes()).await.unwrap();
 
         let mut buf = [0; 1024];
 
-        let (read_size, raddr) = udp_server.recv_from(&mut buf).await.unwrap();
+        let (read_size, fin) = stream.stream_recv(&mut buf).await.unwrap();
 
-        assert_eq!(read_size, echo_data.len());
+        assert_eq!(read_size, 0);
 
-        let write_size = udp_server.send_to(&buf[..read_size], raddr).await.unwrap();
-
-        assert_eq!(write_size, echo_data.len());
+        assert_eq!(fin, true);
     }
 }

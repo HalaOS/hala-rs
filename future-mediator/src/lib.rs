@@ -345,6 +345,7 @@ mod tests {
     use futures::{
         executor::{block_on, LocalPool, ThreadPool},
         task::{LocalSpawnExt, SpawnExt},
+        FutureExt,
     };
 
     use crate::{LocalMediator, MutexMediator, SharedData};
@@ -419,6 +420,7 @@ mod tests {
 
     #[test]
     fn test_async_drop() {
+        // _ = pretty_env_logger::try_init_timed();
         struct MockAsyncDrop {
             fd: i32,
             mediator: LocalMediator<i32, i32>,
@@ -449,9 +451,13 @@ mod tests {
             })
             .unwrap();
 
-        pool.run_until(mediator.on_poll(2, |shared, _| {
+        async fn drop_fd(fd: i32) {
+            log::trace!("drop fd: {}", fd);
+        }
+
+        pool.run_until(mediator.on_poll(2, |shared, cx| {
             if *shared.value() == 2 {
-                return Poll::Ready(2);
+                return Box::pin(drop_fd(2)).poll_unpin(cx);
             }
 
             return Poll::Pending;
