@@ -46,7 +46,9 @@ fn config(is_server: bool) -> Config {
     config.set_initial_max_stream_data_bidi_remote(1_000_000);
     config.set_initial_max_streams_bidi(100);
     config.set_initial_max_streams_uni(100);
+    config.set_initial_max_stream_data_uni(1_000_000);
     config.set_disable_active_migration(false);
+    // config.set_cc_algorithm(CongestionControlAlgorithm::Reno);
 
     config
 }
@@ -222,8 +224,6 @@ async fn stream_echo(mut stream: QuicStream) -> io::Result<()> {
 
 #[hala_test::test(local_io_test)]
 async fn test_multi_quic_stream() {
-    _ = pretty_env_logger::try_init_timed();
-
     let (mut listener, laddrs) = create_listener(1).await;
 
     let mut connector = QuicConnector::bind("127.0.0.1:0", config(false)).unwrap();
@@ -241,7 +241,7 @@ async fn test_multi_quic_stream() {
 
     let (s, mut r) = channel::<()>(0);
 
-    let count = 2;
+    let count = 90;
 
     for i in 0..count {
         let mut s = s.clone();
@@ -251,13 +251,15 @@ async fn test_multi_quic_stream() {
         local_io_spawn(async move {
             let data: String = format!("hello world {}", i);
 
-            stream.write(data.as_bytes()).await.unwrap();
+            for _ in 0..count {
+                stream.write(data.as_bytes()).await.unwrap();
 
-            let mut buf = [0; 1024];
+                let mut buf = [0; 1024];
 
-            let read_size = stream.read(&mut buf).await.unwrap();
+                let read_size = stream.read(&mut buf).await.unwrap();
 
-            assert_eq!(&buf[..read_size], data.as_bytes());
+                assert_eq!(&buf[..read_size], data.as_bytes());
+            }
 
             s.send(()).await.unwrap();
 

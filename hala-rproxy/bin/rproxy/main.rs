@@ -70,6 +70,7 @@ fn config() -> Config {
     config.set_initial_max_stream_data_bidi_remote(1_000_000);
     config.set_initial_max_streams_bidi(100);
     config.set_initial_max_streams_uni(100);
+    config.set_initial_max_stream_data_uni(1_000_000);
     config.set_disable_active_migration(true);
 
     config
@@ -225,7 +226,7 @@ mod tests {
     use super::*;
 
     fn setup() {
-        pretty_env_logger::init_timed();
+        // pretty_env_logger::init_timed();
 
         let root_path = Path::new(env!("CARGO_MANIFEST_DIR"));
 

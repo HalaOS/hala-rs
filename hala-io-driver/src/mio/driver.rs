@@ -288,6 +288,8 @@ impl RawDriverExt for MioDriver {
     }
 
     fn timeout_open(&self, duration: std::time::Duration) -> std::io::Result<crate::Handle> {
+        assert!(!duration.is_zero(), "create timeout with zero duration");
+
         Ok((
             Description::Timeout,
             WithPoller::new(MioTimeout::new(duration)),
