@@ -343,8 +343,8 @@ mod tests {
     use std::task::Poll;
 
     use futures::{
-        executor::{block_on, ThreadPool},
-        task::SpawnExt,
+        executor::{block_on, LocalPool, ThreadPool},
+        task::{LocalSpawnExt, SpawnExt},
     };
 
     use crate::{LocalMediator, MutexMediator, SharedData};
@@ -415,5 +415,46 @@ mod tests {
         block_on(async move { on!(mediator_cloned, Event::A, assign_2).await });
 
         assert_eq!(mediator.with(|value| value.value), 2);
+    }
+
+    #[test]
+    fn test_async_drop() {
+        struct MockAsyncDrop {
+            fd: i32,
+            mediator: LocalMediator<i32, i32>,
+        }
+
+        impl Drop for MockAsyncDrop {
+            fn drop(&mut self) {
+                self.mediator.with_mut(|shared| {
+                    *shared.value_mut() = 2;
+                    shared.notify(self.fd);
+                })
+            }
+        }
+
+        let mediator = LocalMediator::new(0);
+
+        let mock = MockAsyncDrop {
+            fd: 2,
+            mediator: mediator.clone(),
+        };
+
+        let mut pool = LocalPool::new();
+
+        pool.spawner()
+            .spawn_local(async move {
+                let _mock = mock;
+                // drop mock instance.
+            })
+            .unwrap();
+
+        pool.run_until(mediator.on_poll(2, |shared, _| {
+            if *shared.value() == 2 {
+                return Poll::Ready(2);
+            }
+
+            return Poll::Pending;
+        }));
     }
 }
