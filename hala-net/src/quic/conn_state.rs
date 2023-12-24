@@ -54,6 +54,12 @@ pub enum QuicConnEvents {
 }
 
 fn handle_accept(cx: &mut SharedData<QuicConnState, QuicConnEvents>, stream_id: u64) {
+    log::trace!(
+        "handle incoming, conn={:?}, stream={}",
+        cx.quiche_conn.trace_id(),
+        stream_id
+    );
+
     if !cx.opened_streams.contains(&stream_id) {
         cx.opened_streams.insert(stream_id);
         cx.incoming_streams.push_back(stream_id);
@@ -389,6 +395,21 @@ impl AsyncQuicConnState {
                         format!("Quic conn closed: {}", state.quiche_conn.trace_id()),
                     )))
                 } else {
+                    match state.quiche_conn.stream_send(id, b"", false) {
+                        Err(quiche::Error::Done) => {
+                            return Poll::Ready(Err(io::Error::new(
+                                io::ErrorKind::BrokenPipe,
+                                "stream blocked: {id}",
+                            )));
+                        }
+                        Err(err) => {
+                            return Poll::Ready(Err(io::Error::new(
+                                io::ErrorKind::BrokenPipe,
+                                err,
+                            )));
+                        }
+                        _ => {}
+                    }
                     Poll::Ready(Ok(QuicStream::new(id, self.clone())))
                 }
             })
@@ -433,21 +454,23 @@ impl AsyncQuicConnState {
     }
 
     pub async fn accept(&self) -> Option<QuicStream> {
-        self.state
-            .on_poll(
-                QuicConnEvents::Accept(self.trace_id.to_string()),
-                |state, _| {
-                    if state.quiche_conn.is_closed() {
-                        return Poll::Ready(None);
-                    }
+        let event = QuicConnEvents::Accept(self.trace_id.to_string());
 
-                    if let Some(stream_id) = state.incoming_streams.pop_front() {
-                        return Poll::Ready(Some(QuicStream::new(stream_id, self.clone())));
-                    } else {
-                        return Poll::Pending;
-                    }
-                },
-            )
+        self.state
+            .on_poll(event.clone(), |state, _| {
+                log::trace!("{:?} poll once", event);
+
+                if state.quiche_conn.is_closed() {
+                    log::trace!("{:?}, conn_status=closed", event);
+                    return Poll::Ready(None);
+                }
+
+                if let Some(stream_id) = state.incoming_streams.pop_front() {
+                    return Poll::Ready(Some(QuicStream::new(stream_id, self.clone())));
+                } else {
+                    return Poll::Pending;
+                }
+            })
             .await
     }
 }
