@@ -1,5 +1,4 @@
 use std::{
-    collections::VecDeque,
     fmt::Debug,
     future::Future,
     ops::{Deref, DerefMut},
@@ -102,54 +101,48 @@ impl<T, E> DerefMut for SharedData<T, E> {
 }
 
 /// A mediator is a central hub for communication between futures.
-pub struct Mediator<Raw, Wakers> {
+pub struct Mediator<Raw> {
     raw: Raw,
-    wakers: Wakers,
     trace_id: Option<&'static str>,
 }
 
-impl<Raw, Wakers> Mediator<Raw, Wakers> {}
+impl<Raw> Mediator<Raw> {}
 
-impl<Raw, Wakers> Default for Mediator<Raw, Wakers>
+impl<Raw> Default for Mediator<Raw>
 where
     Raw: Default,
-    Wakers: Default,
 {
     fn default() -> Self {
         Self {
             raw: Default::default(),
-            wakers: Default::default(),
             trace_id: None,
         }
     }
 }
 
-impl<Raw, Wakers> Clone for Mediator<Raw, Wakers>
+impl<Raw> Clone for Mediator<Raw>
 where
     Raw: Clone,
-    Wakers: Clone,
 {
     fn clone(&self) -> Self {
         Self {
             raw: self.raw.clone(),
-            wakers: self.wakers.clone(),
             trace_id: self.trace_id.clone(),
         }
     }
 }
 
-impl<T, E, Raw, Wakers> Mediator<Raw, Wakers>
+impl<T, E, Raw> Mediator<Raw>
 where
     T: Unpin + 'static,
     E: Eq + Clone + Unpin + Hash + Debug,
-    Raw: sync_traits::Shared<Value = SharedData<T, E>> + From<SharedData<T, E>> + Unpin + Clone,
-    Wakers: sync_traits::Shared<Value = VecDeque<Waker>> + From<VecDeque<Waker>> + Unpin + Clone,
+    Raw:
+        sync_traits::AsyncShared<Value = SharedData<T, E>> + From<SharedData<T, E>> + Unpin + Clone,
 {
     /// Create new mediator with shared value.
     pub fn new(value: T) -> Self {
         Self {
             raw: SharedData::new(value).into(),
-            wakers: VecDeque::default().into(),
             trace_id: None,
         }
     }
@@ -158,16 +151,7 @@ where
     pub fn new_with(value: T, trace_id: &'static str) -> Self {
         Self {
             raw: SharedData::new(value).into(),
-            wakers: VecDeque::default().into(),
             trace_id: Some(trace_id),
-        }
-    }
-
-    fn notify_one_lock_waiter(&self) {
-        let mut wakers = self.wakers.lock_mut();
-
-        if let Some(waker) = wakers.pop_front() {
-            waker.wake();
         }
     }
 
@@ -182,8 +166,6 @@ where
 
         let r = f(&raw);
 
-        self.notify_one_lock_waiter();
-
         r
     }
 
@@ -197,8 +179,6 @@ where
         let mut raw = self.raw.lock_mut();
 
         let r = f(&mut raw);
-
-        self.notify_one_lock_waiter();
 
         r
     }
@@ -220,13 +200,28 @@ where
         });
     }
 
+    pub fn event_wait<'a>(
+        &'a self,
+        lock_guard: <Raw as sync_traits::Shared>::RefMut<'a>,
+        event: E,
+    ) -> EventWait<'a, Raw, T, E>
+    where
+        E: Unpin + Eq + Hash + Debug,
+    {
+        EventWait {
+            lock_guard: Some(lock_guard),
+            event: Some(event),
+            mediator: self,
+        }
+    }
+
     /// Create a future that wraps a function that returns a Poll.
     ///
     /// When this function returns [`Pending`](Poll::Pending), `Mediator` registers this function in the `event` waitlist.
     ///
     /// You can call [`notify`](Mediator::notify) or [`notify_all`](Mediator::notify) to wakeup this poll function again.
     #[inline]
-    pub fn on_poll<F, R>(&self, event: E, f: F) -> OnEvent<Raw, Wakers, E, F>
+    pub fn on_poll<F, R>(&self, event: E, f: F) -> OnEvent<Raw, E, F>
     where
         F: FnMut(&mut SharedData<T, E>, &mut Context<'_>) -> Poll<R> + Unpin,
         T: Unpin + 'static,
@@ -238,30 +233,66 @@ where
         OnEvent {
             f: Some(f),
             raw: self.raw.clone(),
-            wakers: self.wakers.clone(),
             event,
             trace_id: self.trace_id,
         }
     }
 }
 
+pub struct EventWait<'a, Raw, T, E>
+where
+    Raw:
+        sync_traits::AsyncShared<Value = SharedData<T, E>> + From<SharedData<T, E>> + Unpin + Clone,
+    T: Unpin + 'static,
+    E: Debug + Unpin,
+{
+    lock_guard: Option<<Raw as sync_traits::Shared>::RefMut<'a>>,
+    event: Option<E>,
+    mediator: &'a Mediator<Raw>,
+}
+
+impl<'a, Raw, T, E> Future for EventWait<'a, Raw, T, E>
+where
+    Raw:
+        sync_traits::AsyncShared<Value = SharedData<T, E>> + From<SharedData<T, E>> + Unpin + Clone,
+    T: Unpin + 'static,
+    E: Debug + 'static + Unpin + Clone + Eq + Hash,
+{
+    type Output = <Raw as sync_traits::Shared>::RefMut<'a>;
+    fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        // first call this poll function .
+        if let Some(mut lock_guard) = self.lock_guard.take() {
+            lock_guard.add_listener(self.event.take().unwrap(), cx.waker().clone());
+            return Poll::Pending;
+        }
+
+        // Aquire lock again.
+        let raw = match Box::pin(self.mediator.raw.lock_mut_wait()).poll_unpin(cx) {
+            Poll::Ready(raw) => raw,
+            _ => {
+                return Poll::Pending;
+            }
+        };
+
+        Poll::Ready(raw)
+    }
+}
+
 /// Future create by [`on`](Mediator::on_fn)
-pub struct OnEvent<Raw, Wakers, E, F>
+pub struct OnEvent<Raw, E, F>
 where
     E: Debug,
 {
     f: Option<F>,
     raw: Raw,
-    wakers: Wakers,
     event: E,
     #[allow(unused)]
     trace_id: Option<&'static str>,
 }
 
-impl<Raw, Wakers, T, E, F, R> Future for OnEvent<Raw, Wakers, E, F>
+impl<Raw, T, E, F, R> Future for OnEvent<Raw, E, F>
 where
     Raw: sync_traits::Shared<Value = SharedData<T, E>> + Unpin + Clone,
-    Wakers: sync_traits::Shared<Value = VecDeque<Waker>> + Unpin + Clone,
     F: FnMut(&mut SharedData<T, E>, &mut Context<'_>) -> Poll<R> + Unpin,
     T: Unpin,
     E: Unpin + Eq + Hash + Clone,
@@ -284,8 +315,6 @@ where
             let mut raw = match raw.try_lock_mut() {
                 Some(raw) => raw,
                 _ => {
-                    // log::trace!(target: trace_id, "poll {:?}, lock pending", self.event);
-                    self.wakers.lock_mut().push_back(cx.waker().clone());
                     return Poll::Pending;
                 }
             };
@@ -308,15 +337,6 @@ where
             }
         };
 
-        // log::trace!(target: trace_id, "poll {:?}, unlock", self.event);
-
-        let mut wakers = self.wakers.lock_mut();
-
-        if let Some(waker) = wakers.pop_front() {
-            // log::trace!("poll {:?}, unlock, wakeup other", self.event);
-            waker.wake();
-        }
-
         poll
     }
 }
@@ -332,11 +352,9 @@ macro_rules! on {
     };
 }
 
-pub type LocalMediator<T, E> =
-    Mediator<sync_traits::LocalShared<SharedData<T, E>>, sync_traits::LocalShared<VecDeque<Waker>>>;
+pub type LocalMediator<T, E> = Mediator<sync_traits::AsyncLocalShared<SharedData<T, E>>>;
 
-pub type MutexMediator<T, E> =
-    Mediator<sync_traits::MutexShared<SharedData<T, E>>, sync_traits::MutexShared<VecDeque<Waker>>>;
+pub type MutexMediator<T, E> = Mediator<sync_traits::AsyncMutexShared<SharedData<T, E>>>;
 
 #[cfg(test)]
 mod tests {

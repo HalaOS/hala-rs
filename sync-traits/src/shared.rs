@@ -12,12 +12,12 @@ pub trait Shared {
     type Value;
 
     /// The immutable reference type of this shared value.
-    type Ref<'a>: ops::Deref<Target = Self::Value>
+    type Ref<'a>: ops::Deref<Target = Self::Value> + Unpin
     where
         Self: 'a;
 
     /// The mutable reference type of this shared value.
-    type RefMut<'a>: ops::DerefMut<Target = Self::Value>
+    type RefMut<'a>: ops::DerefMut<Target = Self::Value> + Unpin
     where
         Self: 'a;
 
@@ -31,6 +31,11 @@ pub trait Shared {
     ///
     /// If the lock is not successful, returns [`None`]
     fn try_lock_mut(&self) -> Option<Self::RefMut<'_>>;
+
+    /// Try lock shared value and get mutable reference.
+    ///
+    /// If the lock is not successful, returns [`None`]
+    fn try_lock(&self) -> Option<Self::Ref<'_>>;
 }
 
 impl<T> Shared for RefCell<T> {
@@ -59,6 +64,14 @@ impl<T> Shared for RefCell<T> {
             _ => None,
         }
     }
+
+    fn try_lock(&self) -> Option<Self::Ref<'_>> {
+        match self.try_borrow() {
+            Ok(value) => Some(value),
+            // the value is currently borrowed
+            _ => None,
+        }
+    }
 }
 
 impl<T> Shared for std::sync::Mutex<T> {
@@ -81,6 +94,22 @@ impl<T> Shared for std::sync::Mutex<T> {
     }
 
     fn try_lock_mut(&self) -> Option<Self::RefMut<'_>> {
+        match self.try_lock() {
+            Ok(value) => Some(value),
+            // the value is currently borrowed
+            Err(err) => {
+                log::trace!("{}", err);
+
+                if let TryLockError::Poisoned(_) = err {
+                    panic!("Poisoned");
+                }
+
+                None
+            }
+        }
+    }
+
+    fn try_lock(&self) -> Option<Self::Ref<'_>> {
         match self.try_lock() {
             Ok(value) => Some(value),
             // the value is currently borrowed
@@ -156,6 +185,10 @@ impl<T> Shared for LocalShared<T> {
     fn try_lock_mut(&self) -> Option<Self::RefMut<'_>> {
         self.value.try_lock_mut()
     }
+
+    fn try_lock(&self) -> Option<Self::Ref<'_>> {
+        self.value.try_lock()
+    }
 }
 
 /// Shared data that using in multi-thread mode
@@ -219,6 +252,22 @@ impl<T> Shared for MutexShared<T> {
 
     fn try_lock_mut(&self) -> Option<Self::RefMut<'_>> {
         self.value.try_lock_mut()
+    }
+
+    fn try_lock(&self) -> Option<Self::Ref<'_>> {
+        match self.value.try_lock() {
+            Ok(value) => Some(value),
+            // the value is currently borrowed
+            Err(err) => {
+                log::trace!("{}", err);
+
+                if let TryLockError::Poisoned(_) = err {
+                    panic!("Poisoned");
+                }
+
+                None
+            }
+        }
     }
 }
 

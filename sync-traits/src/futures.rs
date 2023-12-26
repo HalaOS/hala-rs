@@ -111,13 +111,26 @@ pub struct AsyncLocalSharedRefFuture<'a, T> {
     value: &'a AsyncLocalShared<T>,
 }
 
+impl<'a, T> Drop for AsyncLocalSharedRefFuture<'a, T> {
+    fn drop(&mut self) {
+        if let Some(waker) = self.value.wakers.borrow_mut().pop_front() {
+            waker.wake();
+        }
+    }
+}
+
 impl<'a, T> Future for AsyncLocalSharedRefFuture<'a, T> {
     type Output = <AsyncLocalShared<T> as Shared>::Ref<'a>;
     fn poll(
         self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
+        cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
-        std::task::Poll::Ready(self.value.lock())
+        if let Some(lock) = self.value.try_lock() {
+            std::task::Poll::Ready(lock)
+        } else {
+            self.value.wakers.lock_mut().push_back(cx.waker().clone());
+            std::task::Poll::Pending
+        }
     }
 }
 
@@ -125,13 +138,26 @@ pub struct AsyncLocalSharedRefMutFuture<'a, T> {
     value: &'a AsyncLocalShared<T>,
 }
 
+impl<'a, T> Drop for AsyncLocalSharedRefMutFuture<'a, T> {
+    fn drop(&mut self) {
+        if let Some(waker) = self.value.wakers.borrow_mut().pop_front() {
+            waker.wake();
+        }
+    }
+}
+
 impl<'a, T> Future for AsyncLocalSharedRefMutFuture<'a, T> {
     type Output = <AsyncLocalShared<T> as Shared>::RefMut<'a>;
     fn poll(
         self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
+        cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
-        std::task::Poll::Ready(self.value.lock_mut())
+        if let Some(lock) = self.value.try_lock_mut() {
+            std::task::Poll::Ready(lock)
+        } else {
+            self.value.wakers.lock_mut().push_back(cx.waker().clone());
+            std::task::Poll::Pending
+        }
     }
 }
 
@@ -167,6 +193,13 @@ impl<T> Shared for AsyncLocalShared<T> {
                 value_ref: ref_mut,
                 wakers: self.wakers.clone(),
             })
+    }
+
+    fn try_lock(&self) -> Option<Self::Ref<'_>> {
+        self.value.try_lock().map(|ref_mut| AsyncLocalSharedRef {
+            value_ref: ref_mut,
+            wakers: self.wakers.clone(),
+        })
     }
 }
 
@@ -270,13 +303,27 @@ pub struct AsyncMutexSharedRefFuture<'a, T> {
     value: &'a AsyncMutexShared<T>,
 }
 
+impl<'a, T> Drop for AsyncMutexSharedRefFuture<'a, T> {
+    fn drop(&mut self) {
+        if let Some(waker) = self.value.wakers.lock_mut().pop_front() {
+            log::trace!("AsyncMutexSharedRefFuture: wakeup another one");
+            waker.wake();
+        }
+    }
+}
+
 impl<'a, T> Future for AsyncMutexSharedRefFuture<'a, T> {
     type Output = <AsyncMutexShared<T> as Shared>::Ref<'a>;
     fn poll(
         self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
+        cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
-        std::task::Poll::Ready(self.value.lock())
+        if let Some(lock) = self.value.try_lock() {
+            std::task::Poll::Ready(lock)
+        } else {
+            self.value.wakers.lock_mut().push_back(cx.waker().clone());
+            std::task::Poll::Pending
+        }
     }
 }
 
@@ -284,13 +331,26 @@ pub struct AsyncMutexSharedRefMutFuture<'a, T> {
     value: &'a AsyncMutexShared<T>,
 }
 
+impl<'a, T> Drop for AsyncMutexSharedRefMutFuture<'a, T> {
+    fn drop(&mut self) {
+        if let Some(waker) = self.value.wakers.lock_mut().pop_front() {
+            waker.wake();
+        }
+    }
+}
+
 impl<'a, T> Future for AsyncMutexSharedRefMutFuture<'a, T> {
     type Output = <AsyncMutexShared<T> as Shared>::RefMut<'a>;
     fn poll(
         self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
+        cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
-        std::task::Poll::Ready(self.value.lock_mut())
+        if let Some(lock) = self.value.try_lock_mut() {
+            std::task::Poll::Ready(lock)
+        } else {
+            self.value.wakers.lock_mut().push_back(cx.waker().clone());
+            std::task::Poll::Pending
+        }
     }
 }
 
@@ -323,6 +383,16 @@ impl<T> Shared for AsyncMutexShared<T> {
         self.value
             .try_lock_mut()
             .map(|ref_mut| AsyncMutexSharedRefMut {
+                value_ref: ref_mut,
+                wakers: self.wakers.clone(),
+            })
+    }
+
+    fn try_lock(&self) -> Option<Self::Ref<'_>> {
+        self.value
+            .try_lock()
+            .ok()
+            .map(|ref_mut| AsyncMutexSharedRef {
                 value_ref: ref_mut,
                 wakers: self.wakers.clone(),
             })
@@ -360,6 +430,8 @@ mod tests {
 
     #[test]
     fn test_async_shared() {
+        pretty_env_logger::init_timed();
+
         let mut local_pool = LocalPool::new();
 
         let shared = AsyncLocalShared::new(1);
@@ -368,19 +440,29 @@ mod tests {
 
         let (sx, rx) = channel::<()>();
 
+        let (sx1, rx1) = channel::<()>();
+
         local_pool
             .spawner()
             .spawn_local(async move {
+                rx.await.unwrap();
+
                 let mut locked = shared_cloned.lock_mut_wait().await;
 
                 *locked = 2;
 
-                sx.send(()).unwrap();
+                sx1.send(()).unwrap();
             })
             .unwrap();
 
         local_pool.run_until(async move {
-            rx.await.unwrap();
+            {
+                let _locked = shared.lock_mut_wait().await;
+
+                sx.send(()).unwrap();
+            }
+
+            rx1.await.unwrap();
 
             let locked = shared.lock_mut_wait().await;
 
@@ -398,17 +480,27 @@ mod tests {
 
         let (sx, rx) = channel::<()>();
 
+        let (sx1, rx1) = channel::<()>();
+
         local_pool
             .spawn(async move {
+                rx.await.unwrap();
+
                 let mut locked = shared_cloned.lock_mut_wait().await;
 
                 *locked = 2;
 
-                sx.send(()).unwrap();
+                sx1.send(()).unwrap();
             })
             .unwrap();
 
-        rx.await.unwrap();
+        {
+            let _locked = shared.lock_mut_wait().await;
+
+            sx.send(()).unwrap();
+        }
+
+        rx1.await.unwrap();
 
         let locked = shared.lock_mut_wait().await;
 
