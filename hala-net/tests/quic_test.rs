@@ -1,4 +1,6 @@
-use futures::{channel::mpsc::channel, AsyncReadExt, AsyncWriteExt, SinkExt, StreamExt};
+use futures::{
+    channel::mpsc::channel, future::pending, AsyncReadExt, AsyncWriteExt, SinkExt, StreamExt,
+};
 use hala_io_util::*;
 use hala_net::quic::{
     Config, InnerConnector, QuicAcceptor, QuicConn, QuicConnector, QuicListener, QuicStream,
@@ -303,7 +305,7 @@ async fn test_quic_stream_drop() {
 
     let conn = connector.connect(laddrs.as_slice()).await.unwrap();
 
-    let count = 2;
+    let count = 90;
 
     for i in 0..count {
         let mut stream = conn.open_stream().await.unwrap();
@@ -320,4 +322,44 @@ async fn test_quic_stream_drop() {
 
         assert_eq!(fin, true);
     }
+}
+
+#[hala_test::test(local_io_test)]
+async fn test_quic_stream_heartbeat() {
+    _ = pretty_env_logger::try_init_timed();
+
+    let (mut listener, laddrs) = create_listener(1).await;
+
+    let mut config = config(false);
+
+    config.set_initial_max_streams_bidi(1);
+
+    let mut connector = QuicConnector::bind("127.0.0.1:0", config).unwrap();
+
+    local_io_spawn(async move {
+        let conn = listener.accept().await.unwrap();
+
+        local_io_spawn(accept_stream(conn))?;
+
+        Ok(())
+    })
+    .unwrap();
+
+    let conn = connector.connect(laddrs.as_slice()).await.unwrap();
+
+    let mut stream = conn.open_stream().await.unwrap();
+
+    let data: String = format!("hello world {}", 1);
+
+    stream.write(data.as_bytes()).await.unwrap();
+
+    let mut buf = [0; 1024];
+
+    let (read_size, fin) = stream.stream_recv(&mut buf).await.unwrap();
+
+    assert_eq!(read_size, data.len());
+
+    assert!(!fin);
+
+    pending::<()>().await;
 }
