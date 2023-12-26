@@ -142,8 +142,8 @@ impl<T, E, Raw, Wakers> Mediator<Raw, Wakers>
 where
     T: Unpin + 'static,
     E: Eq + Clone + Unpin + Hash + Debug,
-    Raw: shared::Shared<Value = SharedData<T, E>> + From<SharedData<T, E>> + Unpin + Clone,
-    Wakers: shared::Shared<Value = VecDeque<Waker>> + From<VecDeque<Waker>> + Unpin + Clone,
+    Raw: sync_traits::Shared<Value = SharedData<T, E>> + From<SharedData<T, E>> + Unpin + Clone,
+    Wakers: sync_traits::Shared<Value = VecDeque<Waker>> + From<VecDeque<Waker>> + Unpin + Clone,
 {
     /// Create new mediator with shared value.
     pub fn new(value: T) -> Self {
@@ -260,8 +260,8 @@ where
 
 impl<Raw, Wakers, T, E, F, R> Future for OnEvent<Raw, Wakers, E, F>
 where
-    Raw: shared::Shared<Value = SharedData<T, E>> + Unpin + Clone,
-    Wakers: shared::Shared<Value = VecDeque<Waker>> + Unpin + Clone,
+    Raw: sync_traits::Shared<Value = SharedData<T, E>> + Unpin + Clone,
+    Wakers: sync_traits::Shared<Value = VecDeque<Waker>> + Unpin + Clone,
     F: FnMut(&mut SharedData<T, E>, &mut Context<'_>) -> Poll<R> + Unpin,
     T: Unpin,
     E: Unpin + Eq + Hash + Clone,
@@ -333,10 +333,10 @@ macro_rules! on {
 }
 
 pub type LocalMediator<T, E> =
-    Mediator<shared::LocalShared<SharedData<T, E>>, shared::LocalShared<VecDeque<Waker>>>;
+    Mediator<sync_traits::LocalShared<SharedData<T, E>>, sync_traits::LocalShared<VecDeque<Waker>>>;
 
 pub type MutexMediator<T, E> =
-    Mediator<shared::MutexShared<SharedData<T, E>>, shared::MutexShared<VecDeque<Waker>>>;
+    Mediator<sync_traits::MutexShared<SharedData<T, E>>, sync_traits::MutexShared<VecDeque<Waker>>>;
 
 #[cfg(test)]
 mod tests {

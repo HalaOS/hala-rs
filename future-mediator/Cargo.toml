@@ -10,9 +10,8 @@ version.workspace = true
 [dependencies]
 bitmask-enum = {workspace = true}
 futures = {workspace = true}
-futures-test = {workspace = true}
 log = {workspace = true}
-shared = {workspace = true}
+sync-traits = {workspace = true}
 
 [dev-dependencies]
 divan = {workspace = true}
