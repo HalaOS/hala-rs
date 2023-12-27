@@ -10,6 +10,7 @@ version.workspace = true
 [dependencies]
 bitmask-enum = {workspace = true}
 futures = {workspace = true}
+futures-test = {workspace = true}
 log = {workspace = true}
 shared = {workspace = true}
 

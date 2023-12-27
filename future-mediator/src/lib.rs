@@ -478,4 +478,9 @@ mod tests {
             return Poll::Pending;
         }));
     }
+
+    #[test]
+    fn test_event_wait() {
+        let mediator = LocalMediator::<i32, i32>::new(1);
+    }
 }
