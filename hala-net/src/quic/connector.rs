@@ -13,7 +13,7 @@ use ring::rand::{SecureRandom, SystemRandom};
 
 use crate::{errors::into_io_error, UdpGroup};
 
-use super::{AsyncQuicConnState, Config, QuicConn};
+use super::{Config, QuicConn, QuicConnState};
 
 /// Quic client connector
 pub struct InnerConnector {
@@ -94,7 +94,7 @@ impl InnerConnector {
 
 impl From<InnerConnector> for QuicConn {
     fn from(value: InnerConnector) -> Self {
-        QuicConn::new(AsyncQuicConnState::new(value.quiche_conn, 4))
+        QuicConn::new(QuicConnState::new(value.quiche_conn, 4))
     }
 }
 

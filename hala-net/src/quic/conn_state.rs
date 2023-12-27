@@ -10,13 +10,13 @@ use future_mediator::{
     LocalMediator,
 };
 
-use hala_io_util::local_io_spawn;
+use hala_io_util::{get_local_poller, local_io_spawn};
 use quiche::{RecvInfo, SendInfo};
 
 use crate::{errors::into_io_error, quic::QuicStream};
 
 /// Quic connection state object
-pub struct QuicConnState {
+pub struct RawQuicConnState {
     stream_id_seed: u64,
     /// quiche connection instance.
     quiche_conn: quiche::Connection,
@@ -26,7 +26,7 @@ pub struct QuicConnState {
     incoming_streams: VecDeque<u64>,
 }
 
-impl Debug for QuicConnState {
+impl Debug for RawQuicConnState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("QuicConnState")
             .field("stream_id_seed", &self.stream_id_seed)
@@ -36,7 +36,7 @@ impl Debug for QuicConnState {
     }
 }
 
-impl QuicConnState {
+impl RawQuicConnState {
     /// Create new `QuicConnState` from [`Connection`](quiche::Connection)
     pub fn new(quiche_conn: quiche::Connection, stream_id_seed: u64) -> Self {
         Self {
@@ -48,7 +48,7 @@ impl QuicConnState {
     }
 }
 
-impl Drop for QuicConnState {
+impl Drop for RawQuicConnState {
     fn drop(&mut self) {
         log::trace!("dropping conn={}", self.quiche_conn.trace_id());
     }
@@ -67,7 +67,7 @@ pub enum QuicConnEvents {
 
 async fn handle_accept(
     mediator: &LocalMediator<QuicConnEvents>,
-    state: &mut QuicConnState,
+    state: &mut RawQuicConnState,
     stream_id: u64,
 ) {
     if !state.opened_streams.contains(&stream_id) {
@@ -86,13 +86,13 @@ async fn handle_accept(
     }
 }
 
-async fn handle_stream(mediator: &LocalMediator<QuicConnEvents>, state: &mut QuicConnState) {
+async fn handle_stream(mediator: &LocalMediator<QuicConnEvents>, state: &mut RawQuicConnState) {
     let mut events = vec![];
 
     for stream_id in state.quiche_conn.readable() {
         handle_accept(mediator, state, stream_id).await;
 
-        events.push(QuicConnEvents::StreamSend(
+        events.push(QuicConnEvents::StreamRecv(
             state.quiche_conn.trace_id().into(),
             stream_id,
         ));
@@ -118,8 +118,8 @@ async fn handle_close(mediator: &LocalMediator<QuicConnEvents>) {
 
 /// Quic connection state object
 #[derive(Clone)]
-pub struct AsyncQuicConnState {
-    conn_state: AsyncLocalShared<QuicConnState>,
+pub struct QuicConnState {
+    conn_state: AsyncLocalShared<RawQuicConnState>,
     /// core inner state.
     pub(crate) mediator: LocalMediator<QuicConnEvents>,
 
@@ -127,20 +127,24 @@ pub struct AsyncQuicConnState {
     pub trace_id: Arc<String>,
 }
 
-impl AsyncQuicConnState {
+impl QuicConnState {
     pub fn new(quiche_conn: quiche::Connection, stream_id_seed: u64) -> Self {
         Self {
             trace_id: Arc::new(quiche_conn.trace_id().to_owned()),
-            conn_state: QuicConnState::new(quiche_conn, stream_id_seed).into(),
+            conn_state: RawQuicConnState::new(quiche_conn, stream_id_seed).into(),
             mediator: LocalMediator::new_with("mediator: quic_conn_state"),
         }
     }
 
     /// Create new future for send connection data
     pub async fn send<'a>(&self, buf: &'a mut [u8]) -> io::Result<(usize, SendInfo)> {
-        let event = QuicConnEvents::Recv(self.trace_id.to_string());
+        let event = QuicConnEvents::Send(self.trace_id.to_string());
+
+        log::trace!("{:?} try get conn_state locker", event);
 
         let mut conn_state = self.conn_state.lock_mut_wait().await;
+
+        log::trace!("{:?} locked conn_state", event);
 
         loop {
             if conn_state.quiche_conn.is_closed() {
@@ -176,16 +180,32 @@ impl AsyncQuicConnState {
 
                     let timeout = conn_state.quiche_conn.timeout();
 
-                    conn_state = hala_io_util::timeout(
+                    conn_state = match hala_io_util::timeout_with(
                         async {
                             let conn_state =
                                 self.mediator.event_wait(conn_state, event.clone()).await;
 
+                            log::trace!("{:?} event_wait ready", event);
+
                             Ok(conn_state)
                         },
                         timeout,
+                        get_local_poller()?,
                     )
-                    .await?;
+                    .await
+                    {
+                        Ok(conn_state) => conn_state,
+                        Err(err) if err.kind() == io::ErrorKind::TimedOut => {
+                            conn_state = self.conn_state.lock_mut_wait().await;
+                            conn_state.quiche_conn.on_timeout();
+
+                            log::trace!("{:?} on_timeout", event);
+                            continue;
+                        }
+                        Err(err) => {
+                            return Err(err);
+                        }
+                    };
 
                     continue;
                 }

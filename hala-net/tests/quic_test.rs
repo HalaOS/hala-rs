@@ -118,7 +118,8 @@ async fn create_listener(ports: i32) -> (QuicListener, Vec<SocketAddr>) {
 
 #[hala_test::test(local_io_test)]
 async fn test_async_quic() {
-    let (mut listener, laddrs) = create_listener(10).await;
+    _ = pretty_env_logger::try_init_timed();
+    let (mut listener, laddrs) = create_listener(1).await;
 
     local_io_spawn(async move {
         let mut connector = QuicConnector::bind("127.0.0.1:0", config(false)).unwrap();
@@ -144,6 +145,8 @@ async fn test_async_quic() {
     let mut stream = conn.open_stream().await.unwrap();
 
     stream.write(b"hello").await.unwrap();
+
+    log::debug!("Write stream data");
 
     let mut buf = [0; MAX_DATAGRAM_SIZE];
 

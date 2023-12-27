@@ -11,16 +11,18 @@ use alloc::collections::{BTreeMap, VecDeque};
 #[cfg(feature = "std")]
 use std::collections::{HashMap, VecDeque};
 
-struct Slot<T> {
+#[derive(Debug)]
+pub struct Slot<T> {
     round: u128,
     t: T,
 }
 
+#[derive(Debug)]
 pub struct TimeWheel<T> {
     #[cfg(not(feature = "std"))]
-    hashed: BTreeMap<u128, VecDeque<Slot<T>>>,
+    pub hashed: BTreeMap<u128, VecDeque<Slot<T>>>,
     #[cfg(feature = "std")]
-    hashed: HashMap<u128, VecDeque<Slot<T>>>,
+    pub hashed: HashMap<u128, VecDeque<Slot<T>>>,
     pub steps: u128,
     pub tick: u128,
 }
@@ -35,17 +37,16 @@ impl<T> TimeWheel<T> {
         }
     }
 
-    pub fn add(&mut self, timeout: u128, value: T) -> u128 {
+    pub fn add(&mut self, timeout: u128, value: T) -> (u128, u128) {
         let slot = (timeout + self.tick) % self.steps;
 
         let slots = self.hashed.entry(slot).or_insert(Default::default());
 
-        slots.push_back(Slot {
-            t: value,
-            round: timeout / self.steps,
-        });
+        let round = timeout / self.steps;
 
-        slot
+        slots.push_back(Slot { t: value, round });
+
+        (slot, round)
     }
 
     pub fn remove(&mut self, slot: u128, value: T) -> bool
@@ -109,7 +110,7 @@ mod tests {
     fn test_remove() {
         let mut time_wheel = TimeWheel::new(1024);
 
-        let slot = time_wheel.add(10, 1);
+        let (slot, _) = time_wheel.add(10, 1);
 
         assert!(time_wheel.remove(slot, 1));
 
@@ -124,7 +125,7 @@ mod tests {
             _ = time_wheel.tick();
         }
 
-        let slot = time_wheel.add(998, ());
+        let (slot, _) = time_wheel.add(998, ());
 
         assert_eq!(slot, 1032);
 

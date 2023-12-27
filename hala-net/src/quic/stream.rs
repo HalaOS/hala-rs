@@ -2,12 +2,12 @@ use std::{fmt::Debug, io, sync::Arc};
 
 use futures::{AsyncRead, AsyncWrite, FutureExt};
 
-use super::AsyncQuicConnState;
+use super::QuicConnState;
 
 #[derive(Clone)]
 pub struct QuicStream {
     stream_id: Arc<u64>,
-    state: AsyncQuicConnState,
+    state: QuicConnState,
 }
 
 impl Debug for QuicStream {
@@ -21,7 +21,7 @@ impl Debug for QuicStream {
 }
 
 impl QuicStream {
-    pub(super) fn new(stream_id: u64, state: AsyncQuicConnState) -> Self {
+    pub(super) fn new(stream_id: u64, state: QuicConnState) -> Self {
         Self {
             stream_id: Arc::new(stream_id),
             state,

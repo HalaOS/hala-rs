@@ -152,17 +152,6 @@ where
             log::trace!("create timeout {:?}", fd);
         }
 
-        // try poll fut once
-        match self.fut.as_mut().poll(cx) {
-            Poll::Ready(r) => {
-                log::trace!("timeout poll future ready {:?}", r);
-                return Poll::Ready(r);
-            }
-            _ => {
-                log::trace!("timeout poll future pending");
-            }
-        }
-
         // try check status of timeout fd
         match self
             .driver
@@ -171,6 +160,11 @@ where
             Ok(resp) => match resp.try_into_timeout() {
                 Ok(status) => {
                     if status {
+                        log::trace!(
+                            "{:?} timeout expired={:?}",
+                            self.fd.unwrap().token,
+                            self.expired
+                        );
                         return Poll::Ready(Err(io::Error::new(
                             io::ErrorKind::TimedOut,
                             format!("async io timeout={:?}", self.expired),
@@ -179,13 +173,35 @@ where
                 }
 
                 Err(err) => {
+                    log::trace!("{:?} timeout err={}", self.fd.unwrap().token, err);
                     return Poll::Ready(Err(err));
                 }
             },
-            Err(err) => return Poll::Ready(Err(err)),
+            Err(err) => {
+                log::trace!("{:?} timeout err={}", self.fd.unwrap().token, err);
+                return Poll::Ready(Err(err));
+            }
         }
 
-        return Poll::Pending;
+        // try poll fut once
+        match self.fut.as_mut().poll(cx) {
+            Poll::Ready(r) => {
+                log::trace!(
+                    "{:?} timeout, inner_future_poll=ready",
+                    self.fd.unwrap().token,
+                );
+                return Poll::Ready(r);
+            }
+            _ => {
+                log::trace!(
+                    "{:?} timeout, inner_future_poll=pending, duration={:?}",
+                    self.fd.unwrap().token,
+                    self.expired
+                );
+
+                return Poll::Pending;
+            }
+        }
     }
 }
 
@@ -207,11 +223,7 @@ where
     Fut: Future<Output = io::Result<R>> + 'a,
     R: Debug,
 {
-    if let Some(expired) = expired {
-        Timeout::new_with(fut, get_poller()?, expired)?.await
-    } else {
-        fut.await
-    }
+    timeout_with(fut, expired, get_poller()?).await
 }
 
 /// Add timeout feature for exists `Fut`
@@ -225,7 +237,14 @@ where
     R: Debug,
 {
     if let Some(expired) = expired {
-        Timeout::new_with(fut, poller, expired)?.await
+        if !expired.is_zero() {
+            Timeout::new_with(fut, poller, expired)?.await
+        } else {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "Timeout with input zero",
+            ));
+        }
     } else {
         fut.await
     }

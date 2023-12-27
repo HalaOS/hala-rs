@@ -113,6 +113,7 @@ impl MioTimeWheel {
     }
 
     fn tick(&mut self, tick_duration: Duration) -> VecDeque<Token> {
+      
         let elapsed = self.last_tick.elapsed();
 
         let elapsed_ticks = duration_to_ticks(elapsed, tick_duration, false);
@@ -264,17 +265,19 @@ where
 
                     let ticks = duration_to_ticks(timeout_duration, self.tick_duration, true);
 
-                    let slot = time_wheel.time_wheel.add(ticks, handle.token);
+                    let (slot,round) = time_wheel.time_wheel.add(ticks, handle.token);
 
                     timeout.slot = Some(slot);
 
                     log::trace!(
-                        "{:?} register timeout {:?}, slot={}, tick_duration={:?}, ticks={},time_wheel_elapsed={:?}, time_wheel_ticks={}, time_wheel_steps={}",
+                        "{:?} register timeout={:?}, adjust_timeout={:?}, ticks={:?}, slot={:?}, round={}, tick_duration={:?}, time_wheel_elapsed={:?}, time_wheel_ticks={}, time_wheel_steps={}",
                         handle.token,
-                        timeout.value,
-                        timeout.slot.unwrap(),
-                        self.tick_duration,
+                        timeout.value.duration,
+                        timeout_duration,
                         ticks,
+                        slot,
+                        round,
+                        self.tick_duration,
                         time_wheel.last_tick.elapsed(),
                         time_wheel.time_wheel.tick,
                         time_wheel.time_wheel.steps
@@ -341,7 +344,7 @@ where
 
                     let ticks = duration_to_ticks(timeout_duration, self.tick_duration, true);
 
-                    let slot = time_wheel.time_wheel.add(ticks, handle.token);
+                    let (slot,_) = time_wheel.time_wheel.add(ticks, handle.token);
 
                     timeout.start_time = Some(Instant::now());
 
