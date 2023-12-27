@@ -1,6 +1,6 @@
 use std::{collections::HashMap, io, task::Waker};
 
-use sync_traits::{LocalShared, MutexShared, Shared};
+use shared::{LocalShared, MutexShared, Shared};
 
 use crate::{Interest, Token};
 

@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use sync_traits::{Shared, LocalShared, MutexShared};
+use shared::{Shared, LocalShared, MutexShared};
 use timewheel::TimeWheel;
 
 use crate::{Handle, Interest, Token, TypedHandle};

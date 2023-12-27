@@ -11,7 +11,7 @@ version.workspace = true
 bitmask-enum = {workspace = true}
 futures = {workspace = true}
 log = {workspace = true}
-sync-traits = {workspace = true}
+shared = {workspace = true}
 
 [dev-dependencies]
 divan = {workspace = true}

@@ -14,7 +14,7 @@ bitmask-enum = {workspace = true}
 futures = {workspace = true, optional = true}
 log = {workspace = true}
 mio = {workspace = true, optional = true}
-sync-traits = {workspace = true}
+shared = {workspace = true}
 timewheel = {workspace = true, optional = true}
 
 [dev-dependencies]

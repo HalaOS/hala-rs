@@ -1,9 +1,9 @@
 [package]
 description = "A collection of types and traits for handle Rust mutable reference in single thread / multithread modal"
-documentation = "https://docs.rs/sync-traits"
+documentation = "https://docs.rs/shared"
 edition.workspace = true
 license = "MIT"
-name = "sync-traits"
+name = "shared"
 repository.workspace = true
 version.workspace = true
 

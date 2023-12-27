@@ -136,8 +136,7 @@ impl<T, E, Raw> Mediator<Raw>
 where
     T: Unpin + 'static,
     E: Eq + Clone + Unpin + Hash + Debug,
-    Raw:
-        sync_traits::AsyncShared<Value = SharedData<T, E>> + From<SharedData<T, E>> + Unpin + Clone,
+    Raw: shared::AsyncShared<Value = SharedData<T, E>> + From<SharedData<T, E>> + Unpin + Clone,
 {
     /// Create new mediator with shared value.
     pub fn new(value: T) -> Self {
@@ -202,7 +201,7 @@ where
 
     pub fn event_wait<'a>(
         &'a self,
-        lock_guard: <Raw as sync_traits::Shared>::RefMut<'a>,
+        lock_guard: <Raw as shared::Shared>::RefMut<'a>,
         event: E,
     ) -> EventWait<'a, Raw, T, E>
     where
@@ -241,24 +240,22 @@ where
 
 pub struct EventWait<'a, Raw, T, E>
 where
-    Raw:
-        sync_traits::AsyncShared<Value = SharedData<T, E>> + From<SharedData<T, E>> + Unpin + Clone,
+    Raw: shared::AsyncShared<Value = SharedData<T, E>> + From<SharedData<T, E>> + Unpin + Clone,
     T: Unpin + 'static,
     E: Debug + Unpin,
 {
-    lock_guard: Option<<Raw as sync_traits::Shared>::RefMut<'a>>,
+    lock_guard: Option<<Raw as shared::Shared>::RefMut<'a>>,
     event: Option<E>,
     mediator: &'a Mediator<Raw>,
 }
 
 impl<'a, Raw, T, E> Future for EventWait<'a, Raw, T, E>
 where
-    Raw:
-        sync_traits::AsyncShared<Value = SharedData<T, E>> + From<SharedData<T, E>> + Unpin + Clone,
+    Raw: shared::AsyncShared<Value = SharedData<T, E>> + From<SharedData<T, E>> + Unpin + Clone,
     T: Unpin + 'static,
     E: Debug + 'static + Unpin + Clone + Eq + Hash,
 {
-    type Output = <Raw as sync_traits::Shared>::RefMut<'a>;
+    type Output = <Raw as shared::Shared>::RefMut<'a>;
     fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         // first call this poll function .
         if let Some(mut lock_guard) = self.lock_guard.take() {
@@ -292,7 +289,7 @@ where
 
 impl<Raw, T, E, F, R> Future for OnEvent<Raw, E, F>
 where
-    Raw: sync_traits::Shared<Value = SharedData<T, E>> + Unpin + Clone,
+    Raw: shared::Shared<Value = SharedData<T, E>> + Unpin + Clone,
     F: FnMut(&mut SharedData<T, E>, &mut Context<'_>) -> Poll<R> + Unpin,
     T: Unpin,
     E: Unpin + Eq + Hash + Clone,
@@ -352,9 +349,9 @@ macro_rules! on {
     };
 }
 
-pub type LocalMediator<T, E> = Mediator<sync_traits::AsyncLocalShared<SharedData<T, E>>>;
+pub type LocalMediator<T, E> = Mediator<shared::AsyncLocalShared<SharedData<T, E>>>;
 
-pub type MutexMediator<T, E> = Mediator<sync_traits::AsyncMutexShared<SharedData<T, E>>>;
+pub type MutexMediator<T, E> = Mediator<shared::AsyncMutexShared<SharedData<T, E>>>;
 
 #[cfg(test)]
 mod tests {
