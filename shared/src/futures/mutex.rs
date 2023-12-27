@@ -40,7 +40,7 @@ impl<T> Clone for AsyncMutexShared<T> {
 }
 
 pub struct AsyncMutexSharedRef<'a, T> {
-    value_ref: MutexGuard<'a, T>,
+    value_ref: Option<MutexGuard<'a, T>>,
     wakers: Arc<Mutex<VecDeque<Waker>>>,
 }
 
@@ -48,12 +48,13 @@ impl<'a, T> ops::Deref for AsyncMutexSharedRef<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        &self.value_ref
+        self.value_ref.as_deref().unwrap()
     }
 }
 
 impl<'a, T> Drop for AsyncMutexSharedRef<'a, T> {
     fn drop(&mut self) {
+        drop(self.value_ref.take());
         if let Some(waker) = self.wakers.lock().unwrap().pop_front() {
             waker.wake();
         }
@@ -61,7 +62,7 @@ impl<'a, T> Drop for AsyncMutexSharedRef<'a, T> {
 }
 
 pub struct AsyncMutexSharedRefMut<'a, T> {
-    value_ref: MutexGuard<'a, T>,
+    value_ref: Option<MutexGuard<'a, T>>,
     wakers: Arc<Mutex<VecDeque<Waker>>>,
 }
 
@@ -69,18 +70,20 @@ impl<'a, T> ops::Deref for AsyncMutexSharedRefMut<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        &self.value_ref
+        self.value_ref.as_deref().unwrap()
     }
 }
 
 impl<'a, T> ops::DerefMut for AsyncMutexSharedRefMut<'a, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.value_ref
+        self.value_ref.as_deref_mut().unwrap()
     }
 }
 
 impl<'a, T> Drop for AsyncMutexSharedRefMut<'a, T> {
     fn drop(&mut self) {
+        drop(self.value_ref.take());
+
         if let Some(waker) = self.wakers.lock().unwrap().pop_front() {
             waker.wake();
         }
@@ -166,7 +169,7 @@ impl<T> Shared for AsyncMutexShared<T> {
     fn lock(&self) -> SharedGuard<'_, Self> {
         SharedGuard {
             value: Some(AsyncMutexSharedRef {
-                value_ref: self.value.lock().unwrap(),
+                value_ref: Some(self.value.lock().unwrap()),
                 wakers: self.wakers.clone(),
             }),
             shared: self,
@@ -176,7 +179,7 @@ impl<T> Shared for AsyncMutexShared<T> {
     fn lock_mut(&self) -> SharedGuardMut<'_, Self> {
         SharedGuardMut {
             value: Some(AsyncMutexSharedRefMut {
-                value_ref: self.value.lock().unwrap(),
+                value_ref: Some(self.value.lock().unwrap()),
                 wakers: self.wakers.clone(),
             }),
             shared: self,
@@ -187,7 +190,7 @@ impl<T> Shared for AsyncMutexShared<T> {
         match self.value.try_lock() {
             Ok(value) => Some(SharedGuardMut {
                 value: Some(AsyncMutexSharedRefMut {
-                    value_ref: value,
+                    value_ref: Some(value),
                     wakers: self.wakers.clone(),
                 }),
                 shared: self,
@@ -200,7 +203,7 @@ impl<T> Shared for AsyncMutexShared<T> {
         match self.value.try_lock() {
             Ok(value) => Some(SharedGuard {
                 value: Some(AsyncMutexSharedRef {
-                    value_ref: value,
+                    value_ref: Some(value),
                     wakers: self.wakers.clone(),
                 }),
                 shared: self,

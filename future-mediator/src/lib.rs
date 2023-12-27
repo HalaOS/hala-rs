@@ -275,7 +275,7 @@ mod tests {
 
     #[futures_test::test]
     async fn test_mutex_mediator() {
-        pretty_env_logger::init_timed();
+        // pretty_env_logger::init_timed();
 
         let local_pool = ThreadPool::builder().pool_size(10).create().unwrap();
 
