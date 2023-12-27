@@ -55,6 +55,7 @@ where
     }
 }
 
+#[derive(Debug)]
 pub struct AsyncSharedGuardMut<'a, S>
 where
     S: AsyncShared + ?Sized,

@@ -1,22 +1,23 @@
 use std::{
     collections::{HashSet, VecDeque},
+    fmt::Debug,
     io,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
-    task::Poll,
+    sync::Arc,
 };
 
-use future_mediator::{Condvar, LocalMediator};
-use futures::FutureExt;
-use hala_io_util::{get_local_poller, local_io_spawn, Sleep};
+use future_mediator::{
+    shared::{AsyncLocalShared, AsyncShared},
+    LocalMediator,
+};
+
+use hala_io_util::local_io_spawn;
 use quiche::{RecvInfo, SendInfo};
 
 use crate::{errors::into_io_error, quic::QuicStream};
 
 /// Quic connection state object
 pub struct QuicConnState {
+    stream_id_seed: u64,
     /// quiche connection instance.
     quiche_conn: quiche::Connection,
     /// Opened stream id set
@@ -25,10 +26,21 @@ pub struct QuicConnState {
     incoming_streams: VecDeque<u64>,
 }
 
+impl Debug for QuicConnState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("QuicConnState")
+            .field("stream_id_seed", &self.stream_id_seed)
+            .field("opened_streams", &self.opened_streams.len())
+            .field("incoming_streams", &self.incoming_streams.len())
+            .finish()
+    }
+}
+
 impl QuicConnState {
     /// Create new `QuicConnState` from [`Connection`](quiche::Connection)
-    pub fn new(quiche_conn: quiche::Connection) -> Self {
+    pub fn new(quiche_conn: quiche::Connection, stream_id_seed: u64) -> Self {
         Self {
+            stream_id_seed,
             quiche_conn,
             opened_streams: Default::default(),
             incoming_streams: Default::default(),
@@ -53,51 +65,64 @@ pub enum QuicConnEvents {
     OpenStream,
 }
 
-fn handle_accept(cx: &mut Condvar<QuicConnState, QuicConnEvents>, stream_id: u64) {
-    if !cx.opened_streams.contains(&stream_id) {
+async fn handle_accept(
+    mediator: &LocalMediator<QuicConnEvents>,
+    state: &mut QuicConnState,
+    stream_id: u64,
+) {
+    if !state.opened_streams.contains(&stream_id) {
         log::trace!(
             "handle incoming, conn={:?}, stream={}",
-            cx.quiche_conn.trace_id(),
+            state.quiche_conn.trace_id(),
             stream_id
         );
 
-        cx.opened_streams.insert(stream_id);
-        cx.incoming_streams.push_back(stream_id);
+        state.opened_streams.insert(stream_id);
+        state.incoming_streams.push_back(stream_id);
 
-        cx.notify(QuicConnEvents::Accept(cx.quiche_conn.trace_id().into()));
+        mediator
+            .notify(QuicConnEvents::Accept(state.quiche_conn.trace_id().into()))
+            .await;
     }
 }
 
-fn handle_stream(cx: &mut Condvar<QuicConnState, QuicConnEvents>) {
-    for stream_id in cx.quiche_conn.readable() {
-        handle_accept(cx, stream_id);
-        cx.notify(QuicConnEvents::StreamRecv(
-            cx.quiche_conn.trace_id().into(),
+async fn handle_stream(mediator: &LocalMediator<QuicConnEvents>, state: &mut QuicConnState) {
+    let mut events = vec![];
+
+    for stream_id in state.quiche_conn.readable() {
+        handle_accept(mediator, state, stream_id).await;
+
+        events.push(QuicConnEvents::StreamSend(
+            state.quiche_conn.trace_id().into(),
             stream_id,
         ));
     }
 
-    for stream_id in cx.quiche_conn.writable() {
-        handle_accept(cx, stream_id);
+    mediator.notify_all(&events).await;
 
-        cx.notify(QuicConnEvents::StreamSend(
-            cx.quiche_conn.trace_id().into(),
+    for stream_id in state.quiche_conn.writable() {
+        handle_accept(mediator, state, stream_id).await;
+
+        events.push(QuicConnEvents::StreamSend(
+            state.quiche_conn.trace_id().into(),
             stream_id,
         ));
     }
+
+    mediator.notify_all(&events).await;
 }
 
-fn handle_close(cx: &mut Condvar<QuicConnState, QuicConnEvents>) {
-    cx.wakeup_all();
+async fn handle_close(mediator: &LocalMediator<QuicConnEvents>) {
+    mediator.notify_any().await;
 }
 
 /// Quic connection state object
 #[derive(Clone)]
 pub struct AsyncQuicConnState {
+    conn_state: AsyncLocalShared<QuicConnState>,
     /// core inner state.
-    pub(crate) state: LocalMediator<QuicConnState, QuicConnEvents>,
-    /// stream id generator seed
-    stream_id_seed: Arc<AtomicU64>,
+    pub(crate) mediator: LocalMediator<QuicConnEvents>,
+
     /// String type trace id.
     pub trace_id: Arc<String>,
 }
@@ -106,148 +131,126 @@ impl AsyncQuicConnState {
     pub fn new(quiche_conn: quiche::Connection, stream_id_seed: u64) -> Self {
         Self {
             trace_id: Arc::new(quiche_conn.trace_id().to_owned()),
-            state: LocalMediator::new_with(
-                QuicConnState::new(quiche_conn),
-                "mediator: quic_conn_state",
-            ),
-            stream_id_seed: Arc::new(stream_id_seed.into()),
+            conn_state: QuicConnState::new(quiche_conn, stream_id_seed).into(),
+            mediator: LocalMediator::new_with("mediator: quic_conn_state"),
         }
     }
 
     /// Create new future for send connection data
     pub async fn send<'a>(&self, buf: &'a mut [u8]) -> io::Result<(usize, SendInfo)> {
-        let mut sleep: Option<Sleep> = None;
+        let event = QuicConnEvents::Recv(self.trace_id.to_string());
 
-        let event = QuicConnEvents::Send(self.trace_id.to_string());
+        let mut conn_state = self.conn_state.lock_mut_wait().await;
 
-        self.state
-            .on_poll(event.clone(), |state, cx| {
-                if state.quiche_conn.is_closed() {
-                    handle_close(state);
+        loop {
+            if conn_state.quiche_conn.is_closed() {
+                handle_close(&self.mediator).await;
 
-                    return Poll::Ready(Err(io::Error::new(
-                        io::ErrorKind::BrokenPipe,
-                        format!("{:?} err=broken_pipe", event,),
-                    )));
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    format!("quic conn closed, id={}", conn_state.quiche_conn.trace_id()),
+                ));
+            }
+
+            match conn_state.quiche_conn.send(buf) {
+                Ok((recv_size, send_info)) => {
+                    self.mediator
+                        .notify(QuicConnEvents::Recv(self.trace_id.to_string()))
+                        .await;
+
+                    handle_stream(&self.mediator, &mut conn_state).await;
+
+                    return Ok((recv_size, send_info));
                 }
+                Err(quiche::Error::Done) => {
+                    log::trace!("{:?} done ", event);
 
-                if let Some(mut sleep) = sleep.take() {
-                    match sleep.poll_unpin(cx) {
-                        Poll::Ready(_) => {
-                            log::trace!("{:?} on_timeout", event);
-                            state.quiche_conn.on_timeout();
-                        }
-                        Poll::Pending => {}
+                    if conn_state.quiche_conn.is_closed() {
+                        handle_close(&self.mediator).await;
+
+                        return Err(io::Error::new(
+                            io::ErrorKind::BrokenPipe,
+                            format!("conn={} closed", conn_state.quiche_conn.trace_id()),
+                        ));
                     }
+
+                    let timeout = conn_state.quiche_conn.timeout();
+
+                    conn_state = hala_io_util::timeout(
+                        async {
+                            let conn_state =
+                                self.mediator.event_wait(conn_state, event.clone()).await;
+
+                            Ok(conn_state)
+                        },
+                        timeout,
+                    )
+                    .await?;
+
+                    continue;
                 }
-
-                loop {
-                    match state.quiche_conn.send(buf) {
-                        Ok((send_size, send_info)) => {
-                            log::trace!(
-                                "{:?}, send_size={}, send_info={:?}",
-                                event,
-                                send_size,
-                                send_info
-                            );
-
-                            handle_stream(state);
-
-                            return Poll::Ready(Ok((send_size, send_info)));
-                        }
-                        Err(quiche::Error::Done) => {
-                            if state.quiche_conn.is_closed() {
-                                handle_close(state);
-                                return Poll::Ready(Err(io::Error::new(
-                                    io::ErrorKind::BrokenPipe,
-                                    format!("{:?} err=broken_pipe", event,),
-                                )));
-                            }
-
-                            if let Some(expired) = state.quiche_conn.timeout() {
-                                log::trace!("{:?} add timeout({:?})", event, expired);
-
-                                if expired.is_zero() {
-                                    state.quiche_conn.on_timeout();
-                                    continue;
-                                }
-
-                                let mut timeout = Sleep::new_with(get_local_poller()?, expired)?;
-
-                                match timeout.poll_unpin(cx) {
-                                    Poll::Ready(_) => {
-                                        log::trace!("{:?} on_timeout immediately", event);
-
-                                        state.quiche_conn.on_timeout();
-                                        continue;
-                                    }
-                                    _ => {
-                                        sleep = Some(timeout);
-                                    }
-                                }
-                            }
-
-                            return Poll::Pending;
-                        }
-                        Err(err) => return Poll::Ready(Err(into_io_error(err))),
+                Err(err) => {
+                    if conn_state.quiche_conn.is_closed() {
+                        handle_close(&self.mediator).await;
                     }
+
+                    return Err(into_io_error(err));
                 }
-            })
-            .await
+            }
+        }
     }
 
     /// Create new future for recv connection data
     pub async fn recv<'a>(&self, buf: &'a mut [u8], recv_info: RecvInfo) -> io::Result<usize> {
-        self.state
-            .on_poll(
-                QuicConnEvents::Recv(self.trace_id.to_string()),
-                |state, _| {
-                    if state.quiche_conn.is_closed() {
-                        handle_close(state);
-                        return Poll::Ready(Err(io::Error::new(
+        let event = QuicConnEvents::Recv(self.trace_id.to_string());
+
+        let mut conn_state = self.conn_state.lock_mut_wait().await;
+
+        loop {
+            if conn_state.quiche_conn.is_closed() {
+                handle_close(&self.mediator).await;
+
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    format!("quic conn closed, id={}", conn_state.quiche_conn.trace_id()),
+                ));
+            }
+
+            match conn_state.quiche_conn.recv(buf, recv_info.clone()) {
+                Ok(recv_size) => {
+                    self.mediator
+                        .notify(QuicConnEvents::Send(self.trace_id.to_string()))
+                        .await;
+
+                    handle_stream(&self.mediator, &mut conn_state).await;
+
+                    return Ok(recv_size);
+                }
+                Err(quiche::Error::Done) => {
+                    log::trace!("{:?} done ", event);
+
+                    if conn_state.quiche_conn.is_closed() {
+                        handle_close(&self.mediator).await;
+
+                        return Err(io::Error::new(
                             io::ErrorKind::BrokenPipe,
-                            format!("conn={} closed", state.quiche_conn.trace_id()),
-                        )));
+                            format!("conn={} closed", conn_state.quiche_conn.trace_id()),
+                        ));
                     }
 
-                    let recv_info = recv_info;
+                    conn_state = self.mediator.event_wait(conn_state, event.clone()).await;
 
-                    match state.quiche_conn.recv(buf, recv_info) {
-                        Ok(recv_size) => {
-                            log::trace!(
-                                "conn={} recv data, len={}",
-                                state.quiche_conn.trace_id(),
-                                recv_size
-                            );
-
-                            if state.quiche_conn.is_closed() {
-                                handle_close(state);
-                            } else {
-                                // wakeup send poll
-                                state.notify(QuicConnEvents::Send(self.trace_id.to_string()));
-
-                                // wakeup stream
-                                handle_stream(state);
-                            }
-
-                            return Poll::Ready(Ok(recv_size));
-                        }
-                        Err(quiche::Error::Done) => {
-                            if state.quiche_conn.is_closed() {
-                                handle_close(state);
-                            }
-                            return Poll::Pending;
-                        }
-                        Err(err) => {
-                            if state.quiche_conn.is_closed() {
-                                handle_close(state);
-                            }
-                            return Poll::Ready(Err(into_io_error(err)));
-                        }
+                    continue;
+                }
+                Err(err) => {
+                    if conn_state.quiche_conn.is_closed() {
+                        handle_close(&self.mediator).await;
                     }
-                },
-            )
-            .await
+
+                    return Err(into_io_error(err));
+                }
+            }
+        }
     }
 
     /// Create new future for send stream data
@@ -258,55 +261,60 @@ impl AsyncQuicConnState {
         fin: bool,
     ) -> io::Result<usize> {
         let event = QuicConnEvents::StreamSend(self.trace_id.to_string(), stream_id);
-        self.state
-            .on_poll(event.clone(), |state, _| {
-                if state.quiche_conn.is_closed() {
-                    handle_close(state);
 
-                    return Poll::Ready(Err(io::Error::new(
-                        io::ErrorKind::BrokenPipe,
-                        format!("conn={} closed", state.quiche_conn.trace_id()),
-                    )));
+        let mut conn_state = self.conn_state.lock_mut_wait().await;
+
+        loop {
+            if conn_state.quiche_conn.is_closed() {
+                handle_close(&self.mediator).await;
+
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    format!("quic conn closed, id={}", conn_state.quiche_conn.trace_id()),
+                ));
+            }
+
+            match conn_state.quiche_conn.stream_send(stream_id, buf, fin) {
+                Ok(recv_size) => {
+                    self.mediator
+                        .notify(QuicConnEvents::Send(self.trace_id.to_string()))
+                        .await;
+
+                    if fin {
+                        log::trace!("{:?}, status=fin", event);
+                    }
+
+                    return Ok(recv_size);
                 }
+                Err(quiche::Error::Done) => {
+                    log::trace!(
+                        "StreamSend({}, {}) done ",
+                        self.trace_id.to_string(),
+                        stream_id
+                    );
 
-                match state.quiche_conn.stream_send(stream_id, buf, fin) {
-                    Ok(recv_size) => {
-                        state.notify(QuicConnEvents::Send(self.trace_id.to_string()));
+                    if conn_state.quiche_conn.is_closed() {
+                        handle_close(&self.mediator).await;
 
-                        if fin {
-                            log::trace!("{:?}, status=fin", event);
-                        }
-
-                        return Poll::Ready(Ok(recv_size));
+                        return Err(io::Error::new(
+                            io::ErrorKind::BrokenPipe,
+                            format!("conn={} closed", conn_state.quiche_conn.trace_id()),
+                        ));
                     }
-                    Err(quiche::Error::Done) => {
-                        log::trace!(
-                            "StreamSend({}, {}) done ",
-                            self.trace_id.to_string(),
-                            stream_id
-                        );
 
-                        if state.quiche_conn.is_closed() {
-                            handle_close(state);
+                    conn_state = self.mediator.event_wait(conn_state, event.clone()).await;
 
-                            return Poll::Ready(Err(io::Error::new(
-                                io::ErrorKind::BrokenPipe,
-                                format!("conn={} closed", state.quiche_conn.trace_id()),
-                            )));
-                        }
-
-                        return Poll::Pending;
-                    }
-                    Err(err) => {
-                        if state.quiche_conn.is_closed() {
-                            handle_close(state);
-                        }
-
-                        Poll::Ready(Err(into_io_error(err)))
-                    }
+                    continue;
                 }
-            })
-            .await
+                Err(err) => {
+                    if conn_state.quiche_conn.is_closed() {
+                        handle_close(&self.mediator).await;
+                    }
+
+                    return Err(into_io_error(err));
+                }
+            }
+        }
     }
 
     /// Create new future for recv stream data
@@ -317,80 +325,83 @@ impl AsyncQuicConnState {
     ) -> io::Result<(usize, bool)> {
         let event = QuicConnEvents::StreamRecv(self.trace_id.to_string(), stream_id);
 
-        self.state
-            .on_poll(event.clone(), |state, _| {
-                if state.quiche_conn.is_closed() {
-                    handle_close(state);
-                    return Poll::Ready(Err(io::Error::new(
-                        io::ErrorKind::BrokenPipe,
-                        format!("conn={} closed", state.quiche_conn.trace_id()),
-                    )));
+        let mut conn_state = self.conn_state.lock_mut_wait().await;
+
+        loop {
+            if conn_state.quiche_conn.is_closed() {
+                handle_close(&self.mediator).await;
+
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    format!("quic conn closed, id={}", conn_state.quiche_conn.trace_id()),
+                ));
+            }
+
+            match conn_state.quiche_conn.stream_recv(stream_id, buf) {
+                Ok((read_size, fin)) => {
+                    self.mediator
+                        .notify_all(&[
+                            QuicConnEvents::Send(self.trace_id.to_string()),
+                            QuicConnEvents::Recv(self.trace_id.to_string()),
+                        ])
+                        .await;
+
+                    if fin {
+                        log::trace!("{:?}, status=fin", event);
+                    }
+
+                    return Ok((read_size, fin));
                 }
+                Err(quiche::Error::Done) => {
+                    log::trace!(
+                        "StreamSend({}, {}) done ",
+                        self.trace_id.to_string(),
+                        stream_id
+                    );
 
-                match state.quiche_conn.stream_recv(stream_id, buf) {
-                    Ok(recv_size) => {
-                        log::trace!("");
-                        if state.quiche_conn.is_closed() {
-                            handle_close(state);
-                        } else {
-                            state.notify(QuicConnEvents::Recv(self.trace_id.to_string()));
-                            state.notify(QuicConnEvents::Send(self.trace_id.to_string()));
-                        }
+                    if conn_state.quiche_conn.is_closed() {
+                        handle_close(&self.mediator).await;
 
-                        return Poll::Ready(Ok(recv_size));
+                        return Err(io::Error::new(
+                            io::ErrorKind::BrokenPipe,
+                            format!("conn={} closed", conn_state.quiche_conn.trace_id()),
+                        ));
                     }
-                    Err(quiche::Error::Done) => {
-                        if state.quiche_conn.is_closed() {
-                            handle_close(state);
 
-                            return Poll::Ready(Err(io::Error::new(
-                                io::ErrorKind::BrokenPipe,
-                                format!("conn={} closed", state.quiche_conn.trace_id()),
-                            )));
-                        }
+                    conn_state = self.mediator.event_wait(conn_state, event.clone()).await;
 
-                        log::trace!(
-                            "{:?} Pending",
-                            QuicConnEvents::StreamRecv(self.trace_id.to_string(), stream_id)
-                        );
-
-                        return Poll::Pending;
-                    }
-                    Err(err) => {
-                        if state.quiche_conn.is_closed() {
-                            handle_close(state);
-                        }
-                        return Poll::Ready(Err(into_io_error(err)));
-                    }
+                    continue;
                 }
-            })
-            .await
+                Err(err) => {
+                    if conn_state.quiche_conn.is_closed() {
+                        handle_close(&self.mediator).await;
+                    }
+
+                    return Err(into_io_error(err));
+                }
+            }
+        }
     }
 
     /// Open new stream to communicate with remote peer.
     pub async fn open_stream(&self) -> io::Result<QuicStream> {
-        let id = self.stream_id_seed.fetch_add(4, Ordering::SeqCst);
+        let mut state = self.conn_state.lock_mut_wait().await;
 
-        self.state
-            .on_poll(QuicConnEvents::OpenStream, |state, _| {
-                if state.quiche_conn.is_closed() {
-                    return Poll::Ready(Err(io::Error::new(
-                        io::ErrorKind::BrokenPipe,
-                        format!("Quic conn closed: {}", state.quiche_conn.trace_id()),
-                    )));
-                }
+        if state.quiche_conn.is_closed() {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                format!("quic conn closed, id={}", state.quiche_conn.trace_id()),
+            ));
+        }
 
-                log::trace!(
-                    "create new stream, stream_id={}, conn_id={}",
-                    id,
-                    state.quiche_conn.trace_id()
-                );
+        let stream_id = state.stream_id_seed;
+        state.stream_id_seed += 4;
 
-                state.notify(QuicConnEvents::Send(self.trace_id.to_string()));
+        self.mediator
+            .notify(QuicConnEvents::Send(self.trace_id.to_string()))
+            .await;
 
-                Poll::Ready(Ok(QuicStream::new(id, self.clone())))
-            })
-            .await
+        Ok(QuicStream::new(stream_id, self.clone()))
     }
 
     pub fn close_stream(&self, stream_id: u64) {
@@ -405,42 +416,43 @@ impl AsyncQuicConnState {
     }
 
     pub(super) async fn is_stream_closed(&self, stream_id: u64) -> bool {
-        self.state
-            .with(|mediator| mediator.quiche_conn.stream_finished(stream_id))
+        self.conn_state
+            .lock_wait()
+            .await
+            .quiche_conn
+            .stream_finished(stream_id)
     }
 
     /// Close connection.
     pub(super) async fn close(&self, app: bool, err: u64, reason: &[u8]) -> io::Result<()> {
-        self.state.with_mut(|state| {
-            state
-                .quiche_conn
-                .close(app, err, reason)
-                .map_err(into_io_error)
-        })
+        self.conn_state
+            .lock_mut_wait()
+            .await
+            .quiche_conn
+            .close(app, err, reason)
+            .map_err(into_io_error)
     }
 
     pub(super) async fn is_closed(&self) -> bool {
-        self.state.with(|state| state.quiche_conn.is_closed())
+        self.conn_state.lock_wait().await.quiche_conn.is_closed()
     }
 
     pub async fn accept(&self) -> Option<QuicStream> {
         let event = QuicConnEvents::Accept(self.trace_id.to_string());
 
-        self.state
-            .on_poll(event.clone(), |state, _| {
-                log::trace!("{:?} poll once", event);
+        let mut conn_state = self.conn_state.lock_mut_wait().await;
 
-                if state.quiche_conn.is_closed() {
-                    log::trace!("{:?}, conn_status=closed", event);
-                    return Poll::Ready(None);
-                }
+        loop {
+            if conn_state.quiche_conn.is_closed() {
+                log::trace!("{:?}, conn_status=closed", event);
+                return None;
+            }
 
-                if let Some(stream_id) = state.incoming_streams.pop_front() {
-                    return Poll::Ready(Some(QuicStream::new(stream_id, self.clone())));
-                } else {
-                    return Poll::Pending;
-                }
-            })
-            .await
+            if let Some(stream_id) = conn_state.incoming_streams.pop_front() {
+                return Some(QuicStream::new(stream_id, self.clone()));
+            } else {
+                conn_state = self.mediator.event_wait(conn_state, event.clone()).await;
+            }
+        }
     }
 }

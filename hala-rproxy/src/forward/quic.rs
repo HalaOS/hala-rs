@@ -3,12 +3,14 @@ use std::{
     io,
     net::SocketAddr,
     ops,
-    task::Poll,
     thread::JoinHandle,
 };
 
 use bytes::BytesMut;
-use future_mediator::MutexMediator;
+use future_mediator::{
+    shared::{AsyncMutexShared, AsyncShared, Shared},
+    MutexMediator,
+};
 use futures::{
     channel::mpsc::{channel, Receiver, Sender},
     AsyncReadExt, AsyncWriteExt, SinkExt, StreamExt,
@@ -68,11 +70,14 @@ impl QuicForward {
 impl Drop for QuicForward {
     fn drop(&mut self) {
         if let Some(join_handle) = self.join_handle.take() {
-            self.mediator.with_mut(|shared| {
-                shared.dropping = true;
+            {
+                let mut shared = self.mediator.shared.lock_mut();
 
-                shared.wakeup_all();
-            });
+                shared.dropping = true;
+            }
+
+            self.mediator.sync_notify_any();
+
             join_handle.join().unwrap();
         }
     }
@@ -107,13 +112,15 @@ enum QuicForwardEvents {
 
 #[derive(Clone)]
 struct QuicForwardMediator {
-    hub: MutexMediator<QuicForwardSharedData, QuicForwardEvents>,
+    shared: AsyncMutexShared<QuicForwardSharedData>,
+    hub: MutexMediator<QuicForwardEvents>,
 }
 
 impl Default for QuicForwardMediator {
     fn default() -> Self {
         Self {
-            hub: MutexMediator::new_with(Default::default(), "quic-forward-mediator"),
+            shared: QuicForwardSharedData::default().into(),
+            hub: MutexMediator::new_with("quic-forward-mediator"),
         }
     }
 }
@@ -135,32 +142,32 @@ impl QuicForwardMediator {
             raddrs
         );
 
-        self.hub.with_mut(|shared| {
-            if let Some(conn_ops) = shared.opened_conns.get_mut(peer_name) {
-                conn_ops.push_back(ConnOps::OpenStream(sender_forward, receiver_forward));
+        let mut shared = self.shared.lock_mut();
 
-                shared.notify(QuicForwardEvents::OpenStream(peer_name.to_string()));
-            } else {
-                let require = ConnectRequire {
-                    peer_name: peer_name.to_string(),
-                    raddrs: raddrs.to_owned(),
-                    stream_receiver: receiver_forward,
-                    stream_sender: sender_forward,
-                    config,
-                };
+        if let Some(conn_ops) = shared.opened_conns.get_mut(peer_name) {
+            conn_ops.push_back(ConnOps::OpenStream(sender_forward, receiver_forward));
 
-                shared.connect_requires.push_back(require);
+            self.sync_notify(QuicForwardEvents::OpenStream(peer_name.to_string()));
+        } else {
+            let require = ConnectRequire {
+                peer_name: peer_name.to_string(),
+                raddrs: raddrs.to_owned(),
+                stream_receiver: receiver_forward,
+                stream_sender: sender_forward,
+                config,
+            };
 
-                shared.notify(QuicForwardEvents::Connect);
-            }
-        });
+            shared.connect_requires.push_back(require);
+
+            self.sync_notify(QuicForwardEvents::Connect);
+        }
 
         Ok((sender_gateway, receiver_gateway))
     }
 }
 
 impl ops::Deref for QuicForwardMediator {
-    type Target = MutexMediator<QuicForwardSharedData, QuicForwardEvents>;
+    type Target = MutexMediator<QuicForwardEvents>;
     fn deref(&self) -> &Self::Target {
         &self.hub
     }
@@ -187,44 +194,45 @@ impl QuicForwardConnector {
 
     async fn run_loop_fut(self) -> io::Result<()> {
         loop {
-            let (requires, dropping) = self
-                .mediator
-                .on_poll(QuicForwardEvents::Connect, |shared, _| {
-                    if shared.dropping {
-                        return Poll::Ready((vec![], true));
-                    }
+            let requires = {
+                let mut shared = self.mediator.shared.lock_mut_wait().await;
+
+                if shared.dropping {
+                    return Ok(());
+                }
+
+                loop {
                     if shared.connect_requires.is_empty() {
-                        return Poll::Pending;
+                        shared = self
+                            .mediator
+                            .event_wait(shared, QuicForwardEvents::Connect)
+                            .await;
+
+                        if shared.dropping {
+                            return Ok(());
+                        }
+
+                        continue;
                     }
 
-                    let requires = shared.connect_requires.drain(..).collect::<Vec<_>>();
+                    break;
+                }
 
-                    for require in requires.iter() {
-                        shared
-                            .opened_conns
-                            .insert(require.peer_name.clone(), Default::default());
-                    }
+                let requires = shared.connect_requires.drain(..).collect::<Vec<_>>();
 
-                    std::task::Poll::Ready((requires, false))
-                })
-                .await;
+                for require in requires.iter() {
+                    shared
+                        .opened_conns
+                        .insert(require.peer_name.clone(), Default::default());
+                }
 
-            if dropping {
-                return Ok(());
-            }
+                requires
+            };
 
             for require in requires {
                 let mediator = self.mediator.clone();
-                local_io_spawn(async move {
-                    let peer_name = require.peer_name.clone();
 
-                    let r = conn_loop(require, mediator.clone()).await;
-
-                    // Clear up conns resources
-                    mediator.with_mut(|shared| shared.opened_conns.remove(&peer_name));
-
-                    r
-                })?;
+                local_io_spawn(conn_loop(require, mediator.clone()))?;
             }
         }
     }
@@ -242,50 +250,59 @@ async fn conn_loop(require: ConnectRequire, mediator: QuicForwardMediator) -> io
     loop {
         log::trace!("quic forward conn loop, peer_name={}", require.peer_name);
 
-        let (ops, dropping) = mediator
-            .on_poll(
-                QuicForwardEvents::OpenStream(require.peer_name.clone()),
-                |shared, _| {
+        let ops = {
+            let mut shared = mediator.shared.lock_mut_wait().await;
+
+            if shared.dropping {
+                shared.opened_conns.remove(&require.peer_name);
+
+                return Ok(());
+            }
+
+            log::trace!("quic forward OpenStream poll");
+
+            let mut ops;
+
+            loop {
+                ops = match shared.opened_conns.get_mut(&require.peer_name) {
+                    Some(ops) => ops.drain(..).collect::<Vec<_>>(),
+                    _ => panic!("not here"),
+                };
+
+                log::trace!("quic forward OpenStream, peer_name={}", &require.peer_name);
+
+                if ops.is_empty() {
+                    log::trace!(
+                        "quic forward OpenStream, peer_name={}, pending",
+                        &require.peer_name
+                    );
+
+                    shared = mediator
+                        .event_wait(
+                            shared,
+                            QuicForwardEvents::OpenStream(require.peer_name.clone()),
+                        )
+                        .await;
+
                     if shared.dropping {
-                        return Poll::Ready((vec![], true));
+                        shared.opened_conns.remove(&require.peer_name);
+                        break;
                     }
 
-                    log::trace!("quic forward OpenStream poll");
+                    continue;
+                }
 
-                    if let Some(ops) = shared.opened_conns.get_mut(&require.peer_name) {
-                        log::trace!("quic forward OpenStream, peer_name={}", &require.peer_name);
+                log::trace!(
+                    "quic forward OpenStream, peer_name={}, ops={}",
+                    &require.peer_name,
+                    ops.len()
+                );
 
-                        let ops = ops.drain(..).collect::<Vec<_>>();
+                break;
+            }
 
-                        if ops.is_empty() {
-                            log::trace!(
-                                "quic forward OpenStream, peer_name={}, pending",
-                                &require.peer_name
-                            );
-                            return Poll::Pending;
-                        }
-
-                        log::trace!(
-                            "quic forward OpenStream, peer_name={}, ops={}",
-                            &require.peer_name,
-                            ops.len()
-                        );
-
-                        return Poll::Ready((ops, false));
-                    }
-
-                    panic!("not here")
-                },
-            )
-            .await;
-
-        if dropping {
-            log::trace!(
-                "quic forward conn loop dropping, peer_name={}",
-                require.peer_name
-            );
-            return Ok(());
-        }
+            ops
+        };
 
         for op in ops {
             match op {

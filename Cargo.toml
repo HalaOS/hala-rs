@@ -1,8 +1,8 @@
 [workspace]
-members = ["future-mediator", "shared"]
+members = ["future-mediator", "shared", "hala-io-driver", "hala-net", "hala-test", "timewheel", "hala-io-util", "hala-rproxy"]
 resolver = "2"
 
-#"hala-io-driver", "hala-net", "hala-test", "timewheel", "hala-io-util", "hala-rproxy",
+#
 
 [workspace.package]
 edition = "2021"

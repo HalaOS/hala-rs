@@ -7,6 +7,7 @@ use crate::{AsyncSharedGuard, AsyncSharedGuardMut, SharedGuard, SharedGuardMut};
 use super::{AsyncShared, Shared};
 
 /// Shared data support local thread mode and `AsyncShared` trait.
+#[derive(Debug)]
 pub struct AsyncLocalShared<T> {
     value: Rc<RefCell<T>>,
     pub(super) wakers: Rc<RefCell<VecDeque<Waker>>>,
@@ -36,6 +37,7 @@ impl<T> Clone for AsyncLocalShared<T> {
     }
 }
 
+#[derive(Debug)]
 pub struct AsyncLocalSharedRef<'a, T> {
     value_ref: std::cell::Ref<'a, T>,
     wakers: Rc<RefCell<VecDeque<Waker>>>,
@@ -57,6 +59,7 @@ impl<'a, T> Drop for AsyncLocalSharedRef<'a, T> {
     }
 }
 
+#[derive(Debug)]
 pub struct AsyncLocalSharedRefMut<'a, T> {
     value_ref: std::cell::RefMut<'a, T>,
     wakers: Rc<RefCell<VecDeque<Waker>>>,

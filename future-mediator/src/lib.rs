@@ -7,6 +7,7 @@ use std::{
 };
 
 pub use futures::FutureExt;
+pub use shared;
 use shared::{AsyncShared, AsyncSharedGuardMut};
 
 /// Shared raw data between futures.
@@ -154,11 +155,22 @@ where
     pub async fn notify_all<Events: AsRef<[E]>>(&self, events: Events) {
         let mut raw = self.raw.lock_mut_wait().await;
 
-        for event in events.as_ref() {
-            raw.notify(event.clone());
-        }
+        raw.notify_all(events);
     }
 
+    #[inline]
+    pub fn sync_notify_any(&self) {
+        let mut raw = self.raw.lock_mut();
+
+        raw.notify_any();
+    }
+
+    #[inline]
+    pub async fn notify_any(&self) {
+        let mut raw = self.raw.lock_mut_wait().await;
+
+        raw.notify_any();
+    }
     #[inline]
     pub fn event_wait<'a, T>(
         &'a self,
