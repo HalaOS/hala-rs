@@ -1,4 +1,6 @@
-use crate::{AsyncShared, Shared};
+use crate::{
+    AsyncShared, AsyncSharedGuard, AsyncSharedGuardMut, Shared, SharedGuard, SharedGuardMut,
+};
 use std::{
     collections::VecDeque,
     future::Future,
@@ -52,7 +54,7 @@ impl<'a, T> ops::Deref for AsyncMutexSharedRef<'a, T> {
 
 impl<'a, T> Drop for AsyncMutexSharedRef<'a, T> {
     fn drop(&mut self) {
-        if let Some(waker) = self.wakers.lock_mut().pop_front() {
+        if let Some(waker) = self.wakers.lock().unwrap().pop_front() {
             waker.wake();
         }
     }
@@ -79,7 +81,7 @@ impl<'a, T> ops::DerefMut for AsyncMutexSharedRefMut<'a, T> {
 
 impl<'a, T> Drop for AsyncMutexSharedRefMut<'a, T> {
     fn drop(&mut self) {
-        if let Some(waker) = self.wakers.lock_mut().pop_front() {
+        if let Some(waker) = self.wakers.lock().unwrap().pop_front() {
             waker.wake();
         }
     }
@@ -90,15 +92,29 @@ pub struct AsyncMutexSharedRefFuture<'a, T> {
 }
 
 impl<'a, T> Future for AsyncMutexSharedRefFuture<'a, T> {
-    type Output = <AsyncMutexShared<T> as Shared>::Ref<'a>;
+    type Output = AsyncSharedGuard<'a, AsyncMutexShared<T>>;
     fn poll(
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
         if let Some(lock) = self.value.try_lock() {
-            std::task::Poll::Ready(lock)
+            std::task::Poll::Ready(AsyncSharedGuard {
+                value: lock.value,
+                shared: lock.shared,
+            })
         } else {
-            self.value.wakers.lock_mut().push_back(cx.waker().clone());
+            let mut wakers = self.value.wakers.lock().unwrap();
+
+            // double check mut status
+            if let Some(lock) = self.value.try_lock() {
+                return std::task::Poll::Ready(AsyncSharedGuard {
+                    value: lock.value,
+                    shared: lock.shared,
+                });
+            }
+
+            wakers.push_back(cx.waker().clone());
+
             std::task::Poll::Pending
         }
     }
@@ -109,15 +125,29 @@ pub struct AsyncMutexSharedRefMutFuture<'a, T> {
 }
 
 impl<'a, T> Future for AsyncMutexSharedRefMutFuture<'a, T> {
-    type Output = <AsyncMutexShared<T> as Shared>::RefMut<'a>;
+    type Output = AsyncSharedGuardMut<'a, AsyncMutexShared<T>>;
     fn poll(
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
         if let Some(lock) = self.value.try_lock_mut() {
-            std::task::Poll::Ready(lock)
+            std::task::Poll::Ready(AsyncSharedGuardMut {
+                value: lock.value,
+                shared: lock.shared,
+            })
         } else {
-            self.value.wakers.lock_mut().push_back(cx.waker().clone());
+            let mut wakers = self.value.wakers.lock().unwrap();
+
+            // double check mut status
+            if let Some(lock) = self.value.try_lock_mut() {
+                return std::task::Poll::Ready(AsyncSharedGuardMut {
+                    value: lock.value,
+                    shared: lock.shared,
+                });
+            }
+
+            wakers.push_back(cx.waker().clone());
+
             std::task::Poll::Pending
         }
     }
@@ -133,38 +163,50 @@ impl<T> Shared for AsyncMutexShared<T> {
     type RefMut<'a> = AsyncMutexSharedRefMut<'a,T>
     where
         Self: 'a;
-
-    fn lock(&self) -> Self::Ref<'_> {
-        AsyncMutexSharedRef {
-            value_ref: self.value.lock().unwrap(),
-            wakers: self.wakers.clone(),
+    fn lock(&self) -> SharedGuard<'_, Self> {
+        SharedGuard {
+            value: Some(AsyncMutexSharedRef {
+                value_ref: self.value.lock().unwrap(),
+                wakers: self.wakers.clone(),
+            }),
+            shared: self,
         }
     }
 
-    fn lock_mut(&self) -> Self::RefMut<'_> {
-        AsyncMutexSharedRefMut {
-            value_ref: self.value.lock_mut(),
-            wakers: self.wakers.clone(),
+    fn lock_mut(&self) -> SharedGuardMut<'_, Self> {
+        SharedGuardMut {
+            value: Some(AsyncMutexSharedRefMut {
+                value_ref: self.value.lock().unwrap(),
+                wakers: self.wakers.clone(),
+            }),
+            shared: self,
         }
     }
 
-    fn try_lock_mut(&self) -> Option<Self::RefMut<'_>> {
-        self.value
-            .try_lock_mut()
-            .map(|ref_mut| AsyncMutexSharedRefMut {
-                value_ref: ref_mut,
-                wakers: self.wakers.clone(),
-            })
+    fn try_lock_mut(&self) -> Option<SharedGuardMut<'_, Self>> {
+        match self.value.try_lock() {
+            Ok(value) => Some(SharedGuardMut {
+                value: Some(AsyncMutexSharedRefMut {
+                    value_ref: value,
+                    wakers: self.wakers.clone(),
+                }),
+                shared: self,
+            }),
+            Err(_) => None,
+        }
     }
 
-    fn try_lock(&self) -> Option<Self::Ref<'_>> {
-        self.value
-            .try_lock()
-            .ok()
-            .map(|ref_mut| AsyncMutexSharedRef {
-                value_ref: ref_mut,
-                wakers: self.wakers.clone(),
-            })
+    fn try_lock(&self) -> Option<SharedGuard<'_, Self>> {
+        match self.value.try_lock() {
+            Ok(value) => Some(SharedGuard {
+                value: Some(AsyncMutexSharedRef {
+                    value_ref: value,
+                    wakers: self.wakers.clone(),
+                }),
+                shared: self,
+            }),
+            Err(_) => None,
+        }
     }
 }
 

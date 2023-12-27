@@ -1,61 +1,11 @@
 use std::{
     ops,
-    sync::{Arc, Mutex, TryLockError},
+    sync::{Arc, Mutex},
 };
 
+use crate::{SharedGuard, SharedGuardMut};
+
 use super::Shared;
-
-impl<T> Shared for std::sync::Mutex<T> {
-    type Value = T;
-
-    type Ref<'a> = std::sync::MutexGuard<'a,T>
-    where
-        Self: 'a;
-
-    type RefMut<'a> = std::sync::MutexGuard<'a,T>
-    where
-        Self: 'a;
-
-    fn lock(&self) -> Self::Ref<'_> {
-        self.lock().unwrap()
-    }
-
-    fn lock_mut(&self) -> Self::RefMut<'_> {
-        self.lock().unwrap()
-    }
-
-    fn try_lock_mut(&self) -> Option<Self::RefMut<'_>> {
-        match self.try_lock() {
-            Ok(value) => Some(value),
-            // the value is currently borrowed
-            Err(err) => {
-                log::trace!("{}", err);
-
-                if let TryLockError::Poisoned(_) = err {
-                    panic!("Poisoned");
-                }
-
-                None
-            }
-        }
-    }
-
-    fn try_lock(&self) -> Option<Self::Ref<'_>> {
-        match self.try_lock() {
-            Ok(value) => Some(value),
-            // the value is currently borrowed
-            Err(err) => {
-                log::trace!("{}", err);
-
-                if let TryLockError::Poisoned(_) = err {
-                    panic!("Poisoned");
-                }
-
-                None
-            }
-        }
-    }
-}
 
 /// Shared data that using in multi-thread mode
 #[derive(Debug)]
@@ -108,31 +58,37 @@ impl<T> Shared for MutexShared<T> {
     where
         Self: 'a;
 
-    fn lock(&self) -> Self::Ref<'_> {
-        self.value.lock().unwrap()
+    fn lock(&self) -> SharedGuard<'_, Self> {
+        SharedGuard {
+            value: Some(self.value.lock().unwrap()),
+            shared: self,
+        }
     }
 
-    fn lock_mut(&self) -> Self::RefMut<'_> {
-        self.value.lock_mut()
+    fn lock_mut(&self) -> SharedGuardMut<'_, Self> {
+        SharedGuardMut {
+            value: Some(self.value.lock().unwrap()),
+            shared: self,
+        }
     }
 
-    fn try_lock_mut(&self) -> Option<Self::RefMut<'_>> {
-        self.value.try_lock_mut()
-    }
-
-    fn try_lock(&self) -> Option<Self::Ref<'_>> {
+    fn try_lock_mut(&self) -> Option<SharedGuardMut<'_, Self>> {
         match self.value.try_lock() {
-            Ok(value) => Some(value),
-            // the value is currently borrowed
-            Err(err) => {
-                log::trace!("{}", err);
+            Ok(value) => Some(SharedGuardMut {
+                value: Some(value),
+                shared: self,
+            }),
+            Err(_) => None,
+        }
+    }
 
-                if let TryLockError::Poisoned(_) = err {
-                    panic!("Poisoned");
-                }
-
-                None
-            }
+    fn try_lock(&self) -> Option<SharedGuard<'_, Self>> {
+        match self.value.try_lock() {
+            Ok(value) => Some(SharedGuard {
+                value: Some(value),
+                shared: self,
+            }),
+            Err(_) => None,
         }
     }
 }

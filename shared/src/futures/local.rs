@@ -2,6 +2,8 @@ use std::{cell::RefCell, collections::VecDeque, ops, rc::Rc, task::Waker};
 
 use std::future::Future;
 
+use crate::{AsyncSharedGuard, AsyncSharedGuardMut, SharedGuard, SharedGuardMut};
+
 use super::{AsyncShared, Shared};
 
 /// Shared data support local thread mode and `AsyncShared` trait.
@@ -87,15 +89,18 @@ pub struct AsyncLocalSharedRefFuture<'a, T> {
 }
 
 impl<'a, T> Future for AsyncLocalSharedRefFuture<'a, T> {
-    type Output = <AsyncLocalShared<T> as Shared>::Ref<'a>;
+    type Output = AsyncSharedGuard<'a, AsyncLocalShared<T>>;
     fn poll(
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
         if let Some(lock) = self.value.try_lock() {
-            std::task::Poll::Ready(lock)
+            std::task::Poll::Ready(AsyncSharedGuard {
+                value: lock.value,
+                shared: lock.shared,
+            })
         } else {
-            self.value.wakers.lock_mut().push_back(cx.waker().clone());
+            self.value.wakers.borrow_mut().push_back(cx.waker().clone());
             std::task::Poll::Pending
         }
     }
@@ -106,15 +111,18 @@ pub struct AsyncLocalSharedRefMutFuture<'a, T> {
 }
 
 impl<'a, T> Future for AsyncLocalSharedRefMutFuture<'a, T> {
-    type Output = <AsyncLocalShared<T> as Shared>::RefMut<'a>;
+    type Output = AsyncSharedGuardMut<'a, AsyncLocalShared<T>>;
     fn poll(
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
         if let Some(lock) = self.value.try_lock_mut() {
-            std::task::Poll::Ready(lock)
+            std::task::Poll::Ready(AsyncSharedGuardMut {
+                value: lock.value,
+                shared: lock.shared,
+            })
         } else {
-            self.value.wakers.lock_mut().push_back(cx.waker().clone());
+            self.value.wakers.borrow_mut().push_back(cx.waker().clone());
             std::task::Poll::Pending
         }
     }
@@ -131,34 +139,50 @@ impl<T> Shared for AsyncLocalShared<T> {
     where
         Self: 'a;
 
-    fn lock(&self) -> Self::Ref<'_> {
-        AsyncLocalSharedRef {
-            value_ref: self.value.lock(),
-            wakers: self.wakers.clone(),
-        }
-    }
-
-    fn lock_mut(&self) -> Self::RefMut<'_> {
-        AsyncLocalSharedRefMut {
-            value_ref: self.value.lock_mut(),
-            wakers: self.wakers.clone(),
-        }
-    }
-
-    fn try_lock_mut(&self) -> Option<Self::RefMut<'_>> {
-        self.value
-            .try_lock_mut()
-            .map(|ref_mut| AsyncLocalSharedRefMut {
-                value_ref: ref_mut,
+    fn lock(&self) -> SharedGuard<'_, Self> {
+        SharedGuard {
+            value: Some(AsyncLocalSharedRef {
+                value_ref: self.value.borrow(),
                 wakers: self.wakers.clone(),
-            })
+            }),
+            shared: self,
+        }
     }
 
-    fn try_lock(&self) -> Option<Self::Ref<'_>> {
-        self.value.try_lock().map(|ref_mut| AsyncLocalSharedRef {
-            value_ref: ref_mut,
-            wakers: self.wakers.clone(),
-        })
+    fn lock_mut(&self) -> SharedGuardMut<'_, Self> {
+        SharedGuardMut {
+            value: Some(AsyncLocalSharedRefMut {
+                value_ref: self.value.borrow_mut(),
+                wakers: self.wakers.clone(),
+            }),
+            shared: self,
+        }
+    }
+
+    fn try_lock_mut(&self) -> Option<SharedGuardMut<'_, Self>> {
+        match self.value.try_borrow_mut() {
+            Ok(value) => Some(SharedGuardMut {
+                value: Some(AsyncLocalSharedRefMut {
+                    value_ref: value,
+                    wakers: self.wakers.clone(),
+                }),
+                shared: self,
+            }),
+            Err(_) => None,
+        }
+    }
+
+    fn try_lock(&self) -> Option<SharedGuard<'_, Self>> {
+        match self.value.try_borrow() {
+            Ok(value) => Some(SharedGuard {
+                value: Some(AsyncLocalSharedRef {
+                    value_ref: value,
+                    wakers: self.wakers.clone(),
+                }),
+                shared: self,
+            }),
+            Err(_) => None,
+        }
     }
 }
 

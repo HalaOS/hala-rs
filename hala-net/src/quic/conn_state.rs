@@ -8,7 +8,7 @@ use std::{
     task::Poll,
 };
 
-use future_mediator::{LocalMediator, SharedData};
+use future_mediator::{Condvar, LocalMediator};
 use futures::FutureExt;
 use hala_io_util::{get_local_poller, local_io_spawn, Sleep};
 use quiche::{RecvInfo, SendInfo};
@@ -53,7 +53,7 @@ pub enum QuicConnEvents {
     OpenStream,
 }
 
-fn handle_accept(cx: &mut SharedData<QuicConnState, QuicConnEvents>, stream_id: u64) {
+fn handle_accept(cx: &mut Condvar<QuicConnState, QuicConnEvents>, stream_id: u64) {
     if !cx.opened_streams.contains(&stream_id) {
         log::trace!(
             "handle incoming, conn={:?}, stream={}",
@@ -68,7 +68,7 @@ fn handle_accept(cx: &mut SharedData<QuicConnState, QuicConnEvents>, stream_id: 
     }
 }
 
-fn handle_stream(cx: &mut SharedData<QuicConnState, QuicConnEvents>) {
+fn handle_stream(cx: &mut Condvar<QuicConnState, QuicConnEvents>) {
     for stream_id in cx.quiche_conn.readable() {
         handle_accept(cx, stream_id);
         cx.notify(QuicConnEvents::StreamRecv(
@@ -87,7 +87,7 @@ fn handle_stream(cx: &mut SharedData<QuicConnState, QuicConnEvents>) {
     }
 }
 
-fn handle_close(cx: &mut SharedData<QuicConnState, QuicConnEvents>) {
+fn handle_close(cx: &mut Condvar<QuicConnState, QuicConnEvents>) {
     cx.wakeup_all();
 }
 

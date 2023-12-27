@@ -15,20 +15,93 @@ pub trait Shared {
         Self: 'a;
 
     /// Lock shared value and get immutable reference.
-    fn lock(&self) -> Self::Ref<'_>;
+    fn lock(&self) -> SharedGuard<'_, Self>;
 
     /// Lock shared value and get mutable reference.
-    fn lock_mut(&self) -> Self::RefMut<'_>;
+    fn lock_mut(&self) -> SharedGuardMut<'_, Self>;
 
     /// Try lock shared value and get mutable reference.
     ///
     /// If the lock is not successful, returns [`None`]
-    fn try_lock_mut(&self) -> Option<Self::RefMut<'_>>;
+    fn try_lock_mut(&self) -> Option<SharedGuardMut<'_, Self>>;
 
     /// Try lock shared value and get mutable reference.
     ///
     /// If the lock is not successful, returns [`None`]
-    fn try_lock(&self) -> Option<Self::Ref<'_>>;
+    fn try_lock(&self) -> Option<SharedGuard<'_, Self>>;
+}
+
+pub struct SharedGuard<'a, S>
+where
+    S: Shared + ?Sized,
+{
+    pub value: Option<S::Ref<'a>>,
+    pub shared: &'a S,
+}
+
+impl<'a, S> ops::Deref for SharedGuard<'a, S>
+where
+    S: Shared,
+{
+    type Target = S::Value;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value.as_ref().expect("unlocked")
+    }
+}
+
+impl<'a, S> SharedGuard<'a, S>
+where
+    S: Shared + ?Sized,
+{
+    pub fn unlock(&mut self) {
+        self.value.take();
+    }
+
+    pub fn relock(&mut self) {
+        self.value = self.shared.lock().value
+    }
+}
+
+pub struct SharedGuardMut<'a, S>
+where
+    S: Shared + ?Sized,
+{
+    pub value: Option<S::RefMut<'a>>,
+    pub shared: &'a S,
+}
+
+impl<'a, S> ops::Deref for SharedGuardMut<'a, S>
+where
+    S: Shared,
+{
+    type Target = S::Value;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value.as_ref().expect("unlocked")
+    }
+}
+
+impl<'a, S> ops::DerefMut for SharedGuardMut<'a, S>
+where
+    S: Shared,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.value.as_deref_mut().expect("unlocked")
+    }
+}
+
+impl<'a, S> SharedGuardMut<'a, S>
+where
+    S: Shared + ?Sized,
+{
+    pub fn unlock(&mut self) {
+        self.value.take();
+    }
+
+    pub fn relock(&mut self) {
+        self.value = self.shared.lock_mut().value
+    }
 }
 
 mod local;

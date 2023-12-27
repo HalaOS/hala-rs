@@ -1,9 +1,4 @@
-use std::{
-    fmt::Debug,
-    future::Future,
-    ops::{Deref, DerefMut},
-    task::Context,
-};
+use std::{fmt::Debug, future::Future, task::Context};
 
 use std::{
     collections::HashMap,
@@ -12,34 +7,23 @@ use std::{
 };
 
 pub use futures::FutureExt;
+use shared::{AsyncShared, AsyncSharedGuardMut};
 
 /// Shared raw data between futures.
-pub struct SharedData<T, E> {
-    value: T,
+pub struct Condvar<E> {
     wakers: HashMap<E, Waker>,
 }
 
-impl<T, E> Default for SharedData<T, E>
-where
-    T: Default,
-{
+impl<E> Default for Condvar<E> {
     fn default() -> Self {
         Self {
-            value: Default::default(),
             wakers: Default::default(),
         }
     }
 }
 
-impl<T, E> SharedData<T, E> {
-    fn new(value: T) -> Self {
-        Self {
-            value: value.into(),
-            wakers: Default::default(),
-        }
-    }
-
-    fn add_listener(&mut self, event: E, waker: Waker)
+impl<E> Condvar<E> {
+    fn on(&mut self, event: E, waker: Waker)
     where
         E: Eq + Hash + Debug,
     {
@@ -69,34 +53,11 @@ impl<T, E> SharedData<T, E> {
         }
     }
 
-    /// Wakeup all listener.
-    pub fn wakeup_all(&mut self) {
+    /// Notify all registered event listeners
+    pub fn notify_any(&mut self) {
         for (_, waker) in self.wakers.drain() {
             waker.wake();
         }
-    }
-
-    /// Get shared value immutable reference.
-    pub fn value(&self) -> &T {
-        &self.value
-    }
-
-    /// Get shared value mutable reference.
-    pub fn value_mut(&mut self) -> &mut T {
-        &mut self.value
-    }
-}
-
-impl<T, E> Deref for SharedData<T, E> {
-    type Target = T;
-    fn deref(&self) -> &Self::Target {
-        &self.value
-    }
-}
-
-impl<T, E> DerefMut for SharedData<T, E> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.value
     }
 }
 
@@ -132,80 +93,81 @@ where
     }
 }
 
-impl<T, E, Raw> Mediator<Raw>
+impl<E, Raw> Mediator<Raw>
 where
-    T: Unpin + 'static,
     E: Eq + Clone + Unpin + Hash + Debug,
-    Raw: shared::AsyncShared<Value = SharedData<T, E>> + From<SharedData<T, E>> + Unpin + Clone,
+    Raw: shared::AsyncShared<Value = Condvar<E>> + Unpin + Clone,
 {
     /// Create new mediator with shared value.
-    pub fn new(value: T) -> Self {
+    pub fn new() -> Self
+    where
+        Raw: From<Condvar<E>>,
+    {
         Self {
-            raw: SharedData::new(value).into(),
+            raw: Condvar::default().into(),
             trace_id: None,
         }
     }
 
     /// Create new mediator instance with `trace_id`
-    pub fn new_with(value: T, trace_id: &'static str) -> Self {
+    pub fn new_with(trace_id: &'static str) -> Self
+    where
+        Raw: From<Condvar<E>>,
+    {
         Self {
-            raw: SharedData::new(value).into(),
+            raw: Condvar::default().into(),
             trace_id: Some(trace_id),
         }
     }
 
-    /// Acquires an immutable reference of `SharedData`.
-    ///
-    /// When this function returns, it will notify another locker `waiter`.
-    pub fn with<F, R>(&self, f: F) -> R
-    where
-        F: FnOnce(&SharedData<T, E>) -> R,
-    {
-        let raw = self.raw.lock();
-
-        let r = f(&raw);
-
-        r
-    }
-
-    /// Acquires a mutable reference of `SharedData`.
-    ///
-    /// When this function returns, it will notify another locker `waiter`.
-    pub fn with_mut<F, R>(&self, f: F) -> R
-    where
-        F: FnOnce(&mut SharedData<T, E>) -> R,
-    {
-        let mut raw = self.raw.lock_mut();
-
-        let r = f(&mut raw);
-
-        r
-    }
-
     /// Emit one event on.
-    pub fn notify(&self, event: E)
+    #[inline]
+    pub fn sync_notify(&self, event: E)
     where
         E: Eq + Hash + Debug,
     {
-        self.with_mut(|shared| shared.notify(event));
+        let mut raw = self.raw.lock_mut();
+
+        raw.notify(event);
+    }
+
+    pub async fn notify(&self, event: E)
+    where
+        E: Eq + Hash + Debug,
+    {
+        let mut raw = self.raw.lock_mut_wait().await;
+
+        raw.notify(event);
     }
 
     /// Emit all events
-    pub fn notify_all<Events: AsRef<[E]>>(&self, events: Events) {
-        self.with_mut(|shared| {
-            for event in events.as_ref() {
-                shared.notify(event.clone());
-            }
-        });
+    #[inline]
+    pub fn sync_notify_all<Events: AsRef<[E]>>(&self, events: Events) {
+        let mut raw = self.raw.lock_mut();
+
+        for event in events.as_ref() {
+            raw.notify(event.clone());
+        }
     }
 
-    pub fn event_wait<'a>(
+    #[inline]
+    pub async fn notify_all<Events: AsRef<[E]>>(&self, events: Events) {
+        let mut raw = self.raw.lock_mut_wait().await;
+
+        for event in events.as_ref() {
+            raw.notify(event.clone());
+        }
+    }
+
+    #[inline]
+    pub fn event_wait<'a, T>(
         &'a self,
-        lock_guard: <Raw as shared::Shared>::RefMut<'a>,
+        lock_guard: AsyncSharedGuardMut<'a, T>,
         event: E,
-    ) -> EventWait<'a, Raw, T, E>
+    ) -> EventWait<'a, Raw, E, T>
     where
         E: Unpin + Eq + Hash + Debug,
+        T: AsyncShared + Unpin,
     {
         EventWait {
             lock_guard: Some(lock_guard),
@@ -213,274 +175,135 @@ where
             mediator: self,
         }
     }
-
-    /// Create a future that wraps a function that returns a Poll.
-    ///
-    /// When this function returns [`Pending`](Poll::Pending), `Mediator` registers this function in the `event` waitlist.
-    ///
-    /// You can call [`notify`](Mediator::notify) or [`notify_all`](Mediator::notify) to wakeup this poll function again.
-    #[inline]
-    pub fn on_poll<F, R>(&self, event: E, f: F) -> OnEvent<Raw, E, F>
-    where
-        F: FnMut(&mut SharedData<T, E>, &mut Context<'_>) -> Poll<R> + Unpin,
-        T: Unpin + 'static,
-        E: Unpin + Eq + Hash + Debug,
-        R: Unpin,
-    {
-        log::trace!(target:self.trace_id.unwrap_or(""), "call on_fn {:?}", event);
-
-        OnEvent {
-            f: Some(f),
-            raw: self.raw.clone(),
-            event,
-            trace_id: self.trace_id,
-        }
-    }
 }
 
-pub struct EventWait<'a, Raw, T, E>
+pub struct EventWait<'a, Raw, E, T>
 where
-    Raw: shared::AsyncShared<Value = SharedData<T, E>> + From<SharedData<T, E>> + Unpin + Clone,
-    T: Unpin + 'static,
+    Raw: shared::AsyncShared<Value = Condvar<E>> + Unpin + Clone,
+
     E: Debug + Unpin,
+    T: AsyncShared + Unpin,
 {
-    lock_guard: Option<<Raw as shared::Shared>::RefMut<'a>>,
+    lock_guard: Option<AsyncSharedGuardMut<'a, T>>,
     event: Option<E>,
     mediator: &'a Mediator<Raw>,
 }
 
-impl<'a, Raw, T, E> Future for EventWait<'a, Raw, T, E>
+impl<'a, Raw, E, T> Future for EventWait<'a, Raw, E, T>
 where
-    Raw: shared::AsyncShared<Value = SharedData<T, E>> + From<SharedData<T, E>> + Unpin + Clone,
-    T: Unpin + 'static,
+    Raw: shared::AsyncShared<Value = Condvar<E>> + Unpin + Clone,
     E: Debug + 'static + Unpin + Clone + Eq + Hash,
+    T: AsyncShared + Unpin + 'static,
 {
-    type Output = <Raw as shared::Shared>::RefMut<'a>;
+    type Output = AsyncSharedGuardMut<'a, T>;
     fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         // first call this poll function .
-        if let Some(mut lock_guard) = self.lock_guard.take() {
-            lock_guard.add_listener(self.event.take().unwrap(), cx.waker().clone());
+        if let Some(event) = self.event.take() {
+            match Box::pin(self.mediator.raw.lock_mut_wait()).poll_unpin(cx) {
+                Poll::Ready(mut raw) => {
+                    self.lock_guard.as_mut().unwrap().unlock();
+
+                    raw.on(event, cx.waker().clone());
+                }
+                _ => {
+                    self.event = Some(event);
+                }
+            }
+
             return Poll::Pending;
         }
 
-        // Aquire lock again.
-        let raw = match Box::pin(self.mediator.raw.lock_mut_wait()).poll_unpin(cx) {
-            Poll::Ready(raw) => raw,
-            _ => {
-                return Poll::Pending;
-            }
-        };
-
-        Poll::Ready(raw)
-    }
-}
-
-/// Future create by [`on`](Mediator::on_fn)
-pub struct OnEvent<Raw, E, F>
-where
-    E: Debug,
-{
-    f: Option<F>,
-    raw: Raw,
-    event: E,
-    #[allow(unused)]
-    trace_id: Option<&'static str>,
-}
-
-impl<Raw, T, E, F, R> Future for OnEvent<Raw, E, F>
-where
-    Raw: shared::Shared<Value = SharedData<T, E>> + Unpin + Clone,
-    F: FnMut(&mut SharedData<T, E>, &mut Context<'_>) -> Poll<R> + Unpin,
-    T: Unpin,
-    E: Unpin + Eq + Hash + Clone,
-    R: Unpin,
-    E: Debug,
-{
-    type Output = R;
-
-    fn poll(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<Self::Output> {
-        let trace_id = self.trace_id.unwrap_or("");
-
-        // log::trace!(target: trace_id, "poll {:?}", self.event);
-
-        let poll = {
-            let raw = self.raw.clone();
-
-            let mut raw = match raw.try_lock_mut() {
-                Some(raw) => raw,
-                _ => {
+        {
+            match Box::pin(self.lock_guard.as_mut().unwrap().relock()).poll_unpin(cx) {
+                Poll::Pending => {
                     return Poll::Pending;
                 }
-            };
-
-            // log::trace!(target: trace_id, "poll {:?}, locked", self.event);
-
-            let mut f = self.f.take().unwrap();
-
-            match f(&mut raw, cx) {
-                Poll::Pending => {
-                    self.f = Some(f);
-
-                    log::trace!(target: trace_id,"register event listener, on={:?}",self.event);
-
-                    raw.add_listener(self.event.clone(), cx.waker().clone());
-
-                    Poll::Pending
-                }
-                poll => poll,
+                _ => {}
             }
-        };
+        }
 
-        poll
+        Poll::Ready(self.lock_guard.take().unwrap())
     }
 }
 
-/// Register event handle with async fn
-#[macro_export]
-macro_rules! on {
-    ($mediator: expr, $event: expr, $fut: expr) => {
-        $mediator.on_poll(Event::A, |mediator_cx, cx| {
-            use $crate::FutureExt;
-            Box::pin($fut(mediator_cx)).poll_unpin(cx)
-        })
-    };
-}
+pub type LocalMediator<E> = Mediator<shared::AsyncLocalShared<Condvar<E>>>;
 
-pub type LocalMediator<T, E> = Mediator<shared::AsyncLocalShared<SharedData<T, E>>>;
-
-pub type MutexMediator<T, E> = Mediator<shared::AsyncMutexShared<SharedData<T, E>>>;
+pub type MutexMediator<E> = Mediator<shared::AsyncMutexShared<Condvar<E>>>;
 
 #[cfg(test)]
 mod tests {
-    use std::task::Poll;
-
     use futures::{
-        executor::{block_on, LocalPool, ThreadPool},
+        executor::{LocalPool, ThreadPool},
         task::{LocalSpawnExt, SpawnExt},
-        FutureExt,
     };
+    use shared::{AsyncLocalShared, AsyncMutexShared, AsyncShared};
 
-    use crate::{LocalMediator, MutexMediator, SharedData};
-
-    #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
-    enum Event {
-        A,
-        B,
-    }
+    use crate::{LocalMediator, MutexMediator};
 
     #[test]
-    fn test_mediator() {
-        let mediator: MutexMediator<i32, Event> = MutexMediator::new(1);
+    fn test_local_mediator() {
+        let mut local_pool = LocalPool::new();
 
-        let thread_pool = ThreadPool::builder().pool_size(10).create().unwrap();
+        let mediator = LocalMediator::<i32>::new();
 
         let mediator_cloned = mediator.clone();
 
-        thread_pool.spawn_ok(async move {
-            mediator_cloned
-                .on_poll(Event::B, |mediator_cx, _| {
-                    if *mediator_cx.value() == 1 {
-                        *mediator_cx.value_mut() = 2;
-                        mediator_cx.notify(Event::A);
+        let shared = AsyncLocalShared::new(1);
 
-                        return Poll::Ready(());
-                    }
+        let shared_cloned = shared.clone();
 
-                    mediator_cx.notify(Event::A);
-
-                    return Poll::Pending;
-                })
-                .await
-        });
-
-        let mediator_cloned = mediator.clone();
-
-        let handle = thread_pool
-            .spawn_with_handle(async move {
-                mediator_cloned
-                    .on_poll(Event::A, |mediator_cx, _| {
-                        if *mediator_cx.value() == 1 {
-                            mediator_cx.notify(Event::B);
-                            return Poll::Pending;
-                        }
-
-                        return Poll::Ready(());
-                    })
-                    .await;
-            })
-            .unwrap();
-
-        block_on(handle);
-
-        assert_eq!(mediator.with(|data| data.value), 2);
-    }
-
-    #[test]
-    fn test_mediator_async() {
-        let mediator: LocalMediator<i32, Event> = LocalMediator::new(1);
-
-        async fn assign_2(cx: &mut SharedData<i32, Event>) {
-            *cx.value_mut() = 2;
-        }
-
-        let mediator_cloned = mediator.clone();
-
-        block_on(async move { on!(mediator_cloned, Event::A, assign_2).await });
-
-        assert_eq!(mediator.with(|value| value.value), 2);
-    }
-
-    #[test]
-    fn test_async_drop() {
-        // _ = pretty_env_logger::try_init_timed();
-        struct MockAsyncDrop {
-            fd: i32,
-            mediator: LocalMediator<i32, i32>,
-        }
-
-        impl Drop for MockAsyncDrop {
-            fn drop(&mut self) {
-                self.mediator.with_mut(|shared| {
-                    *shared.value_mut() = 2;
-                    shared.notify(self.fd);
-                })
-            }
-        }
-
-        let mediator = LocalMediator::new(0);
-
-        let mock = MockAsyncDrop {
-            fd: 2,
-            mediator: mediator.clone(),
-        };
-
-        let mut pool = LocalPool::new();
-
-        pool.spawner()
+        local_pool
+            .spawner()
             .spawn_local(async move {
-                let _mock = mock;
-                // drop mock instance.
+                let mut shared = shared_cloned.lock_mut_wait().await;
+
+                *shared = 2;
+
+                mediator_cloned.notify(1).await;
             })
             .unwrap();
 
-        async fn drop_fd(fd: i32) {
-            log::trace!("drop fd: {}", fd);
-        }
-
-        pool.run_until(mediator.on_poll(2, |shared, cx| {
-            if *shared.value() == 2 {
-                return Box::pin(drop_fd(2)).poll_unpin(cx);
+        local_pool.run_until(async move {
+            let mut shared = shared.lock_mut_wait().await;
+            if *shared != 2 {
+                shared = mediator.event_wait(shared, 1).await;
             }
 
-            return Poll::Pending;
-        }));
+            assert_eq!(*shared, 2);
+        });
     }
 
-    #[test]
-    fn test_event_wait() {
-        let mediator = LocalMediator::<i32, i32>::new(1);
+    #[futures_test::test]
+    async fn test_mutex_mediator() {
+        pretty_env_logger::init_timed();
+
+        let local_pool = ThreadPool::builder().pool_size(10).create().unwrap();
+
+        let mediator = MutexMediator::<i32>::new();
+
+        for _ in 0..100 {
+            let mediator_cloned = mediator.clone();
+
+            let shared = AsyncMutexShared::new(1);
+
+            let shared_cloned = shared.clone();
+
+            local_pool
+                .spawn(async move {
+                    let mut shared = shared_cloned.lock_mut_wait().await;
+
+                    *shared = 2;
+
+                    mediator_cloned.notify(1).await;
+                })
+                .unwrap();
+
+            let mut shared = shared.lock_mut_wait().await;
+            if *shared != 2 {
+                shared = mediator.event_wait(shared, 1).await;
+            }
+
+            assert_eq!(*shared, 2);
+        }
     }
 }

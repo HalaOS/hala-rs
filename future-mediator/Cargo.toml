@@ -20,7 +20,3 @@ pretty_env_logger = {workspace = true}
 
 [features]
 single-thread = []
-
-[[bench]]
-harness = false
-name = "mediator"
