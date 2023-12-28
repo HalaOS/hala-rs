@@ -10,6 +10,8 @@ use std::{
 };
 
 /// Shared data support local thread mode and `AsyncShared` trait.
+///
+#[derive(Debug)]
 pub struct AsyncMutexShared<T> {
     value: Arc<Mutex<T>>,
     pub(super) wakers: Arc<Mutex<VecDeque<Waker>>>,
@@ -39,6 +41,7 @@ impl<T> Clone for AsyncMutexShared<T> {
     }
 }
 
+#[derive(Debug)]
 pub struct AsyncMutexSharedRef<'a, T> {
     value_ref: Option<MutexGuard<'a, T>>,
     wakers: Arc<Mutex<VecDeque<Waker>>>,
@@ -55,12 +58,14 @@ impl<'a, T> ops::Deref for AsyncMutexSharedRef<'a, T> {
 impl<'a, T> Drop for AsyncMutexSharedRef<'a, T> {
     fn drop(&mut self) {
         drop(self.value_ref.take());
+
         if let Some(waker) = self.wakers.lock().unwrap().pop_front() {
             waker.wake();
         }
     }
 }
 
+#[derive(Debug)]
 pub struct AsyncMutexSharedRefMut<'a, T> {
     value_ref: Option<MutexGuard<'a, T>>,
     wakers: Arc<Mutex<VecDeque<Waker>>>,
@@ -90,11 +95,15 @@ impl<'a, T> Drop for AsyncMutexSharedRefMut<'a, T> {
     }
 }
 
+#[derive(Debug)]
 pub struct AsyncMutexSharedRefFuture<'a, T> {
     value: &'a AsyncMutexShared<T>,
 }
 
-impl<'a, T> Future for AsyncMutexSharedRefFuture<'a, T> {
+impl<'a, T> Future for AsyncMutexSharedRefFuture<'a, T>
+where
+    T: Unpin,
+{
     type Output = AsyncSharedGuard<'a, AsyncMutexShared<T>>;
     fn poll(
         self: std::pin::Pin<&mut Self>,
@@ -127,7 +136,10 @@ pub struct AsyncMutexSharedRefMutFuture<'a, T> {
     value: &'a AsyncMutexShared<T>,
 }
 
-impl<'a, T> Future for AsyncMutexSharedRefMutFuture<'a, T> {
+impl<'a, T> Future for AsyncMutexSharedRefMutFuture<'a, T>
+where
+    T: Unpin,
+{
     type Output = AsyncSharedGuardMut<'a, AsyncMutexShared<T>>;
     fn poll(
         self: std::pin::Pin<&mut Self>,
@@ -156,7 +168,10 @@ impl<'a, T> Future for AsyncMutexSharedRefMutFuture<'a, T> {
     }
 }
 
-impl<T> Shared for AsyncMutexShared<T> {
+impl<T> Shared for AsyncMutexShared<T>
+where
+    T: Unpin,
+{
     type Value = T;
 
     type Ref<'a> = AsyncMutexSharedRef<'a,T>
@@ -213,7 +228,10 @@ impl<T> Shared for AsyncMutexShared<T> {
     }
 }
 
-impl<T> AsyncShared for AsyncMutexShared<T> {
+impl<T> AsyncShared for AsyncMutexShared<T>
+where
+    T: Unpin,
+{
     type RefFuture<'a> = AsyncMutexSharedRefFuture<'a,T>
     where
         Self: 'a;

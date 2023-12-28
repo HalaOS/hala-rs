@@ -1,5 +1,5 @@
 [workspace]
-members = ["future-mediator", "shared", "hala-io-driver", "hala-net", "hala-test", "timewheel", "hala-io-util", "hala-rproxy"]
+members = ["hala-io-driver", "hala-net", "hala-test", "hala-io-util", "hala-rproxy", "external/*"]
 resolver = "2"
 
 #
@@ -16,6 +16,7 @@ bitmask-enum = "2.2.3"
 bytes = "^1.5"
 clap = {version = "^4.4", features = ["derive"]}
 core2 = "^0.4.0"
+dashmap = "5.5.3"
 divan = "^0.1"
 futures = {version = "^0.3.29", features = ["executor", "thread-pool"]}
 futures-test = "^0.3"
@@ -31,11 +32,15 @@ serde_json = {version = "^1.0"}
 thiserror = "^1.0.50"
 thiserror-no-std = "^2.0"
 
-future-mediator = {path = "./future-mediator", default = false, version = "^0.1"}
+# external crates
+event-map = {path = "./external/event-map", default = false, version = "^0.1"}
+future-mediator = {path = "./external/future-mediator", default = false, version = "^0.1"}
+shared = {path = "./external/shared", default = false, version = "^0.1"}
+timewheel = {path = "./external/timewheel", version = "^0.1"}
+
+# hala-io subcrates
 hala-io-driver = {path = "./hala-io-driver", default = false, version = "^0.1"}
 hala-io-util = {path = "./hala-io-util", version = "^0.1"}
 hala-net = {path = "./hala-net", default = false, version = "^0.1"}
 hala-rproxy = {path = "./hala-rproxy", version = "^0.1"}
 hala-test = {path = "./hala-test", default = false, version = "^0.1"}
-shared = {path = "./shared", default = false, version = "^0.1"}
-timewheel = {path = "./timewheel", version = "^0.1"}

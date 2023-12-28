@@ -3,14 +3,14 @@ use std::{future::Future, ops};
 use crate::Shared;
 
 /// `Shared` extension trait for asynchronization program.
-pub trait AsyncShared: Shared {
+pub trait AsyncShared: Shared + Unpin {
     /// Future type created by [`lock_wait`](AsyncShared::lock_wait)
-    type RefFuture<'a>: Future<Output = AsyncSharedGuard<'a, Self>>
+    type RefFuture<'a>: Future<Output = AsyncSharedGuard<'a, Self>> + Unpin
     where
         Self: 'a;
 
     /// Future type created by [`lock_mut_wait`](AsyncShared::lock_wait)
-    type RefMutFuture<'a>: Future<Output = AsyncSharedGuardMut<'a, Self>>
+    type RefMutFuture<'a>: Future<Output = AsyncSharedGuardMut<'a, Self>> + Unpin
     where
         Self: 'a;
 
@@ -23,13 +23,13 @@ pub trait AsyncShared: Shared {
 
 pub struct AsyncSharedGuard<'a, S>
 where
-    S: AsyncShared + ?Sized,
+    S: AsyncShared + ?Sized + Unpin,
 {
     pub value: Option<S::Ref<'a>>,
     pub shared: &'a S,
 }
 
-unsafe impl<'a, S> Send for AsyncSharedGuard<'a, S> where S: AsyncShared + ?Sized {}
+unsafe impl<'a, S> Send for AsyncSharedGuard<'a, S> where S: AsyncShared + Unpin + ?Sized {}
 
 impl<'a, S> ops::Deref for AsyncSharedGuard<'a, S>
 where
@@ -44,7 +44,7 @@ where
 
 impl<'a, S> AsyncSharedGuard<'a, S>
 where
-    S: AsyncShared + ?Sized,
+    S: AsyncShared + ?Sized + Unpin,
 {
     pub fn unlock(&mut self) {
         self.value.take();
@@ -58,17 +58,17 @@ where
 #[derive(Debug)]
 pub struct AsyncSharedGuardMut<'a, S>
 where
-    S: AsyncShared + ?Sized,
+    S: AsyncShared + ?Sized + Unpin,
 {
     pub value: Option<S::RefMut<'a>>,
     pub shared: &'a S,
 }
 
-unsafe impl<'a, S> Send for AsyncSharedGuardMut<'a, S> where S: AsyncShared + ?Sized {}
+unsafe impl<'a, S> Send for AsyncSharedGuardMut<'a, S> where S: AsyncShared + ?Sized + Unpin {}
 
 impl<'a, S> ops::Deref for AsyncSharedGuardMut<'a, S>
 where
-    S: AsyncShared,
+    S: AsyncShared + Unpin,
 {
     type Target = S::Value;
 
@@ -79,7 +79,7 @@ where
 
 impl<'a, S> ops::DerefMut for AsyncSharedGuardMut<'a, S>
 where
-    S: AsyncShared,
+    S: AsyncShared + Unpin,
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.value.as_deref_mut().expect("unlocked")
@@ -88,7 +88,7 @@ where
 
 impl<'a, S> AsyncSharedGuardMut<'a, S>
 where
-    S: AsyncShared + ?Sized,
+    S: AsyncShared + ?Sized + Unpin,
 {
     pub fn unlock(&mut self) {
         self.value.take();

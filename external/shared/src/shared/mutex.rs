@@ -47,7 +47,10 @@ impl<T> MutexShared<T> {
     }
 }
 
-impl<T> Shared for MutexShared<T> {
+impl<T> Shared for MutexShared<T>
+where
+    T: Unpin,
+{
     type Value = T;
 
     type Ref<'a> = std::sync::MutexGuard<'a,T>

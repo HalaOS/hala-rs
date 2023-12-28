@@ -2,7 +2,7 @@
 /// or protected by mutual exclusion.
 pub trait Shared {
     /// The real type of this shared value.
-    type Value;
+    type Value: Unpin;
 
     /// The immutable reference type of this shared value.
     type Ref<'a>: ops::Deref<Target = Self::Value> + Unpin

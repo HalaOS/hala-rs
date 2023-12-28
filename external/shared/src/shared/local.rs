@@ -41,7 +41,10 @@ impl<T> ops::Deref for LocalShared<T> {
     }
 }
 
-impl<T> Shared for LocalShared<T> {
+impl<T> Shared for LocalShared<T>
+where
+    T: Unpin,
+{
     type Value = T;
 
     type Ref<'a> = std::cell::Ref<'a,T>

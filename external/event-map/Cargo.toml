@@ -1,0 +1,21 @@
+[package]
+description = "A waitable mediator map for any events"
+documentation = "https://docs.rs/event-map"
+edition.workspace = true
+license = "MIT"
+name = "event-map"
+repository.workspace = true
+version.workspace = true
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+dashmap = {workspace = true}
+log = {workspace = true}
+shared = {workspace = true}
+thiserror = {workspace = true}
+
+[dev-dependencies]
+futures = {workspace = true}
+futures-test = {workspace = true}
+pretty_env_logger = {workspace = true}

@@ -91,7 +91,10 @@ pub struct AsyncLocalSharedRefFuture<'a, T> {
     value: &'a AsyncLocalShared<T>,
 }
 
-impl<'a, T> Future for AsyncLocalSharedRefFuture<'a, T> {
+impl<'a, T> Future for AsyncLocalSharedRefFuture<'a, T>
+where
+    T: Unpin,
+{
     type Output = AsyncSharedGuard<'a, AsyncLocalShared<T>>;
     fn poll(
         self: std::pin::Pin<&mut Self>,
@@ -113,7 +116,10 @@ pub struct AsyncLocalSharedRefMutFuture<'a, T> {
     value: &'a AsyncLocalShared<T>,
 }
 
-impl<'a, T> Future for AsyncLocalSharedRefMutFuture<'a, T> {
+impl<'a, T> Future for AsyncLocalSharedRefMutFuture<'a, T>
+where
+    T: Unpin,
+{
     type Output = AsyncSharedGuardMut<'a, AsyncLocalShared<T>>;
     fn poll(
         self: std::pin::Pin<&mut Self>,
@@ -131,7 +137,10 @@ impl<'a, T> Future for AsyncLocalSharedRefMutFuture<'a, T> {
     }
 }
 
-impl<T> Shared for AsyncLocalShared<T> {
+impl<T> Shared for AsyncLocalShared<T>
+where
+    T: Unpin,
+{
     type Value = T;
 
     type Ref<'a> = AsyncLocalSharedRef<'a,T>
@@ -189,7 +198,10 @@ impl<T> Shared for AsyncLocalShared<T> {
     }
 }
 
-impl<T> AsyncShared for AsyncLocalShared<T> {
+impl<T> AsyncShared for AsyncLocalShared<T>
+where
+    T: Unpin,
+{
     type RefFuture<'a> = AsyncLocalSharedRefFuture<'a,T>
     where
         Self: 'a;

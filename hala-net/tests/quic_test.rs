@@ -119,7 +119,7 @@ async fn create_listener(ports: i32) -> (QuicListener, Vec<SocketAddr>) {
 #[hala_test::test(local_io_test)]
 async fn test_async_quic() {
     _ = pretty_env_logger::try_init_timed();
-    let (mut listener, laddrs) = create_listener(1).await;
+    let (mut listener, laddrs) = create_listener(10).await;
 
     local_io_spawn(async move {
         let mut connector = QuicConnector::bind("127.0.0.1:0", config(false)).unwrap();
