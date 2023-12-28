@@ -2,11 +2,11 @@ use std::{
     fmt::Debug,
     future::Future,
     io,
-    pin::Pin,
     task::{Context, Poll},
     time::Duration,
 };
 
+use futures::{select, FutureExt};
 use hala_io_driver::{Cmd, Description, Driver, Handle, Interest, OpenFlags};
 
 use crate::{get_driver, get_poller};
@@ -96,127 +96,6 @@ impl Drop for Sleep {
     }
 }
 
-pub struct Timeout<Fut> {
-    fut: Pin<Box<Fut>>,
-    fd: Option<Handle>,
-    driver: Driver,
-    expired: Duration,
-    poller: Handle,
-}
-
-impl<Fut> Timeout<Fut> {
-    pub fn new_with(fut: Fut, poller: Handle, expired: Duration) -> io::Result<Self> {
-        let driver = get_driver()?;
-
-        Ok(Self {
-            fut: Box::pin(fut),
-            fd: None,
-            driver,
-            expired,
-            poller,
-        })
-    }
-}
-
-impl<'a, Fut, R> Future for Timeout<Fut>
-where
-    Fut: Future<Output = io::Result<R>> + 'a,
-    R: Debug,
-{
-    type Output = io::Result<R>;
-
-    fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        // first time, create timeout fd
-        if self.fd.is_none() {
-            let fd = match self
-                .driver
-                .fd_open(Description::Timeout, OpenFlags::Duration(self.expired))
-            {
-                Err(err) => return Poll::Ready(Err(err)),
-                Ok(fd) => fd,
-            };
-
-            self.fd = Some(fd);
-
-            match self.driver.fd_cntl(
-                self.poller,
-                Cmd::Register {
-                    source: fd,
-                    interests: Interest::Readable,
-                },
-            ) {
-                Err(err) => return Poll::Ready(Err(err)),
-                _ => {}
-            }
-
-            log::trace!("create timeout {:?}", fd);
-        }
-
-        // try check status of timeout fd
-        match self
-            .driver
-            .fd_cntl(self.fd.unwrap(), Cmd::Timeout(cx.waker().clone()))
-        {
-            Ok(resp) => match resp.try_into_timeout() {
-                Ok(status) => {
-                    if status {
-                        log::trace!(
-                            "{:?} timeout expired={:?}",
-                            self.fd.unwrap().token,
-                            self.expired
-                        );
-                        return Poll::Ready(Err(io::Error::new(
-                            io::ErrorKind::TimedOut,
-                            format!("async io timeout={:?}", self.expired),
-                        )));
-                    }
-                }
-
-                Err(err) => {
-                    log::trace!("{:?} timeout err={}", self.fd.unwrap().token, err);
-                    return Poll::Ready(Err(err));
-                }
-            },
-            Err(err) => {
-                log::trace!("{:?} timeout err={}", self.fd.unwrap().token, err);
-                return Poll::Ready(Err(err));
-            }
-        }
-
-        // try poll fut once
-        match self.fut.as_mut().poll(cx) {
-            Poll::Ready(r) => {
-                log::trace!(
-                    "{:?} timeout, inner_future_poll=ready",
-                    self.fd.unwrap().token,
-                );
-                return Poll::Ready(r);
-            }
-            _ => {
-                log::trace!(
-                    "{:?} timeout, inner_future_poll=pending, duration={:?}",
-                    self.fd.unwrap().token,
-                    self.expired
-                );
-
-                return Poll::Pending;
-            }
-        }
-    }
-}
-
-impl<Fut> Drop for Timeout<Fut> {
-    fn drop(&mut self) {
-        if let Some(fd) = self.fd.take() {
-            self.driver
-                .fd_cntl(self.poller, Cmd::Deregister(fd))
-                .unwrap();
-
-            self.driver.fd_close(fd).unwrap();
-        }
-    }
-}
-
 /// Add timeout feature for exists `Fut`
 pub async fn timeout<'a, Fut, R>(fut: Fut, expired: Option<Duration>) -> io::Result<R>
 where
@@ -238,7 +117,14 @@ where
 {
     if let Some(expired) = expired {
         if !expired.is_zero() {
-            Timeout::new_with(fut, poller, expired)?.await
+            select! {
+                _ = sleep_with(expired, poller).fuse() => {
+                    return Err(io::Error::new(io::ErrorKind::TimedOut, "timeout expired, duration={expired}",));
+                }
+                r = fut.fuse() => {
+                    return r
+                }
+            }
         } else {
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,

@@ -147,6 +147,8 @@ impl QuicConnState {
         log::trace!("{:?} locked conn_state", event);
 
         loop {
+            log::trace!("{:?} loop", event);
+
             if conn_state.quiche_conn.is_closed() {
                 handle_close(&self.mediator).await;
 
@@ -167,8 +169,6 @@ impl QuicConnState {
                     return Ok((recv_size, send_info));
                 }
                 Err(quiche::Error::Done) => {
-                    log::trace!("{:?} done ", event);
-
                     if conn_state.quiche_conn.is_closed() {
                         handle_close(&self.mediator).await;
 
@@ -179,6 +179,8 @@ impl QuicConnState {
                     }
 
                     let timeout = conn_state.quiche_conn.timeout();
+
+                    log::trace!("{:?} done with timeout={:?}", event, timeout);
 
                     conn_state = match hala_io_util::timeout_with(
                         async {
@@ -194,7 +196,10 @@ impl QuicConnState {
                     )
                     .await
                     {
-                        Ok(conn_state) => conn_state,
+                        Ok(conn_state) => {
+                            log::trace!("{:?} event_wait ready,{:?}", event, conn_state);
+                            conn_state
+                        }
                         Err(err) if err.kind() == io::ErrorKind::TimedOut => {
                             conn_state = self.conn_state.lock_mut_wait().await;
                             conn_state.quiche_conn.on_timeout();

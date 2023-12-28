@@ -1,3 +1,5 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::{fmt::Debug, future::Future, task::Context};
 
 use std::{
@@ -12,7 +14,7 @@ use shared::{AsyncShared, AsyncSharedGuardMut};
 
 /// Shared raw data between futures.
 pub struct Condvar<E> {
-    wakers: HashMap<E, Waker>,
+    wakers: HashMap<E, (Waker, Arc<AtomicBool>)>,
 }
 
 impl<E> Default for Condvar<E> {
@@ -24,11 +26,11 @@ impl<E> Default for Condvar<E> {
 }
 
 impl<E> Condvar<E> {
-    fn on(&mut self, event: E, waker: Waker)
+    fn on(&mut self, event: E, waker: Waker, is_on: Arc<AtomicBool>)
     where
         E: Eq + Hash + Debug,
     {
-        self.wakers.insert(event, waker);
+        self.wakers.insert(event, (waker, is_on));
     }
 
     /// Emit once `event` on
@@ -36,8 +38,9 @@ impl<E> Condvar<E> {
     where
         E: Eq + Hash + Debug,
     {
-        if let Some(waker) = self.wakers.remove(&event) {
+        if let Some((waker, is_on)) = self.wakers.remove(&event) {
             log::trace!("notify event={:?}, wakeup=true", event);
+            is_on.store(true, Ordering::SeqCst);
             waker.wake();
         } else {
             log::trace!("notify event={:?}, wakeup=false", event);
@@ -56,7 +59,8 @@ impl<E> Condvar<E> {
 
     /// Notify all registered event listeners
     pub fn notify_any(&mut self) {
-        for (_, waker) in self.wakers.drain() {
+        for (_, (waker, is_on)) in self.wakers.drain() {
+            is_on.store(true, Ordering::SeqCst);
             waker.wake();
         }
     }
@@ -185,6 +189,7 @@ where
             lock_guard: Some(lock_guard),
             event: Some(event),
             mediator: self,
+            is_on: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -199,6 +204,7 @@ where
     lock_guard: Option<AsyncSharedGuardMut<'a, T>>,
     event: Option<E>,
     mediator: &'a Mediator<Raw>,
+    is_on: Arc<AtomicBool>,
 }
 
 impl<'a, Raw, E, T> Future for EventWait<'a, Raw, E, T>
@@ -215,13 +221,17 @@ where
                 Poll::Ready(mut raw) => {
                     self.lock_guard.as_mut().unwrap().unlock();
 
-                    raw.on(event, cx.waker().clone());
+                    raw.on(event, cx.waker().clone(), self.is_on.clone());
                 }
                 _ => {
                     self.event = Some(event);
                 }
             }
 
+            return Poll::Pending;
+        }
+
+        if !self.is_on.load(Ordering::SeqCst) {
             return Poll::Pending;
         }
 
