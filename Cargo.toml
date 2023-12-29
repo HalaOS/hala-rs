@@ -13,6 +13,7 @@ version = "0.1.2"
 anyhow = "^1"
 async-recursion = "1.0.5"
 bitmask-enum = "2.2.3"
+boxcar = "^0.2.4"
 bytes = "^1.5"
 clap = {version = "^4.4", features = ["derive"]}
 core2 = "^0.4.0"
@@ -35,6 +36,7 @@ thiserror-no-std = "^2.0"
 # external crates
 event-map = {path = "./external/event-map", default = false, version = "^0.1"}
 future-mediator = {path = "./external/future-mediator", default = false, version = "^0.1"}
+hashed-timer = {path = "./external/hashed-timer", version = "^0.1"}
 shared = {path = "./external/shared", default = false, version = "^0.1"}
 timewheel = {path = "./external/timewheel", version = "^0.1"}
 
