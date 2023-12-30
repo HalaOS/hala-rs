@@ -68,12 +68,12 @@ impl<T> HashedTimeWheel<T> {
 
     /// Forward to next tick, and returns timeout timers.
     pub fn next_tick(&self) -> Option<Vec<T>> {
-        let instant_duration = Instant::now() - self.start_instant;
-
-        let ticks = (instant_duration.as_micros() / self.tick_duration) as u64;
-
         loop {
-            let current = self.ticks.load(Ordering::SeqCst);
+            let current = self.ticks.load(Ordering::Acquire);
+
+            let instant_duration = Instant::now() - self.start_instant;
+
+            let ticks = (instant_duration.as_micros() / self.tick_duration) as u64;
 
             assert!(current <= ticks);
 
@@ -105,7 +105,10 @@ impl<T> HashedTimeWheel<T> {
 #[cfg(test)]
 mod tests {
     use std::{
-        sync::{Arc, Barrier},
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            Arc, Barrier,
+        },
         thread::sleep,
         time::Duration,
     };
@@ -142,6 +145,30 @@ mod tests {
         }
 
         assert_eq!(time_wheel.timers() as usize, threads * threads);
+
+        let mut handles = vec![];
+
+        let counter = Arc::new(AtomicU64::new(0));
+
+        for _ in 0..threads {
+            let time_wheel = time_wheel.clone();
+
+            let counter = counter.clone();
+
+            handles.push(std::thread::spawn(move || loop {
+                if let Some(timers) = time_wheel.next_tick() {
+                    counter.fetch_add(timers.len() as u64, Ordering::SeqCst);
+                }
+
+                if counter.load(Ordering::SeqCst) == (threads * threads) as u64 {
+                    break;
+                }
+            }))
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
     }
 
     #[test]
