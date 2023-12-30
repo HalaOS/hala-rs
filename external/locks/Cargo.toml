@@ -1,0 +1,11 @@
+[package]
+description = "Rust lockable object facade library"
+documentation = "https://docs.rs/locks"
+edition.workspace = true
+license = "MIT"
+name = "locks"
+repository.workspace = true
+rust-version = "1.75"
+version.workspace = true
+[dependencies]
+dashmap = {workspace = true}
