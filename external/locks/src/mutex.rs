@@ -3,12 +3,12 @@ use std::sync::TryLockError;
 use super::*;
 
 /// The type extend std [`Mutex`](std::sync::Mutex) type to support the `Locker`,`WaitableLocker` traits.
-pub struct Mutex<T: ?Sized> {
+pub struct WaitableMutex<T: ?Sized> {
     wakers: Arc<lockfree::Queue<Waker>>,
     std_mutex: std::sync::Mutex<T>,
 }
 
-impl<T> Mutex<T> {
+impl<T> WaitableMutex<T> {
     /// Creates a new mutex in an unlocked state ready for use.
     pub fn new(t: T) -> Self {
         Self {
@@ -18,7 +18,7 @@ impl<T> Mutex<T> {
     }
 }
 
-impl<T> Locker for Mutex<T>
+impl<T> Locker for WaitableMutex<T>
 where
     T: Unpin,
 {
@@ -53,7 +53,7 @@ where
     }
 }
 
-impl<T> WaitableLocker for Mutex<T>
+impl<T> WaitableLocker for WaitableMutex<T>
 where
     T: Unpin,
 {
@@ -77,7 +77,7 @@ where
 
 pub struct MutexWaitableLockerGuard<'a, T: ?Sized + 'a> {
     std_guard: Option<std::sync::MutexGuard<'a, T>>,
-    mutex: &'a Mutex<T>,
+    mutex: &'a WaitableMutex<T>,
 }
 
 impl<'a, T: ?Sized + 'a> Drop for MutexWaitableLockerGuard<'a, T> {
@@ -141,7 +141,7 @@ impl<'a, T> WaitableLockerGuard<'a, T> for MutexWaitableLockerGuard<'a, T>
 where
     T: Unpin + 'a,
 {
-    type Locker = Mutex<T>;
+    type Locker = WaitableMutex<T>;
 
     fn inner(&self) -> &'a Self::Locker {
         self.mutex
