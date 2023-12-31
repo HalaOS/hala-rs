@@ -1,16 +1,22 @@
-use std::ops;
+use std::{
+    cell::UnsafeCell,
+    ops,
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 use crate::{Locker, LockerGuard};
 
 /// Spin mutex implementation with [`AtomicBool`]
 pub struct SpinMutex<T> {
-    mutex: parking_lot::Mutex<T>,
+    flag: AtomicBool,
+    data: UnsafeCell<T>,
 }
 
 impl<T: ?Sized + Default> Default for SpinMutex<T> {
     fn default() -> Self {
         Self {
-            mutex: Default::default(),
+            flag: Default::default(),
+            data: Default::default(),
         }
     }
 }
@@ -25,8 +31,16 @@ impl<T> SpinMutex<T> {
     /// Creates a new `SpinMutex` in an unlocked state ready for use.
     pub fn new(t: T) -> Self {
         SpinMutex {
-            mutex: parking_lot::Mutex::new(t),
+            flag: Default::default(),
+            data: UnsafeCell::new(t),
         }
+    }
+}
+
+impl<T> SpinMutex<T> {
+    #[cold]
+    fn is_locked(&self) -> bool {
+        self.flag.load(Ordering::Relaxed)
     }
 }
 
@@ -40,25 +54,25 @@ impl<T> Locker for SpinMutex<T> {
 
     #[inline(always)]
     fn sync_lock(&self) -> Self::Guard<'_> {
-        let mut guard = SpinMutexGuard {
-            locker: self,
-            guard: None,
-        };
+        while self
+            .flag
+            .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            while self.is_locked() {}
+        }
 
-        guard.sync_relock();
-
-        guard
+        SpinMutexGuard { locker: self }
     }
 
     #[inline(always)]
     fn try_sync_lock(&self) -> Option<Self::Guard<'_>> {
-        let mut guard = SpinMutexGuard {
-            locker: self,
-            guard: None,
-        };
-
-        if guard.try_sync_relock() {
-            Some(guard)
+        if self
+            .flag
+            .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+        {
+            Some(SpinMutexGuard { locker: self })
         } else {
             None
         }
@@ -67,7 +81,6 @@ impl<T> Locker for SpinMutex<T> {
 
 pub struct SpinMutexGuard<'a, T> {
     locker: &'a SpinMutex<T>,
-    guard: Option<parking_lot::MutexGuard<'a, T>>,
 }
 
 impl<'a, T> Drop for SpinMutexGuard<'a, T> {
@@ -78,39 +91,28 @@ impl<'a, T> Drop for SpinMutexGuard<'a, T> {
 
 impl<'a, T> ops::Deref for SpinMutexGuard<'a, T> {
     type Target = T;
+
+    #[inline]
     fn deref(&self) -> &Self::Target {
-        self.guard.as_deref().unwrap()
+        unsafe { &*self.locker.data.get() }
     }
 }
 
 impl<'a, T> ops::DerefMut for SpinMutexGuard<'a, T> {
+    #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.guard.as_deref_mut().unwrap()
+        unsafe { &mut *self.locker.data.get() }
     }
 }
 
 impl<'a, T> LockerGuard<'a, T> for SpinMutexGuard<'a, T> {
     #[inline(always)]
     fn unlock(&mut self) {
-        if let Some(guard) = self.guard.take() {
-            drop(guard);
-        }
-    }
-
-    #[inline(always)]
-    fn sync_relock(&mut self) {
-        self.guard = Some(self.locker.mutex.lock())
-    }
-
-    #[inline(always)]
-    fn try_sync_relock(&mut self) -> bool {
-        match self.locker.mutex.try_lock() {
-            None => false,
-            guard => {
-                self.guard = guard;
-                true
-            }
-        }
+        _ = self
+            .locker
+            .flag
+            .compare_exchange(true, false, Ordering::Release, Ordering::Relaxed)
+            .is_ok();
     }
 }
 

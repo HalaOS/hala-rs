@@ -110,29 +110,6 @@ impl<'a, T: ?Sized + 'a> LockerGuard<'a, T> for MutexWaitableLockerGuard<'a, T> 
             }
         }
     }
-
-    #[inline(always)]
-    fn sync_relock(&mut self) {
-        let std_guard = match self.mutex.std_mutex.lock() {
-            Ok(guard) => guard,
-            Err(err) => err.into_inner(),
-        };
-
-        self.std_guard = Some(std_guard);
-    }
-
-    #[inline(always)]
-    fn try_sync_relock(&mut self) -> bool {
-        let std_guard = match self.mutex.std_mutex.try_lock() {
-            Ok(guard) => guard,
-            // Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
-            Err(_) => return false,
-        };
-
-        self.std_guard = Some(std_guard);
-
-        return true;
-    }
 }
 
 impl<'a, T> WaitableLockerGuard<'a, T> for MutexWaitableLockerGuard<'a, T> {

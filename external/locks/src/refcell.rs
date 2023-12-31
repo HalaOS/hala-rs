@@ -12,7 +12,6 @@ impl<T> Locker for std::cell::RefCell<T> {
 
     fn sync_lock(&self) -> Self::Guard<'_> {
         RefcellGuard {
-            locker: self,
             std_guard: Some(self.borrow_mut()),
         }
     }
@@ -20,7 +19,6 @@ impl<T> Locker for std::cell::RefCell<T> {
     fn try_sync_lock(&self) -> Option<Self::Guard<'_>> {
         match self.try_borrow_mut() {
             Ok(guard) => Some(RefcellGuard {
-                locker: self,
                 std_guard: Some(guard),
             }),
             _ => None,
@@ -29,7 +27,6 @@ impl<T> Locker for std::cell::RefCell<T> {
 }
 
 pub struct RefcellGuard<'a, T> {
-    locker: &'a std::cell::RefCell<T>,
     std_guard: Option<std::cell::RefMut<'a, T>>,
 }
 
@@ -49,19 +46,5 @@ impl<'a, T> ops::DerefMut for RefcellGuard<'a, T> {
 impl<'a, T> LockerGuard<'a, T> for RefcellGuard<'a, T> {
     fn unlock(&mut self) {
         self.std_guard.take();
-    }
-
-    fn sync_relock(&mut self) {
-        self.std_guard = Some(self.locker.borrow_mut())
-    }
-
-    fn try_sync_relock(&mut self) -> bool {
-        match self.locker.try_borrow_mut() {
-            Ok(guard) => {
-                self.std_guard = Some(guard);
-                true
-            }
-            _ => false,
-        }
     }
 }

@@ -32,28 +32,22 @@ impl<T> Locker for WaitableSpinMutex<T> {
 
     #[inline(always)]
     fn sync_lock(&self) -> Self::Guard<'_> {
-        let mut guard = WaitableSpinMutexGuard {
-            guard: None,
+        let guard = self.spin_mutex.sync_lock();
+
+        WaitableSpinMutexGuard {
+            guard: Some(guard),
             mutex: self,
-        };
-
-        guard.sync_relock();
-
-        guard
+        }
     }
 
     #[inline(always)]
     fn try_sync_lock(&self) -> Option<Self::Guard<'_>> {
-        let mut guard = WaitableSpinMutexGuard {
-            guard: None,
-            mutex: self,
-        };
-
-        if guard.try_sync_relock() {
-            Some(guard)
-        } else {
-            None
-        }
+        self.spin_mutex
+            .try_sync_lock()
+            .map(|guard| WaitableSpinMutexGuard {
+                guard: Some(guard),
+                mutex: self,
+            })
     }
 }
 
@@ -64,21 +58,15 @@ impl<T> WaitableLocker for WaitableSpinMutex<T> {
         Self::Data: 'a;
 
     #[inline(always)]
-    fn try_lock_with_context(&self, _cx: &mut Context<'_>) -> Option<Self::WaitableGuard<'_>> {
-        // let _wakers = self.wakers.sync_lock();
+    fn try_lock_with_context(&self, cx: &mut Context<'_>) -> Option<Self::WaitableGuard<'_>> {
+        let mut wakers = self.wakers.sync_lock();
 
-        // match self.try_sync_lock() {
-        //     Some(guard) => Some(guard),
-        //     None => {
-        //         wakers.push_back(cx.waker().clone());
+        match self.try_sync_lock() {
+            Some(guard) => Some(guard),
+            None => {
+                wakers.push_back(cx.waker().clone());
 
-        //         None
-        //     }
-        // }
-
-        loop {
-            if let Some(guard) = self.try_sync_lock() {
-                return Some(guard);
+                None
             }
         }
     }
@@ -120,22 +108,6 @@ impl<'a, T: 'a> LockerGuard<'a, T> for WaitableSpinMutexGuard<'a, T> {
         }
 
         log::trace!("{:?} release lock", std::thread::current().id(),);
-    }
-
-    #[inline(always)]
-    fn sync_relock(&mut self) {
-        self.guard = Some(self.mutex.spin_mutex.sync_lock());
-    }
-
-    #[inline(always)]
-    fn try_sync_relock(&mut self) -> bool {
-        match self.mutex.spin_mutex.try_sync_lock() {
-            Some(guard) => {
-                self.guard = Some(guard);
-                true
-            }
-            _ => false,
-        }
     }
 }
 
