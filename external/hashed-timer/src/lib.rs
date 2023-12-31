@@ -118,6 +118,8 @@ mod tests {
     #[test]
     fn test_add_timers() {
         let threads = 10;
+        let loops = 1000;
+
         let time_wheel = HashedTimeWheel::<i32>::new(Duration::from_millis(100));
 
         let barrier = Arc::new(Barrier::new(threads));
@@ -132,7 +134,7 @@ mod tests {
             handles.push(std::thread::spawn(move || {
                 barrier.wait();
 
-                for i in 0..threads {
+                for i in 0..loops {
                     time_wheel
                         .new_timer(i as i32, Duration::from_secs(1))
                         .unwrap();
@@ -144,7 +146,7 @@ mod tests {
             handle.join().unwrap();
         }
 
-        assert_eq!(time_wheel.timers() as usize, threads * threads);
+        assert_eq!(time_wheel.timers() as usize, threads * loops);
 
         let mut handles = vec![];
 
@@ -160,7 +162,7 @@ mod tests {
                     counter.fetch_add(timers.len() as u64, Ordering::SeqCst);
                 }
 
-                if counter.load(Ordering::SeqCst) == (threads * threads) as u64 {
+                if counter.load(Ordering::SeqCst) == (threads * loops) as u64 {
                     break;
                 }
             }))

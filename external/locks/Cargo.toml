@@ -7,5 +7,27 @@ name = "locks"
 repository.workspace = true
 rust-version = "1.75"
 version.workspace = true
+
 [dependencies]
 dashmap = {workspace = true}
+log = {workspace = true}
+
+[dev-dependencies]
+divan = {workspace = true}
+futures = {workspace = true}
+futures-test = {workspace = true}
+pretty_env_logger = {workspace = true}
+
+[features]
+
+[[bench]]
+harness = false
+name = "spin_lock"
+
+[[bench]]
+harness = false
+name = "mutex_lock"
+
+[[bench]]
+harness = false
+name = "refcell_lock"

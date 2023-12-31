@@ -13,7 +13,7 @@ version.workspace = true
 log = {workspace = true}
 
 [dev-dependencies]
-divan = {workspace = true}
+
 futures = {workspace = true}
 futures-test = {workspace = true}
 log = {workspace = true}
