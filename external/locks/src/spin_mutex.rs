@@ -1,22 +1,16 @@
-use std::{
-    cell::UnsafeCell,
-    ops,
-    sync::atomic::{AtomicBool, Ordering},
-};
+use std::ops;
 
 use crate::{Locker, LockerGuard};
 
 /// Spin mutex implementation with [`AtomicBool`]
 pub struct SpinMutex<T> {
-    flag: AtomicBool,
-    data: UnsafeCell<T>,
+    mutex: parking_lot::Mutex<T>,
 }
 
 impl<T: ?Sized + Default> Default for SpinMutex<T> {
     fn default() -> Self {
         Self {
-            flag: Default::default(),
-            data: Default::default(),
+            mutex: Default::default(),
         }
     }
 }
@@ -31,16 +25,8 @@ impl<T> SpinMutex<T> {
     /// Creates a new `SpinMutex` in an unlocked state ready for use.
     pub fn new(t: T) -> Self {
         SpinMutex {
-            flag: Default::default(),
-            data: UnsafeCell::new(t),
+            mutex: parking_lot::Mutex::new(t),
         }
-    }
-}
-
-impl<T> SpinMutex<T> {
-    #[cold]
-    fn is_locked(&self) -> bool {
-        self.flag.load(Ordering::Relaxed)
     }
 }
 
@@ -54,33 +40,21 @@ impl<T> Locker for SpinMutex<T> {
 
     #[inline(always)]
     fn sync_lock(&self) -> Self::Guard<'_> {
-        while self
-            .flag
-            .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_err()
-        {
-            while self.is_locked() {}
-        }
+        let guard = self.mutex.lock();
 
-        SpinMutexGuard { locker: self }
+        SpinMutexGuard { guard: Some(guard) }
     }
 
     #[inline(always)]
     fn try_sync_lock(&self) -> Option<Self::Guard<'_>> {
-        if self
-            .flag
-            .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_ok()
-        {
-            Some(SpinMutexGuard { locker: self })
-        } else {
-            None
-        }
+        self.mutex
+            .try_lock()
+            .map(|guard| SpinMutexGuard { guard: Some(guard) })
     }
 }
 
 pub struct SpinMutexGuard<'a, T> {
-    locker: &'a SpinMutex<T>,
+    guard: Option<parking_lot::MutexGuard<'a, T>>,
 }
 
 impl<'a, T> Drop for SpinMutexGuard<'a, T> {
@@ -91,28 +65,23 @@ impl<'a, T> Drop for SpinMutexGuard<'a, T> {
 
 impl<'a, T> ops::Deref for SpinMutexGuard<'a, T> {
     type Target = T;
-
-    #[inline]
     fn deref(&self) -> &Self::Target {
-        unsafe { &*self.locker.data.get() }
+        self.guard.as_deref().unwrap()
     }
 }
 
 impl<'a, T> ops::DerefMut for SpinMutexGuard<'a, T> {
-    #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { &mut *self.locker.data.get() }
+        self.guard.as_deref_mut().unwrap()
     }
 }
 
 impl<'a, T> LockerGuard<'a, T> for SpinMutexGuard<'a, T> {
     #[inline(always)]
     fn unlock(&mut self) {
-        _ = self
-            .locker
-            .flag
-            .compare_exchange(true, false, Ordering::Release, Ordering::Relaxed)
-            .is_ok();
+        if let Some(guard) = self.guard.take() {
+            drop(guard);
+        }
     }
 }
 
