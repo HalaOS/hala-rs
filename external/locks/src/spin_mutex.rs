@@ -17,7 +17,7 @@ impl<T: ?Sized + Default> Default for SpinMutex<T> {
 
 // these are the only places where `T: Send` matters; all other
 // functionality works fine on a single thread.
-unsafe impl<T: Send> Send for SpinMutex<T> {}
+unsafe impl<T> Send for SpinMutex<T> {}
 
 unsafe impl<T: Send> Sync for SpinMutex<T> {}
 
@@ -56,6 +56,10 @@ impl<T> Locker for SpinMutex<T> {
 pub struct SpinMutexGuard<'a, T> {
     guard: Option<parking_lot::MutexGuard<'a, T>>,
 }
+
+unsafe impl<'a, T> Send for SpinMutexGuard<'a, T> {}
+
+unsafe impl<'a, T: Send> Sync for SpinMutexGuard<'a, T> {}
 
 impl<'a, T> Drop for SpinMutexGuard<'a, T> {
     fn drop(&mut self) {

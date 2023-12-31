@@ -64,7 +64,17 @@ pub trait WaitableLockerGuard<'a, T: ?Sized + 'a>: LockerGuard<'a, T> {
         Self: 'a;
 
     /// Get locker reference.
-    fn locker_ref(&self) -> &'a Self::Locker;
+    fn locker(&self) -> &'a Self::Locker;
+
+    /// [`lock`](Locker::try_lock) for asynchronous mode
+    fn async_relock(&self) -> LockFuture<'a, Self::Locker>
+    where
+        Self: Sized,
+    {
+        LockFuture {
+            locker: self.locker(),
+        }
+    }
 }
 
 /// future create by [`lock`](WaitableLocker::lock)

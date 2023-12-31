@@ -115,7 +115,7 @@ impl<'a, T: ?Sized + 'a> LockerGuard<'a, T> for MutexWaitableLockerGuard<'a, T> 
 impl<'a, T> WaitableLockerGuard<'a, T> for MutexWaitableLockerGuard<'a, T> {
     type Locker = WaitableMutex<T>;
 
-    fn locker_ref(&self) -> &'a Self::Locker {
+    fn locker(&self) -> &'a Self::Locker {
         self.mutex
     }
 }

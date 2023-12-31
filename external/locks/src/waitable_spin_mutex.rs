@@ -114,7 +114,7 @@ impl<'a, T: 'a> LockerGuard<'a, T> for WaitableSpinMutexGuard<'a, T> {
 impl<'a, T> WaitableLockerGuard<'a, T> for WaitableSpinMutexGuard<'a, T> {
     type Locker = WaitableSpinMutex<T>;
 
-    fn locker_ref(&self) -> &'a Self::Locker {
+    fn locker(&self) -> &'a Self::Locker {
         self.mutex
     }
 }
@@ -125,7 +125,7 @@ mod tests {
 
     use futures::{executor::ThreadPool, task::SpawnExt};
 
-    use crate::{Locker, WaitableLocker, WaitableSpinMutex};
+    use crate::{Locker, LockerGuard, WaitableLocker, WaitableLockerGuard, WaitableSpinMutex};
 
     struct Counter(usize);
 
@@ -146,9 +146,14 @@ mod tests {
 
             join_handles.push(
                 pool.spawn_with_handle(async move {
+                    let mut data = mutex.async_lock().await;
+
+                    data.unlock();
+
                     for _ in 0..tasks {
-                        let mut data = mutex.async_lock().await;
+                        data = Box::pin(data.locker().async_lock()).await;
                         data.0 += 1;
+                        data.unlock();
                     }
                 })
                 .unwrap(),

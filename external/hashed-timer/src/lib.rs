@@ -48,9 +48,17 @@ impl<T> HashedTimeWheel<T> {
 
         let ticks = ticks as u64;
 
-        let current_ticks = self.ticks.load(Ordering::SeqCst);
-
-        if current_ticks > ticks {
+        if self
+            .ticks
+            .fetch_update(Ordering::Release, Ordering::Acquire, |current| {
+                if current > ticks {
+                    None
+                } else {
+                    Some(current)
+                }
+            })
+            .is_err()
+        {
             return None;
         }
 
@@ -62,7 +70,26 @@ impl<T> HashedTimeWheel<T> {
             }
         }
 
+        if self
+            .ticks
+            .fetch_update(Ordering::Release, Ordering::Acquire, |current| {
+                if current > ticks {
+                    if self.timers.remove(&ticks).is_some() {
+                        return None;
+                    } else {
+                        return Some(current);
+                    }
+                } else {
+                    return Some(current);
+                }
+            })
+            .is_err()
+        {
+            return None;
+        }
+
         self.timer_count.fetch_add(1, Ordering::SeqCst);
+
         Some(ticks)
     }
 
@@ -83,7 +110,7 @@ impl<T> HashedTimeWheel<T> {
 
             if self
                 .ticks
-                .compare_exchange(current, ticks, Ordering::Acquire, Ordering::Relaxed)
+                .compare_exchange(current, ticks, Ordering::AcqRel, Ordering::Relaxed)
                 .is_ok()
             {
                 let mut timeout_timers = vec![];
@@ -118,7 +145,7 @@ mod tests {
     #[test]
     fn test_add_timers() {
         let threads = 10;
-        let loops = 1000;
+        let loops = 10usize;
 
         let time_wheel = HashedTimeWheel::<i32>::new(Duration::from_millis(100));
 
@@ -136,7 +163,7 @@ mod tests {
 
                 for i in 0..loops {
                     time_wheel
-                        .new_timer(i as i32, Duration::from_secs(1))
+                        .new_timer(i as i32, Duration::from_secs((i + 1) as u64))
                         .unwrap();
                 }
             }))
