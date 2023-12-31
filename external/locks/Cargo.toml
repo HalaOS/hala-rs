@@ -11,6 +11,7 @@ version.workspace = true
 [dependencies]
 dashmap = {workspace = true}
 log = {workspace = true}
+parking_lot = {workspace = true}
 
 [dev-dependencies]
 divan = {workspace = true}

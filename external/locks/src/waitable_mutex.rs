@@ -82,13 +82,7 @@ pub struct MutexWaitableLockerGuard<'a, T: ?Sized + 'a> {
 
 impl<'a, T: ?Sized + 'a> Drop for MutexWaitableLockerGuard<'a, T> {
     fn drop(&mut self) {
-        if let Some(guard) = self.std_guard.take() {
-            drop(guard);
-
-            if let Some(waker) = self.mutex.wakers.sync_lock().pop_front() {
-                waker.wake();
-            }
-        }
+        self.unlock();
     }
 }
 
@@ -106,6 +100,7 @@ impl<'a, T: ?Sized + 'a> ops::DerefMut for MutexWaitableLockerGuard<'a, T> {
 }
 
 impl<'a, T: ?Sized + 'a> LockerGuard<'a, T> for MutexWaitableLockerGuard<'a, T> {
+    #[inline(always)]
     fn unlock(&mut self) {
         if let Some(guard) = self.std_guard.take() {
             drop(guard);
@@ -116,6 +111,7 @@ impl<'a, T: ?Sized + 'a> LockerGuard<'a, T> for MutexWaitableLockerGuard<'a, T> 
         }
     }
 
+    #[inline(always)]
     fn sync_relock(&mut self) {
         let std_guard = match self.mutex.std_mutex.lock() {
             Ok(guard) => guard,
@@ -125,6 +121,7 @@ impl<'a, T: ?Sized + 'a> LockerGuard<'a, T> for MutexWaitableLockerGuard<'a, T> 
         self.std_guard = Some(std_guard);
     }
 
+    #[inline(always)]
     fn try_sync_relock(&mut self) -> bool {
         let std_guard = match self.mutex.std_mutex.try_lock() {
             Ok(guard) => guard,

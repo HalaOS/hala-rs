@@ -5,7 +5,7 @@ use std::{
 };
 
 pub trait Locker {
-    type Data;
+    type Data: ?Sized;
 
     /// RAII lock guard type .
     type Guard<'a>: LockerGuard<'a, Self::Data> + ops::DerefMut<Target = Self::Data>
