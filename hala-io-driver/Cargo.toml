@@ -17,8 +17,6 @@ hashed-timer = {workspace = true, optional = true}
 locks = {workspace = true}
 log = {workspace = true}
 mio = {workspace = true, optional = true}
-shared = {workspace = true}
-timewheel = {workspace = true, optional = true}
 
 [dev-dependencies]
 divan = {workspace = true}
@@ -29,7 +27,7 @@ pretty_env_logger = {workspace = true}
 default = ["mio_driver", "global", "driver_ext"]
 driver_ext = []
 global = ["futures"]
-mio_driver = ["mio", "timewheel", "dashmap", "hashed-timer"]
+mio_driver = ["mio", "dashmap", "hashed-timer"]
 
 [[bench]]
 harness = false

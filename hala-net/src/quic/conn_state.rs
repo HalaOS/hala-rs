@@ -5,11 +5,10 @@ use std::{
     sync::Arc,
 };
 
-use future_mediator::{
-    shared::{AsyncLocalShared, AsyncShared},
-    LocalMediator,
+use event_map::{
+    locks::{Locker, WaitableLocker, WaitableSpinMutex},
+    EventMap, Reason,
 };
-
 use hala_io_util::{get_local_poller, local_io_spawn};
 use quiche::{RecvInfo, SendInfo};
 
@@ -66,7 +65,7 @@ pub enum QuicConnEvents {
 }
 
 async fn handle_accept(
-    mediator: &LocalMediator<QuicConnEvents>,
+    mediator: &EventMap<QuicConnEvents>,
     state: &mut RawQuicConnState,
     stream_id: u64,
 ) {
@@ -80,13 +79,14 @@ async fn handle_accept(
         state.opened_streams.insert(stream_id);
         state.incoming_streams.push_back(stream_id);
 
-        mediator
-            .notify(QuicConnEvents::Accept(state.quiche_conn.trace_id().into()))
-            .await;
+        mediator.notify_one(
+            &QuicConnEvents::Accept(state.quiche_conn.trace_id().into()),
+            Reason::On,
+        );
     }
 }
 
-async fn handle_stream(mediator: &LocalMediator<QuicConnEvents>, state: &mut RawQuicConnState) {
+async fn handle_stream(mediator: &EventMap<QuicConnEvents>, state: &mut RawQuicConnState) {
     let mut events = vec![];
 
     for stream_id in state.quiche_conn.readable() {
@@ -98,7 +98,7 @@ async fn handle_stream(mediator: &LocalMediator<QuicConnEvents>, state: &mut Raw
         ));
     }
 
-    mediator.notify_all(&events).await;
+    mediator.notify_all(&events, Reason::On);
 
     for stream_id in state.quiche_conn.writable() {
         handle_accept(mediator, state, stream_id).await;
@@ -109,19 +109,19 @@ async fn handle_stream(mediator: &LocalMediator<QuicConnEvents>, state: &mut Raw
         ));
     }
 
-    mediator.notify_all(&events).await;
+    mediator.notify_all(&events, Reason::On);
 }
 
-async fn handle_close(mediator: &LocalMediator<QuicConnEvents>) {
-    mediator.notify_any().await;
+fn handle_close(mediator: &EventMap<QuicConnEvents>) {
+    mediator.notify_any(Reason::Cancel);
 }
 
 /// Quic connection state object
 #[derive(Clone)]
 pub struct QuicConnState {
-    conn_state: AsyncLocalShared<RawQuicConnState>,
+    conn_state: Arc<WaitableSpinMutex<RawQuicConnState>>,
     /// core inner state.
-    pub(crate) mediator: LocalMediator<QuicConnEvents>,
+    pub(crate) mediator: EventMap<QuicConnEvents>,
 
     /// String type trace id.
     pub trace_id: Arc<String>,
@@ -131,8 +131,11 @@ impl QuicConnState {
     pub fn new(quiche_conn: quiche::Connection, stream_id_seed: u64) -> Self {
         Self {
             trace_id: Arc::new(quiche_conn.trace_id().to_owned()),
-            conn_state: RawQuicConnState::new(quiche_conn, stream_id_seed).into(),
-            mediator: LocalMediator::new_with("mediator: quic_conn_state"),
+            conn_state: Arc::new(WaitableSpinMutex::new(RawQuicConnState::new(
+                quiche_conn,
+                stream_id_seed,
+            ))),
+            mediator: EventMap::default(),
         }
     }
 
@@ -142,7 +145,7 @@ impl QuicConnState {
 
         log::trace!("{:?} try get conn_state locker", event);
 
-        let mut conn_state = self.conn_state.lock_mut_wait().await;
+        let mut conn_state = self.conn_state.async_lock().await;
 
         log::trace!("{:?} locked conn_state", event);
 
@@ -150,7 +153,7 @@ impl QuicConnState {
             log::trace!("{:?} loop", event);
 
             if conn_state.quiche_conn.is_closed() {
-                handle_close(&self.mediator).await;
+                handle_close(&self.mediator);
 
                 return Err(io::Error::new(
                     io::ErrorKind::BrokenPipe,
@@ -161,8 +164,7 @@ impl QuicConnState {
             match conn_state.quiche_conn.send(buf) {
                 Ok((recv_size, send_info)) => {
                     self.mediator
-                        .notify(QuicConnEvents::Recv(self.trace_id.to_string()))
-                        .await;
+                        .notify_one(&QuicConnEvents::Recv(self.trace_id.to_string()), Reason::On);
 
                     handle_stream(&self.mediator, &mut conn_state).await;
 
@@ -170,7 +172,7 @@ impl QuicConnState {
                 }
                 Err(quiche::Error::Done) => {
                     if conn_state.quiche_conn.is_closed() {
-                        handle_close(&self.mediator).await;
+                        handle_close(&self.mediator);
 
                         return Err(io::Error::new(
                             io::ErrorKind::BrokenPipe,
@@ -184,8 +186,11 @@ impl QuicConnState {
 
                     conn_state = match hala_io_util::timeout_with(
                         async {
-                            let conn_state =
-                                self.mediator.event_wait(conn_state, event.clone()).await;
+                            let conn_state = self
+                                .mediator
+                                .wait(event.clone(), conn_state)
+                                .await
+                                .map_err(into_io_error)?;
 
                             log::trace!("{:?} event_wait ready", event);
 
@@ -201,7 +206,7 @@ impl QuicConnState {
                             conn_state
                         }
                         Err(err) if err.kind() == io::ErrorKind::TimedOut => {
-                            conn_state = self.conn_state.lock_mut_wait().await;
+                            conn_state = self.conn_state.async_lock().await;
                             conn_state.quiche_conn.on_timeout();
 
                             log::trace!("{:?} on_timeout", event);
@@ -216,7 +221,7 @@ impl QuicConnState {
                 }
                 Err(err) => {
                     if conn_state.quiche_conn.is_closed() {
-                        handle_close(&self.mediator).await;
+                        handle_close(&self.mediator);
                     }
 
                     return Err(into_io_error(err));

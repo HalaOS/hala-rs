@@ -2,6 +2,7 @@ use std::{
     fmt::Debug,
     future::Future,
     hash::Hash,
+    io,
     pin::Pin,
     sync::{
         atomic::{AtomicU8, Ordering},
@@ -67,12 +68,23 @@ impl WakerWrapper {
 }
 
 /// Event waitable map using [`DashMap`](dashmap::DashMap) inner
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct EventMap<E>
 where
     E: Send + Eq + Hash,
 {
     wakers: Arc<DashMap<E, WakerWrapper>>,
+}
+
+impl<E> Default for EventMap<E>
+where
+    E: Send + Eq + Hash,
+{
+    fn default() -> Self {
+        Self {
+            wakers: Arc::new(DashMap::new()),
+        }
+    }
 }
 
 impl<E> EventMap<E>
@@ -101,6 +113,20 @@ where
         for event in events.as_ref() {
             self.notify_one(event, reason);
         }
+    }
+
+    /// Notify all event on in the providing `events` list
+    pub fn notify_any(&self, reason: Reason)
+    where
+        E: Debug + Clone,
+    {
+        let events = self
+            .wakers
+            .iter()
+            .map(|pair| pair.key().clone())
+            .collect::<Vec<_>>();
+
+        self.notify_all(&events, reason);
     }
 
     pub fn wait<'a, G>(&self, event: E, guard: G) -> Wait<'a, E, G>

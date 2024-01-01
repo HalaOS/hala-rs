@@ -11,7 +11,7 @@ version.workspace = true
 
 [dependencies]
 bytes = {workspace = true}
-future-mediator = {workspace = true, optional = true}
+event-map = {workspace = true, optional = true}
 futures = {workspace = true}
 hala-io-driver = {workspace = true}
 hala-io-util = {workspace = true}
@@ -30,8 +30,7 @@ rand = {workspace = true}
 
 [features]
 default = ["quice"]
-quice = ["quiche", "rand", "ring", "future-mediator"]
-quice_local = ["future-mediator/single-thread"]
+quice = ["quiche", "rand", "ring", "event-map"]
 
 [[bench]]
 harness = false

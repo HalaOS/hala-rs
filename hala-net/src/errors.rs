@@ -14,6 +14,9 @@ pub enum HalaIoError {
     #[error("{0}")]
     QuicheError(#[from] quiche::Error),
 
+    #[error("{0}")]
+    EventMapError(#[from] event_map::EventMapError),
+
     #[cfg(feature = "quice")]
     #[error("{0}")]
     Unspecified(#[from] ring::error::Unspecified),
@@ -35,6 +38,14 @@ impl From<HalaIoError> for std::io::Error {
             },
             #[cfg(feature = "quice")]
             HalaIoError::Unspecified(err) => std::io::Error::new(std::io::ErrorKind::Other, err),
+            HalaIoError::EventMapError(err) => match err {
+                event_map::EventMapError::Cancel => {
+                    std::io::Error::new(std::io::ErrorKind::UnexpectedEof, err)
+                }
+                event_map::EventMapError::Destroy => {
+                    std::io::Error::new(std::io::ErrorKind::UnexpectedEof, err)
+                }
+            },
         }
     }
 }
