@@ -1,6 +1,6 @@
 use std::ops;
 
-use crate::{Locker, LockerGuard};
+use crate::{Locker, LockerGuard, WaitableLockerMaker};
 
 impl<T> Locker for std::cell::RefCell<T> {
     type Data = T;
@@ -24,6 +24,10 @@ impl<T> Locker for std::cell::RefCell<T> {
             _ => None,
         }
     }
+
+    fn new(data: Self::Data) -> Self {
+        std::cell::RefCell::new(data)
+    }
 }
 
 pub struct RefcellGuard<'a, T> {
@@ -46,5 +50,57 @@ impl<'a, T> ops::DerefMut for RefcellGuard<'a, T> {
 impl<'a, T> LockerGuard<'a, T> for RefcellGuard<'a, T> {
     fn unlock(&mut self) {
         self.std_guard.take();
+    }
+}
+
+pub type WaitableRefCell<T> = WaitableLockerMaker<std::sync::Mutex<T>>;
+
+#[cfg(test)]
+mod tests {
+    use std::rc::Rc;
+
+    use futures::{executor::LocalPool, task::LocalSpawnExt};
+
+    use crate::{Locker, LockerGuard, WaitableLocker, WaitableLockerGuard, WaitableRefCell};
+
+    #[test]
+    fn test_waitable_refcell_async() {
+        let mut pool = LocalPool::new();
+
+        let mutex = Rc::new(WaitableRefCell::new(0));
+
+        let tasks = 1000;
+
+        let mut join_handles = vec![];
+
+        for _ in 0..tasks {
+            let mutex = mutex.clone();
+
+            join_handles.push(
+                pool.spawner()
+                    .spawn_local_with_handle(async move {
+                        let mut data = mutex.async_lock().await;
+
+                        data.unlock();
+
+                        for _ in 0..tasks {
+                            data = data.locker().async_lock().await;
+                            *data += 1;
+                            data.unlock();
+                        }
+                    })
+                    .unwrap(),
+            );
+        }
+
+        assert_eq!(join_handles.len(), tasks);
+
+        pool.run_until(async move {
+            for handle in join_handles {
+                handle.await;
+            }
+
+            assert_eq!(*mutex.async_lock().await, tasks * tasks);
+        });
     }
 }

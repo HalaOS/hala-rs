@@ -70,14 +70,14 @@ impl WakerWrapper {
 #[derive(Clone, Debug, Default)]
 pub struct EventMap<E>
 where
-    E: Send + Sync + Eq + Hash,
+    E: Send + Eq + Hash,
 {
     wakers: Arc<DashMap<E, WakerWrapper>>,
 }
 
 impl<E> EventMap<E>
 where
-    E: Send + Sync + Eq + Hash,
+    E: Send + Eq + Hash,
 {
     /// Notify one event `E` on.
     pub fn notify_one(&self, event: &E, reason: Reason) -> bool
@@ -120,7 +120,7 @@ where
 
 impl<E> Drop for EventMap<E>
 where
-    E: Send + Sync + Eq + Hash,
+    E: Send + Eq + Hash,
 {
     fn drop(&mut self) {
         if Arc::strong_count(&self.wakers) == 1 {
@@ -135,7 +135,7 @@ where
 /// Future created by [`wait`](EventMap::wait) function.
 pub struct Wait<'a, T, E>
 where
-    E: Send + Sync + Eq + Hash,
+    E: Send + Eq + Hash,
     T: AsyncShared,
 {
     wakers: Arc<DashMap<E, WakerWrapper>>,
@@ -147,7 +147,7 @@ where
 
 impl<'a, T, E> Debug for Wait<'a, T, E>
 where
-    E: Send + Sync + Eq + Hash,
+    E: Send + Eq + Hash,
     T: AsyncShared,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -157,7 +157,7 @@ where
 
 impl<'a, T, E> Future for Wait<'a, T, E>
 where
-    E: Send + Sync + Eq + Hash + Unpin + Debug,
+    E: Send + Eq + Hash + Unpin + Debug,
     T: AsyncShared + 'static + Unpin,
 {
     type Output = Result<AsyncSharedGuardMut<'a, T>, EventMapError>;

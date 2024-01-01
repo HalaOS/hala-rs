@@ -21,15 +21,6 @@ unsafe impl<T> Send for SpinMutex<T> {}
 
 unsafe impl<T: Send> Sync for SpinMutex<T> {}
 
-impl<T> SpinMutex<T> {
-    /// Creates a new `SpinMutex` in an unlocked state ready for use.
-    pub fn new(t: T) -> Self {
-        SpinMutex {
-            mutex: parking_lot::Mutex::new(t),
-        }
-    }
-}
-
 impl<T> Locker for SpinMutex<T> {
     type Data = T;
 
@@ -50,6 +41,12 @@ impl<T> Locker for SpinMutex<T> {
         self.mutex
             .try_lock()
             .map(|guard| SpinMutexGuard { guard: Some(guard) })
+    }
+
+    fn new(data: Self::Data) -> Self {
+        SpinMutex {
+            mutex: parking_lot::Mutex::new(data),
+        }
     }
 }
 
@@ -89,11 +86,84 @@ impl<'a, T> LockerGuard<'a, T> for SpinMutexGuard<'a, T> {
     }
 }
 
+use super::*;
+
+pub type WaitableSpinMutex<T> = WaitableLockerMaker<SpinMutex<T>>;
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
-    use crate::{Locker, SpinMutex};
+    use futures::{executor::ThreadPool, task::SpawnExt};
+
+    use crate::{
+        Locker, LockerGuard, SpinMutex, WaitableLocker, WaitableLockerGuard, WaitableSpinMutex,
+    };
+
+    #[futures_test::test]
+    async fn test_waitable_spin_mutex_async() {
+        let pool = ThreadPool::builder().pool_size(10).create().unwrap();
+
+        let mutex = Arc::new(WaitableSpinMutex::new(0));
+
+        let tasks = 1000;
+
+        let mut join_handles = vec![];
+
+        for _ in 0..tasks {
+            let mutex = mutex.clone();
+
+            join_handles.push(
+                pool.spawn_with_handle(async move {
+                    let mut data = mutex.async_lock().await;
+
+                    data.unlock();
+
+                    for _ in 0..tasks {
+                        data = data.locker().async_lock().await;
+                        *data += 1;
+                        data.unlock();
+                    }
+                })
+                .unwrap(),
+            );
+        }
+
+        assert_eq!(join_handles.len(), tasks);
+
+        for handle in join_handles {
+            handle.await;
+        }
+
+        assert_eq!(*mutex.async_lock().await, tasks * tasks);
+    }
+
+    #[test]
+    fn test_waitable_spin_mutex() {
+        let threads = 10;
+        let tasks = 100000;
+
+        let mutex = Arc::new(WaitableSpinMutex::new(0));
+
+        let mut join_handles = vec![];
+
+        for _ in 0..threads {
+            let mutex = mutex.clone();
+            join_handles.push(std::thread::spawn(move || {
+                for _ in 0..tasks {
+                    let mut data = mutex.sync_lock();
+
+                    *data = *data + 1;
+                }
+            }));
+        }
+
+        for handle in join_handles {
+            handle.join().unwrap();
+        }
+
+        assert_eq!(*mutex.sync_lock(), tasks * threads);
+    }
 
     #[inline(never)]
     fn add_loop(shared: Arc<SpinMutex<i32>>, counter: i32) {
