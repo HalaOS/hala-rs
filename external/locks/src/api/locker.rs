@@ -4,7 +4,7 @@ pub trait Locker {
     type Data: ?Sized;
 
     /// RAII lock guard type .
-    type Guard<'a>: LockerGuard<'a, Self::Data> + ops::DerefMut<Target = Self::Data>
+    type Guard<'a>: LockerGuard<'a> + ops::DerefMut<Target = Self::Data>
     where
         Self: 'a,
         Self::Data: 'a;
@@ -33,7 +33,7 @@ pub trait Locker {
     }
 }
 
-pub trait LockerGuard<'a, T: ?Sized + 'a> {
+pub trait LockerGuard<'a> {
     /// Manual unlock this reference lockable object.
     fn unlock(&mut self);
 }

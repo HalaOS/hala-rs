@@ -9,8 +9,7 @@ use crate::{Locker, LockerGuard};
 /// `Locker` for asynchronous mode
 pub trait WaitableLocker: Locker {
     /// Lock guard type for immutable reference.
-    type WaitableGuard<'a>: WaitableLockerGuard<'a, Self::Data, Locker = Self>
-        + ops::Deref<Target = Self::Data>
+    type WaitableGuard<'a>: WaitableLockerGuard<'a, Locker = Self> + ops::Deref<Target = Self::Data>
     where
         Self: 'a,
         Self::Data: 'a;
@@ -30,7 +29,7 @@ pub trait WaitableLocker: Locker {
 }
 
 /// `LockerGuard` for asynchronous mode
-pub trait WaitableLockerGuard<'a, T: ?Sized + 'a>: LockerGuard<'a, T> {
+pub trait WaitableLockerGuard<'a>: LockerGuard<'a> {
     type Locker: WaitableLocker<WaitableGuard<'a> = Self>
     where
         Self: 'a;
@@ -61,10 +60,9 @@ impl<'a, L> LockFuture<'a, L> {
     }
 }
 
-impl<'a, L, T> Future for LockFuture<'a, L>
+impl<'a, L> Future for LockFuture<'a, L>
 where
-    T: 'a,
-    L: WaitableLocker<Data = T>,
+    L: WaitableLocker,
 {
     type Output = L::WaitableGuard<'a>;
 

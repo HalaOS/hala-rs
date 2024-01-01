@@ -11,8 +11,8 @@ version.workspace = true
 
 [dependencies]
 dashmap = {workspace = true}
+locks = {workspace = true}
 log = {workspace = true}
-shared = {workspace = true}
 thiserror = {workspace = true}
 
 [dev-dependencies]

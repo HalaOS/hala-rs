@@ -30,6 +30,7 @@ impl<T> Locker for std::cell::RefCell<T> {
     }
 }
 
+#[derive(Debug)]
 pub struct RefcellGuard<'a, T> {
     std_guard: Option<std::cell::RefMut<'a, T>>,
 }
@@ -47,7 +48,7 @@ impl<'a, T> ops::DerefMut for RefcellGuard<'a, T> {
     }
 }
 
-impl<'a, T> LockerGuard<'a, T> for RefcellGuard<'a, T> {
+impl<'a, T> LockerGuard<'a> for RefcellGuard<'a, T> {
     fn unlock(&mut self) {
         self.std_guard.take();
     }

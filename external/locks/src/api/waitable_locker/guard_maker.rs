@@ -5,6 +5,7 @@ use crate::LockerGuard;
 use super::*;
 
 /// The type factory of [`WaitableLockerGuard`] type
+#[derive(Debug)]
 pub struct WaitableLockerGuardMaker<'a, L, G>
 where
     L: WaitableLocker<WaitableGuard<'a> = Self>,
@@ -29,7 +30,7 @@ where
     }
 }
 
-impl<'a, L, G> LockerGuard<'a, L::Data> for WaitableLockerGuardMaker<'a, L, G>
+impl<'a, L, G> LockerGuard<'a> for WaitableLockerGuardMaker<'a, L, G>
 where
     L: WaitableLocker<WaitableGuard<'a> = Self>,
     G: 'a,
@@ -43,7 +44,7 @@ where
     }
 }
 
-impl<'a, L, G> WaitableLockerGuard<'a, L::Data> for WaitableLockerGuardMaker<'a, L, G>
+impl<'a, L, G> WaitableLockerGuard<'a> for WaitableLockerGuardMaker<'a, L, G>
 where
     L: WaitableLocker<WaitableGuard<'a> = Self>,
     G: 'a,

@@ -11,9 +11,9 @@ use std::{
 };
 
 use dashmap::DashMap;
-use shared::{AsyncShared, AsyncSharedGuardMut};
 
-pub use shared;
+pub use locks;
+use locks::{WaitableLocker, WaitableLockerGuard};
 
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum EventMapError {
@@ -103,15 +103,16 @@ where
         }
     }
 
-    pub fn wait<'a, T>(&self, event: E, guard: AsyncSharedGuardMut<'a, T>) -> Wait<'a, T, E>
+    pub fn wait<'a, G>(&self, event: E, guard: G) -> Wait<'a, E, G>
     where
-        T: AsyncShared,
+        G: WaitableLockerGuard<'a>,
         E: Clone,
     {
         Wait {
             wakers: self.wakers.clone(),
             reason: Arc::new(AtomicU8::new(Reason::None.into())),
-            guard: Some(guard),
+            locker: guard.locker(),
+            guard,
             event_debug: event.clone(),
             event: Some(event),
         }
@@ -133,34 +134,40 @@ where
 }
 
 /// Future created by [`wait`](EventMap::wait) function.
-pub struct Wait<'a, T, E>
+pub struct Wait<'a, E, G>
 where
-    E: Send + Eq + Hash,
-    T: AsyncShared,
+    G: 'a,
+    G: WaitableLockerGuard<'a>,
 {
     wakers: Arc<DashMap<E, WakerWrapper>>,
     reason: Arc<AtomicU8>,
     event: Option<E>,
     event_debug: E,
-    guard: Option<AsyncSharedGuardMut<'a, T>>,
+    guard: G,
+    locker: &'a G::Locker,
 }
 
-impl<'a, T, E> Debug for Wait<'a, T, E>
+impl<'a, E, G> Debug for Wait<'a, E, G>
 where
-    E: Send + Eq + Hash,
-    T: AsyncShared,
+    E: Debug,
+    G: 'a,
+    G: WaitableLockerGuard<'a>,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Wait_Future({:?})", self.reason)
+        write!(
+            f,
+            "Wait_Future, reason={:?}, e={:?}",
+            self.reason, self.event_debug
+        )
     }
 }
 
-impl<'a, T, E> Future for Wait<'a, T, E>
+impl<'a, E, G> Future for Wait<'a, E, G>
 where
     E: Send + Eq + Hash + Unpin + Debug,
-    T: AsyncShared + 'static + Unpin,
+    G: WaitableLockerGuard<'a> + Unpin,
 {
-    type Output = Result<AsyncSharedGuardMut<'a, T>, EventMapError>;
+    type Output = Result<G, EventMapError>;
 
     fn poll(
         mut self: std::pin::Pin<&mut Self>,
@@ -176,10 +183,9 @@ where
                 },
             );
 
-            // unlock guard and waiting event on.
-            self.guard.as_mut().unwrap().unlock();
-
             log::trace!("{:?} pending", self.event_debug);
+
+            self.guard.unlock();
 
             return Poll::Pending;
         }
@@ -198,29 +204,30 @@ where
 
         {
             log::trace!("acquire locker {:?}", self.event_debug);
-            let mut relock = Box::pin(self.guard.as_mut().unwrap().relock());
+
+            let mut relock = Box::pin(self.locker.async_lock());
 
             match Pin::new(&mut relock).poll(cx) {
                 Poll::Pending => {
                     return Poll::Pending;
                 }
-                _ => {}
+                Poll::Ready(guard) => Poll::Ready(Ok(guard)),
             }
         }
-
-        Poll::Ready(Ok(self.guard.take().unwrap()))
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::rc::Rc;
+
     use super::*;
 
     use futures::{
         executor::{LocalPool, ThreadPool},
         task::{LocalSpawnExt, SpawnExt},
     };
-    use shared::{AsyncLocalShared, AsyncMutexShared};
+    use locks::{Locker, WaitableLocker, WaitableRefCell, WaitableSpinMutex};
 
     #[test]
     fn test_local_mediator() {
@@ -228,7 +235,7 @@ mod tests {
 
         let mediator = EventMap::<i32>::default();
 
-        let shared = AsyncLocalShared::new(1);
+        let shared = Rc::new(WaitableRefCell::new(1));
 
         for i in 0..100000 {
             let shared_cloned = shared.clone();
@@ -238,7 +245,7 @@ mod tests {
             local_pool
                 .spawner()
                 .spawn_local(async move {
-                    let mut shared = shared_cloned.lock_mut_wait().await;
+                    let mut shared = shared_cloned.async_lock().await;
 
                     *shared = i + 1;
 
@@ -250,7 +257,8 @@ mod tests {
             let mediator_cloned = mediator.clone();
 
             local_pool.run_until(async move {
-                let mut shared = shared_cloned.lock_mut_wait().await;
+                let mut shared = shared_cloned.async_lock().await;
+
                 if *shared != i + 1 {
                     shared = mediator_cloned.wait(i, shared).await.unwrap();
                 }
@@ -262,13 +270,11 @@ mod tests {
 
     #[futures_test::test]
     async fn test_multi_thread_notify() {
-        // pretty_env_logger::init_timed();
-
         let local_pool = ThreadPool::builder().pool_size(10).create().unwrap();
 
         let mediator = EventMap::<i32>::default();
 
-        let shared = AsyncMutexShared::new(0);
+        let shared = Arc::new(WaitableSpinMutex::new(1));
 
         for i in 0..100000 {
             log::trace!("loop {} start", i);
@@ -281,7 +287,7 @@ mod tests {
             local_pool
                 .spawn(async move {
                     log::trace!("spwan lock shared {}", i);
-                    let mut shared = shared_cloned.lock_mut_wait().await;
+                    let mut shared = shared_cloned.async_lock().await;
 
                     log::trace!("spwan lock shared {} -- success", i);
 
@@ -292,7 +298,7 @@ mod tests {
                 .unwrap();
 
             log::trace!("lock shared {}", i);
-            let mut shared = shared.lock_mut_wait().await;
+            let mut shared = shared.async_lock().await;
             log::trace!("lock shared {} -- success", i);
             if *shared != i + 1 {
                 shared = mediator.wait(i, shared).await.unwrap();
@@ -312,7 +318,7 @@ mod tests {
 
         let mediator = EventMap::<i32>::default();
 
-        let shared = AsyncMutexShared::new(0);
+        let shared = Arc::new(WaitableSpinMutex::new(1));
 
         for i in 0..100000 {
             log::trace!("loop {} start", i);
@@ -325,7 +331,7 @@ mod tests {
             local_pool
                 .spawn(async move {
                     log::trace!("spwan lock shared {}", i);
-                    let mut shared = shared_cloned.lock_mut_wait().await;
+                    let mut shared = shared_cloned.async_lock().await;
 
                     log::trace!("spwan lock shared {} -- success", i);
 
@@ -336,7 +342,7 @@ mod tests {
                 .unwrap();
 
             log::trace!("lock shared {}", i);
-            let shared = shared.lock_mut_wait().await;
+            let shared = shared.async_lock().await;
             log::trace!("lock shared {} -- success", i);
             if *shared != i + 1 {
                 let error = mediator.wait(i, shared).await.expect_err("expect cancel");

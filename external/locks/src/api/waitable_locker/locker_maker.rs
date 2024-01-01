@@ -5,6 +5,7 @@ use crate::{Locker, SpinMutex, WaitableLocker, WaitableLockerGuardMaker};
 /// A type factory of [`WaitableLocker`].
 ///
 /// This type combine a [`Locker`] type and [`SpinMutex<VecDeque<Waker>>`] to implement [`WaitableLocker`] trait.
+#[derive(Debug)]
 pub struct WaitableLockerMaker<L>
 where
     L: Locker,

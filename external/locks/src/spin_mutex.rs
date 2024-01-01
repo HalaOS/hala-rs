@@ -3,6 +3,7 @@ use std::ops;
 use crate::{Locker, LockerGuard};
 
 /// Spin mutex implementation with [`AtomicBool`]
+#[derive(Debug)]
 pub struct SpinMutex<T> {
     mutex: parking_lot::Mutex<T>,
 }
@@ -50,6 +51,7 @@ impl<T> Locker for SpinMutex<T> {
     }
 }
 
+#[derive(Debug)]
 pub struct SpinMutexGuard<'a, T> {
     guard: Option<parking_lot::MutexGuard<'a, T>>,
 }
@@ -77,7 +79,7 @@ impl<'a, T> ops::DerefMut for SpinMutexGuard<'a, T> {
     }
 }
 
-impl<'a, T> LockerGuard<'a, T> for SpinMutexGuard<'a, T> {
+impl<'a, T> LockerGuard<'a> for SpinMutexGuard<'a, T> {
     #[inline(always)]
     fn unlock(&mut self) {
         if let Some(guard) = self.guard.take() {

@@ -30,6 +30,7 @@ impl<T> Locker for std::sync::Mutex<T> {
     }
 }
 
+#[derive(Debug)]
 pub struct MutexGuard<'a, T> {
     std_guard: Option<std::sync::MutexGuard<'a, T>>,
 }
@@ -47,7 +48,7 @@ impl<'a, T> ops::DerefMut for MutexGuard<'a, T> {
     }
 }
 
-impl<'a, T> LockerGuard<'a, T> for MutexGuard<'a, T> {
+impl<'a, T> LockerGuard<'a> for MutexGuard<'a, T> {
     fn unlock(&mut self) {
         self.std_guard.take();
     }
