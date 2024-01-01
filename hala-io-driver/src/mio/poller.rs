@@ -22,6 +22,12 @@ struct RawMioPoller {
 #[derive(Clone)]
 pub struct MioPoller(Arc<RawMioPoller>);
 
+impl Drop for MioPoller {
+    fn drop(&mut self) {
+        log::trace!("Close mio poller");
+    }
+}
+
 impl MioPoller {
     /// Create new [`MioPoller`] with the `tick_duration` of timewheel
     pub fn new(tick_duration: Duration) -> io::Result<Self> {

@@ -298,7 +298,7 @@ impl RawDriverExt for MioDriver {
     fn poller_open(&self, _local: bool) -> std::io::Result<crate::Handle> {
         Ok((
             Description::Poller,
-            MioPoller::new(Duration::from_millis(10)),
+            MioPoller::new(Duration::from_millis(10))?,
         )
             .into())
     }
@@ -319,42 +319,7 @@ impl RawDriverExt for MioDriver {
     ) -> std::io::Result<()> {
         poller.expect(Description::Poller)?;
 
-        TypedHandle::<MioPoller>::new(poller).with(|poller| {
-            match source.desc {
-                Description::File => todo!(),
-                Description::TcpListener => {
-                    let typed_handle =
-                        TypedHandle::<MioWithPoller<mio::net::TcpListener>>::new(source);
-
-                    typed_handle
-                        .with_mut(|with_poller| with_poller.register_poller(poller.clone()));
-                }
-                Description::TcpStream => {
-                    let typed_handle =
-                        TypedHandle::<MioWithPoller<mio::net::TcpStream>>::new(source);
-
-                    typed_handle
-                        .with_mut(|with_poller| with_poller.register_poller(poller.clone()));
-                }
-                Description::UdpSocket => {
-                    let typed_handle =
-                        TypedHandle::<MioWithPoller<mio::net::UdpSocket>>::new(source);
-
-                    typed_handle
-                        .with_mut(|with_poller| with_poller.register_poller(poller.clone()));
-                }
-                Description::Timeout => {
-                    let typed_handle = TypedHandle::<MioWithPoller<MioTimer>>::new(source);
-
-                    typed_handle
-                        .with_mut(|with_poller| with_poller.register_poller(poller.clone()));
-                }
-                Description::Poller => panic!("Register poller on poller"),
-                Description::External(_) => todo!(),
-            }
-
-            poller.register(source, interests)
-        })
+        TypedHandle::<MioPoller>::new(poller).with(|poller| poller.register(source, interests))
     }
 
     fn poller_reregister(
