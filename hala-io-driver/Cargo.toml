@@ -11,7 +11,10 @@ version.workspace = true
 
 [dependencies]
 bitmask-enum = {workspace = true}
+dashmap = {workspace = true, optional = true}
 futures = {workspace = true, optional = true}
+hashed-timer = {workspace = true, optional = true}
+locks = {workspace = true}
 log = {workspace = true}
 mio = {workspace = true, optional = true}
 shared = {workspace = true}
@@ -26,7 +29,7 @@ pretty_env_logger = {workspace = true}
 default = ["mio_driver", "global", "driver_ext"]
 driver_ext = []
 global = ["futures"]
-mio_driver = ["mio", "timewheel"]
+mio_driver = ["mio", "timewheel", "dashmap", "hashed-timer"]
 
 [[bench]]
 harness = false

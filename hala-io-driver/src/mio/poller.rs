@@ -1,203 +1,53 @@
-use std::{
-    collections::VecDeque,
-    fmt::Debug,
-    io,
-    sync::Arc,
-    task::Poll,
-    time::{Duration, Instant},
-};
+use std::{io, ops::DerefMut, sync::Arc, task::Waker, time::Duration};
 
-use shared::{Shared, LocalShared, MutexShared};
-use timewheel::TimeWheel;
+use dashmap::DashMap;
+use hashed_timer::HashedTimeWheel;
+use locks::{Locker, SpinMutex};
+use mio::Poll;
 
 use crate::{Handle, Interest, Token, TypedHandle};
 
-use super::WithPoller;
+use super::{timer::MioTimer, with_poller::MioWithPoller};
 
-fn duration_to_ticks(duration: Duration, tick_duration: Duration, round_up: bool) -> u128 {
-    let duration_m = duration.as_nanos();
-    let tick_duration_m = tick_duration.as_nanos();
-
-    let mut ticks = duration_m / tick_duration_m;
-
-    if round_up && tick_duration * (ticks as u32) < duration {
-        ticks += 1;
-    }
-
-    ticks
-}
-
-fn adjust_timeout(
-    time_wheel_start_time: Instant,
-    time_wheel_ticks: u128,
-    tick_duration: Duration,
-    timeout: Duration,
-) -> Duration {
-
-    let ticks = time_wheel_start_time.elapsed().as_nanos() / tick_duration.as_nanos();
-
-    if ticks > time_wheel_ticks {
-        return timeout + tick_duration * (ticks - time_wheel_ticks) as u32;
-    }
-
-    return timeout;
-}
-
-pub(crate) struct MioTimeout {
-    pub(crate) duration: Duration,
-    pub(crate) start_time: Option<Instant>,
-    pub(crate) slot: Option<u128>,
-    pub(crate) tick_duration: Option<Duration>,
-}
-
-impl Debug for MioTimeout {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(start_time) = self.start_time.as_ref() {
-            write!(
-                f,
-                "duration={:?}, slot={}, elapsed={:?}",
-                self.duration,
-                self.slot.unwrap(),
-                start_time.elapsed()
-            )
-        } else {
-            write!(f, "duration={:?}", self.duration)
-        }
-    }
-}
-
-impl MioTimeout {
-    pub(crate) fn new(duration: Duration) -> Self {
-        Self {
-            duration,
-            start_time: None,
-            slot: None,
-            tick_duration: None,
-        }
-    }
-
-    pub(crate) fn is_register(&self) -> bool {
-        self.start_time.is_some() && self.slot.is_some()
-    }
-
-    pub(crate) fn is_expired(&self) -> bool {
-        if let Some(start_time) = self.start_time {
-            let elapsed = start_time.elapsed();
-
-            if elapsed >= self.duration {
-                return true;
-            }
-
-            if self.duration - elapsed < self.tick_duration.unwrap() {
-                return true;
-            }
-
-            return false;
-        } else {
-            false
-        }
-    }
-}
-
-pub(crate) struct MioTimeWheel {
-    time_wheel: TimeWheel<Token>,
-    last_tick: Instant,
-}
-
-impl MioTimeWheel {
-    fn new() -> Self {
-        Self {
-            time_wheel: TimeWheel::new(2048),
-            last_tick: Instant::now(),
-        }
-    }
-
-    fn tick(&mut self, tick_duration: Duration) -> VecDeque<Token> {
-      
-        let elapsed = self.last_tick.elapsed();
-
-        let elapsed_ticks = duration_to_ticks(elapsed, tick_duration, false);
-
-        if elapsed_ticks <= self.time_wheel.tick {
-            return VecDeque::new();
-        }
-
-        let ticks = elapsed_ticks - self.time_wheel.tick;
-
-        let mut timeout_vec = VecDeque::new();
-
-        for _ in 0..ticks {
-            if let Poll::Ready(mut v) = self.time_wheel.tick() {
-                for token in &v {
-                    log::trace!(
-                        "{:?} expired, time_wheel_elapsed_ticks={},time_wheel_ticks={}, time_wheel_elapsed={:?}",
-                        token,
-                        elapsed_ticks,
-                        self.time_wheel.tick,
-                        elapsed
-                    )
-                }
-
-                timeout_vec.append(&mut v);
-            }
-        }
-
-        timeout_vec
-    }
-}
-
-pub struct MioPoller<Poll,TimeWheel> {
-    poll: Poll,
-    registry: Arc<mio::Registry>,
-    time_wheel: TimeWheel,
+struct RawMioPoller {
+    mio_poller: SpinMutex<mio::Poll>,
+    read_wakers: DashMap<Token, Waker>,
+    write_wakers: DashMap<Token, Waker>,
+    registry: mio::Registry,
+    hashed_timewheel: hashed_timer::HashedTimeWheel<Token>,
     tick_duration: Duration,
 }
 
-impl<Poll,TimeWheel> Clone for MioPoller<Poll,TimeWheel>
-where
-    Poll: Clone,
-    TimeWheel: Clone
-{
-    fn clone(&self) -> Self {
-        Self {
-            poll: self.poll.clone(),
-            registry: self.registry.clone(),
-            time_wheel: self.time_wheel.clone(),
-            tick_duration: self.tick_duration.clone(),
-        }
+/// [`MioPoller`] io multiplexer poller
+#[derive(Clone)]
+pub struct MioPoller(Arc<RawMioPoller>);
+
+impl MioPoller {
+    /// Create new [`MioPoller`] with the `tick_duration` of timewheel
+    pub fn new(tick_duration: Duration) -> io::Result<Self> {
+        let mio_poller = Poll::new()?;
+
+        Ok(Self(Arc::new(RawMioPoller {
+            registry: mio_poller.registry().try_clone()?,
+            read_wakers: Default::default(),
+            write_wakers: Default::default(),
+            mio_poller: SpinMutex::new(mio_poller),
+            hashed_timewheel: HashedTimeWheel::new(tick_duration),
+            tick_duration,
+        })))
     }
-}
 
-impl<Poll,TimeWheel> Default for MioPoller<Poll,TimeWheel>
-where
-    Poll: Shared<Value = mio::Poll> + From<mio::Poll>,
-    TimeWheel: Shared<Value = MioTimeWheel> + From<MioTimeWheel>,
-{
-    fn default() -> Self {
-        let poll = mio::Poll::new().unwrap();
-
-        let registry = poll.registry().try_clone().unwrap();
-
-        Self {
-            poll: poll.into(),
-            registry: registry.into(),
-            time_wheel: MioTimeWheel::new().into(),
-            tick_duration: Duration::from_millis(1),
-        }
-    }
-}
-
-impl<Poll,TimeWheel> MioPoller<Poll,TimeWheel>
-where
-    Poll: Shared<Value = mio::Poll>,
-    TimeWheel: Shared<Value = MioTimeWheel>
-{
-   pub fn poll_once(&self, timeout: Option<Duration>) -> io::Result<Vec<(Token, Interest)>> {
-        let poll_timeout = timeout.unwrap_or(self.tick_duration);
+    /// Poll io event and notify events waiters once, returns [`io::Error``] if any error happen.
+    pub fn poll_once(&self, timeout: Option<Duration>) -> io::Result<()> {
+        let timeout = timeout.unwrap_or(self.0.tick_duration);
 
         let mut events = mio::event::Events::with_capacity(1024);
 
-        self.poll.lock_mut().poll(&mut events, Some(poll_timeout))?;
+        // first of all, poll io event.
+        self.0
+            .mio_poller
+            .sync_lock()
+            .poll(&mut events, Some(timeout))?;
 
         let mut hala_events = vec![];
 
@@ -213,16 +63,35 @@ where
             hala_events.push((Token(event.token().0), interests));
         }
 
-        let timeout = self.time_wheel.lock_mut().tick(self.tick_duration);
+        // handle timeout timers
+        let timeout_timers = self.0.hashed_timewheel.next_tick();
 
-        for token in timeout {
-            hala_events.push((token, Interest::Readable));
+        if let Some(timeout_timers) = timeout_timers {
+            for token in timeout_timers {
+                hala_events.push((token, Interest::Readable));
+            }
         }
 
-        Ok(hala_events)
+        for (token, interests) in hala_events {
+            if interests.contains(Interest::Readable) {
+                if let Some((_, waker)) = self.0.read_wakers.remove(&token) {
+                    log::trace!("{:?}, wakeup Readable", token);
+                    waker.wake();
+                }
+            }
+
+            if interests.contains(Interest::Writable) {
+                if let Some((_, waker)) = self.0.write_wakers.remove(&token) {
+                    log::trace!("{:?}, wakeup Writable", token);
+                    waker.wake();
+                }
+            }
+        }
+
+        Ok(())
     }
 
-   pub fn register(&self, handle: Handle, interests: Interest) -> io::Result<()> {
+    pub fn register(&self, handle: Handle, interests: Interest) -> io::Result<()> {
         let mut mio_interests = mio::Interest::READABLE.add(mio::Interest::WRITABLE);
 
         if !interests.contains(Interest::Writable) {
@@ -235,57 +104,97 @@ where
 
         match handle.desc {
             crate::Description::File => todo!(),
-            crate::Description::TcpListener => TypedHandle::<WithPoller<mio::net::TcpListener>>::new(handle)
-                .with_mut(|source| {
-                    self.registry
-                        .register(&mut source.value, mio::Token(handle.token.0), mio_interests)
-                }),
-            crate::Description::TcpStream => TypedHandle::<WithPoller<mio::net::TcpStream>>::new(handle)
-                .with_mut(|source| {
-                    self.registry
-                        .register(&mut source.value, mio::Token(handle.token.0), mio_interests)
-                }),
-            crate::Description::UdpSocket => TypedHandle::<WithPoller<mio::net::UdpSocket>>::new(handle)
-                .with_mut(|source| {
-                    self.registry
-                        .register(&mut source.value, mio::Token(handle.token.0), mio_interests)
-                }),
-            crate::Description::Timeout => {
-                TypedHandle::<WithPoller<MioTimeout>>::new(handle).with_mut(|timeout| {
-                    if timeout.duration.is_zero() {
-                        return Err(io::Error::new(io::ErrorKind::InvalidInput, "Timeout is zero"));
-                    }
-                    
-                    timeout.start_time = Some(Instant::now());
-                    timeout.tick_duration = Some(self.tick_duration);
+            crate::Description::TcpListener => {
+                let typed_handle = TypedHandle::<MioWithPoller<mio::net::TcpListener>>::new(handle);
 
-                    let mut time_wheel = self.time_wheel.lock_mut();
+                typed_handle.with_mut(|obj| {
+                    assert!(!obj.has_poller(), "Call poller register twice");
 
-                    let timeout_duration = adjust_timeout(time_wheel.last_tick,time_wheel.time_wheel.tick,self.tick_duration,timeout.duration);
+                    obj.register_poller(self.clone());
 
-                    let ticks = duration_to_ticks(timeout_duration, self.tick_duration, true);
-
-                    let (slot,round) = time_wheel.time_wheel.add(ticks, handle.token);
-
-                    timeout.slot = Some(slot);
-
-                    log::trace!(
-                        "{:?} register timeout={:?}, adjust_timeout={:?}, ticks={:?}, slot={:?}, round={}, tick_duration={:?}, time_wheel_elapsed={:?}, time_wheel_ticks={}, time_wheel_steps={}",
-                        handle.token,
-                        timeout.value.duration,
-                        timeout_duration,
-                        ticks,
-                        slot,
-                        round,
-                        self.tick_duration,
-                        time_wheel.last_tick.elapsed(),
-                        time_wheel.time_wheel.tick,
-                        time_wheel.time_wheel.steps
-                    );
-
-                    Ok(())
-                })
+                    self.0.registry.register(
+                        obj.deref_mut(),
+                        mio::Token(handle.token.0),
+                        mio_interests,
+                    )
+                })?;
             }
+            crate::Description::TcpStream => {
+                let typed_handle = TypedHandle::<MioWithPoller<mio::net::TcpStream>>::new(handle);
+
+                typed_handle.with_mut(|obj| {
+                    assert!(!obj.has_poller(), "Call poller register twice");
+
+                    obj.register_poller(self.clone());
+
+                    self.0.registry.register(
+                        obj.deref_mut(),
+                        mio::Token(handle.token.0),
+                        mio_interests,
+                    )
+                })?;
+            }
+            crate::Description::UdpSocket => {
+                let typed_handle = TypedHandle::<MioWithPoller<mio::net::UdpSocket>>::new(handle);
+
+                typed_handle.with_mut(|obj| {
+                    assert!(!obj.has_poller(), "Call poller register twice");
+
+                    obj.register_poller(self.clone());
+
+                    self.0.registry.register(
+                        obj.deref_mut(),
+                        mio::Token(handle.token.0),
+                        mio_interests,
+                    )
+                })?;
+            }
+            crate::Description::Timeout => {
+                let typed_handle = TypedHandle::<MioWithPoller<MioTimer>>::new(handle);
+
+                typed_handle.with_mut(|obj| {
+                    assert!(!obj.has_poller(), "Call poller register twice");
+                    assert!(!obj.is_started(), "Call poller register twice");
+
+                    obj.register_poller(self.clone());
+
+                    if obj.start(handle.token, self.0.tick_duration, &self.0.hashed_timewheel) {
+                        log::trace!("timer, token={:?} already timeout.", handle.token);
+                    } else {
+                        log::trace!("timer, token={:?} register successful.", handle.token);
+                    }
+                });
+            }
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("Unsupport file handle type, {:?}", handle),
+                ))
+            }
+        }
+
+        Ok(())
+    }
+
+    pub(super) fn deregister(&self, handle: Handle) -> io::Result<()> {
+        match handle.desc {
+            crate::Description::File => todo!(),
+            crate::Description::TcpListener => {
+                TypedHandle::<MioWithPoller<mio::net::TcpListener>>::new(handle)
+                    .with_mut(|source| self.0.registry.deregister(source.deref_mut()))?;
+            }
+            crate::Description::TcpStream => {
+                TypedHandle::<MioWithPoller<mio::net::TcpStream>>::new(handle)
+                    .with_mut(|source| self.0.registry.deregister(source.deref_mut()))?;
+            }
+            crate::Description::UdpSocket => {
+                TypedHandle::<MioWithPoller<mio::net::UdpSocket>>::new(handle)
+                    .with_mut(|source| self.0.registry.deregister(source.deref_mut()))?;
+            }
+            crate::Description::Timeout => TypedHandle::<MioWithPoller<MioTimer>>::new(handle)
+                .with_mut(|_timer| {
+                    log::trace!("timer, token={:?} deregister.", handle.token);
+                }),
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
@@ -293,108 +202,29 @@ where
                 ))
             }
         }
+
+        self.remove_waker(handle.token, Interest::all()).map(|_| ())
     }
 
-   pub fn reregister(&self, handle: Handle, interests: Interest) -> io::Result<()> {
-        let mut mio_interests = mio::Interest::READABLE.add(mio::Interest::WRITABLE);
-
-        if !interests.contains(Interest::Writable) {
-            mio_interests = mio_interests.remove(mio::Interest::WRITABLE).unwrap();
-        }
-
-        if !interests.contains(Interest::Readable) {
-            mio_interests = mio_interests.remove(mio::Interest::READABLE).unwrap();
-        }
-
-        match handle.desc {
-            crate::Description::File => todo!(),
-            crate::Description::TcpListener => TypedHandle::<WithPoller<mio::net::TcpListener>>::new(handle)
-                .with_mut(|source| {
-                    self.registry
-                        .reregister(&mut source.value, mio::Token(handle.token.0), mio_interests)
-                }),
-            crate::Description::TcpStream => TypedHandle::<WithPoller<mio::net::TcpStream>>::new(handle)
-                .with_mut(|source| {
-                    self.registry
-                        .reregister(&mut source.value, mio::Token(handle.token.0), mio_interests)
-                }),
-            crate::Description::UdpSocket => TypedHandle::<WithPoller<mio::net::UdpSocket>>::new(handle)
-                .with_mut(|source| {
-                    self.registry
-                        .reregister(&mut source.value, mio::Token(handle.token.0), mio_interests)
-                }),
-            crate::Description::Timeout => {
-                TypedHandle::<WithPoller<MioTimeout>>::new(handle).with_mut(|timeout| {
-                    if timeout.duration.is_zero() {
-                        return Err(io::Error::new(io::ErrorKind::InvalidInput, "Timeout is zero"));
-                    }
-
-                    let mut time_wheel = self.time_wheel.lock_mut();
-
-                    if let Some(slot) = timeout.slot {
-                        time_wheel.time_wheel.remove(slot, handle.token);
-                    }
-
-                    let timeout_duration = adjust_timeout(
-                        time_wheel.last_tick,
-                        time_wheel.time_wheel.tick,
-                        self.tick_duration,
-                        timeout.duration,
-                    );
-
-                    let ticks = duration_to_ticks(timeout_duration, self.tick_duration, true);
-
-                    let (slot,_) = time_wheel.time_wheel.add(ticks, handle.token);
-
-                    timeout.start_time = Some(Instant::now());
-
-                    timeout.slot = Some(slot);
-                    timeout.tick_duration = Some(self.tick_duration);
-
-                    Ok(())
-                })
-            }
-            _ => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!("[MioDriver] invalid register source: {:?}", handle),
-                ));
-            }
+    pub(super) fn add_waker(&self, token: Token, interests: Interest, waker: Waker) {
+        if interests.contains(Interest::Readable) {
+            self.0.read_wakers.insert(token, waker.clone());
+        } else if interests.contains(Interest::Writable) {
+            self.0.write_wakers.insert(token, waker.clone());
         }
     }
-   pub fn deregister(&self, handle: Handle) -> io::Result<()> {
-        match handle.desc {
-            crate::Description::File => todo!(),
-            crate::Description::TcpListener => TypedHandle::<WithPoller<mio::net::TcpListener>>::new(handle)
-                .with_mut(|source| self.registry.deregister(&mut source.value)),
-            crate::Description::TcpStream => TypedHandle::<WithPoller<mio::net::TcpStream>>::new(handle)
-                .with_mut(|source| self.registry.deregister(&mut source.value)),
-            crate::Description::UdpSocket => TypedHandle::<WithPoller<mio::net::UdpSocket>>::new(handle)
-                .with_mut(|source| self.registry.deregister(&mut source.value)),
-            crate::Description::Timeout => {
-                TypedHandle::<WithPoller<MioTimeout>>::new(handle).with_mut(|timeout| {
-                    assert!(!timeout.duration.is_zero());
 
-                    let mut time_wheel = self.time_wheel.lock_mut();
-
-                    if let Some(slot) = timeout.slot {
-                        time_wheel.time_wheel.remove(slot, handle.token);
-                    }
-
-                    Ok(())
-                })
-            }
-            _ => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!("[MioDriver] invalid register source: {:?}", handle),
-                ))
-            }
+    pub(super) fn remove_waker(
+        &self,
+        token: Token,
+        interests: Interest,
+    ) -> io::Result<Option<Waker>> {
+        if interests.contains(Interest::Readable) {
+            Ok(self.0.read_wakers.remove(&token).map(|(_, waker)| waker))
+        } else if interests.contains(Interest::Writable) {
+            Ok(self.0.write_wakers.remove(&token).map(|(_, waker)| waker))
+        } else {
+            Ok(None)
         }
     }
 }
-
-
-pub type LocalMioPoller = MioPoller<LocalShared<mio::Poll>,LocalShared<MioTimeWheel>>;
-
-pub type MutexMioPoller = MioPoller<MutexShared<mio::Poll>,MutexShared<MioTimeWheel>>;
