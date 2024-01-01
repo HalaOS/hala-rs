@@ -114,8 +114,6 @@ impl MioPoller {
                 let typed_handle = TypedHandle::<MioWithPoller<mio::net::TcpListener>>::new(handle);
 
                 typed_handle.with_mut(|obj| {
-                    assert!(!obj.has_poller(), "Call poller register twice");
-
                     obj.register_poller(self.clone());
 
                     self.0.registry.register(
@@ -129,8 +127,6 @@ impl MioPoller {
                 let typed_handle = TypedHandle::<MioWithPoller<mio::net::TcpStream>>::new(handle);
 
                 typed_handle.with_mut(|obj| {
-                    assert!(!obj.has_poller(), "Call poller register twice");
-
                     obj.register_poller(self.clone());
 
                     self.0.registry.register(
@@ -144,8 +140,6 @@ impl MioPoller {
                 let typed_handle = TypedHandle::<MioWithPoller<mio::net::UdpSocket>>::new(handle);
 
                 typed_handle.with_mut(|obj| {
-                    assert!(!obj.has_poller(), "Call poller register twice");
-
                     obj.register_poller(self.clone());
 
                     self.0.registry.register(
@@ -159,7 +153,6 @@ impl MioPoller {
                 let typed_handle = TypedHandle::<MioWithPoller<MioTimer>>::new(handle);
 
                 typed_handle.with_mut(|obj| {
-                    assert!(!obj.has_poller(), "Call poller register twice");
                     assert!(!obj.is_started(), "Call poller register twice");
 
                     obj.register_poller(self.clone());
