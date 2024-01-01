@@ -23,11 +23,6 @@ impl<T> MioWithPoller<T> {
         self.poller.as_ref().expect("Call register first")
     }
 
-    /// Return true if this object had bound to [`MioPoller`], otherwise return false.
-    pub(super) fn has_poller(&self) -> bool {
-        self.poller.is_some()
-    }
-
     /// Reigster poller with once guard.
     pub(super) fn register_poller(&mut self, poller: MioPoller) {
         assert!(!self.once.is_completed(), "Call register_poller twice");
