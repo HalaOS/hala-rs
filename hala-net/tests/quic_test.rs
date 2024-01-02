@@ -354,11 +354,11 @@ async fn test_quic_stream_heartbeat() {
     let mut connector = QuicConnector::bind("127.0.0.1:0", config).unwrap();
 
     local_io_spawn(async move {
-        let conn = listener.accept().await.unwrap();
+        loop {
+            let conn = listener.accept().await.unwrap();
 
-        local_io_spawn(accept_stream(conn))?;
-
-        Ok(())
+            local_io_spawn(accept_stream(conn))?;
+        }
     })
     .unwrap();
 

@@ -3,6 +3,7 @@ use std::{
     fmt::Debug,
     io,
     sync::Arc,
+    time::{Duration, Instant},
 };
 
 use event_map::{
@@ -25,7 +26,7 @@ pub struct RawQuicConnState {
     /// Incoming stream deque.
     incoming_streams: VecDeque<u64>,
     /// Send ping package flag.
-    send_ack_eliciting: bool,
+    send_ack_eliciting_instant: Instant,
 }
 
 impl Debug for RawQuicConnState {
@@ -46,7 +47,7 @@ impl RawQuicConnState {
             quiche_conn,
             opened_streams: Default::default(),
             incoming_streams: Default::default(),
-            send_ack_eliciting: false,
+            send_ack_eliciting_instant: Instant::now(),
         }
     }
 
@@ -197,13 +198,6 @@ impl QuicConnState {
 
                     let timer_timeout = conn_state.quiche_conn.timeout();
 
-                    if let Some(timer_timeout) = timer_timeout {
-                        if timer_timeout.is_zero() {
-                            // upgrade priority of handle connection time_out
-                            conn_state.send_ack_eliciting = true;
-                        }
-                    }
-
                     let result = timeout_with(
                         async {
                             self.mediator
@@ -220,6 +214,8 @@ impl QuicConnState {
                         Ok(guard) => {
                             conn_state = guard;
 
+                            log::trace!("{:?} wakeup", event);
+
                             continue;
                         }
                         Err(err) if err.kind() == io::ErrorKind::TimedOut => {
@@ -227,13 +223,15 @@ impl QuicConnState {
 
                             conn_state = self.conn_state.async_lock().await;
 
-                            if !conn_state.send_ack_eliciting {
+                            if conn_state.send_ack_eliciting_instant.elapsed()
+                                > Duration::from_millis(200)
+                            {
                                 conn_state
                                     .quiche_conn
                                     .send_ack_eliciting()
                                     .map_err(into_io_error)?;
 
-                                conn_state.send_ack_eliciting = true;
+                                conn_state.send_ack_eliciting_instant = Instant::now();
 
                                 log::trace!(
                                     "conn={:?} send ack_eliciting",
@@ -244,8 +242,6 @@ impl QuicConnState {
                             }
 
                             conn_state.quiche_conn.on_timeout();
-
-                            conn_state.send_ack_eliciting = false;
 
                             log::trace!("{:?} on_timeout", event);
 

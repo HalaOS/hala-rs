@@ -108,6 +108,7 @@ impl RawDriverExt for MioDriver {
 
         typed_handle.with_mut(|timer| {
             if timer.is_expired() {
+                log::trace!("timer, token={:?}, expired", handle.token);
                 return Ok(true);
             }
 
