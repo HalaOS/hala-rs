@@ -1,5 +1,5 @@
 [workspace]
-members = ["hala-io-driver", "hala-net", "hala-test", "hala-io-util", "hala-rproxy", "external/*"]
+members = ["hala-io-driver", "hala-net", "hala-test", "hala-io-util", "external/*"]
 resolver = "2"
 
 #
@@ -36,11 +36,8 @@ thiserror-no-std = "^2.0"
 
 # external crates
 event-map = {path = "./external/event-map", default = false, version = "^0.1"}
-future-mediator = {path = "./external/future-mediator", default = false, version = "^0.1"}
 hashed-timer = {path = "./external/hashed-timer", version = "^0.1"}
 locks = {path = "./external/locks", version = "^0.1"}
-shared = {path = "./external/shared", default = false, version = "^0.1"}
-timewheel = {path = "./external/timewheel", version = "^0.1"}
 
 # hala-io subcrates
 hala-io-driver = {path = "./hala-io-driver", default = false, version = "^0.1"}

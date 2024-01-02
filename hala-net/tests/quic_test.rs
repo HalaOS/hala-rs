@@ -167,7 +167,7 @@ async fn test_connector_timeout() {
 
 #[hala_test::test(local_io_test)]
 async fn test_conn_timeout() {
-    // _ = pretty_env_logger::try_init_timed();
+    _ = pretty_env_logger::try_init_timed();
 
     let (mut listener, laddrs) = create_listener(1).await;
 

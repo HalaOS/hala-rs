@@ -1,8 +1,8 @@
 use std::{
+    borrow::Borrow,
     fmt::Debug,
     future::Future,
     hash::Hash,
-    io,
     pin::Pin,
     sync::{
         atomic::{AtomicU8, Ordering},
@@ -92,12 +92,13 @@ where
     E: Send + Eq + Hash,
 {
     /// Notify one event `E` on.
-    pub fn notify_one(&self, event: &E, reason: Reason) -> bool
+    pub fn notify_one<Q>(&self, event: Q, reason: Reason) -> bool
     where
         E: Debug,
+        Q: Borrow<E>,
     {
-        if let Some((_, waker)) = self.wakers.remove(event) {
-            log::trace!("{:?} wakeup", event);
+        if let Some((_, waker)) = self.wakers.remove(event.borrow()) {
+            log::trace!("{:?} wakeup", event.borrow());
             waker.wake(reason);
             true
         } else {
@@ -129,18 +130,19 @@ where
         self.notify_all(&events, reason);
     }
 
-    pub fn wait<'a, G>(&self, event: E, guard: G) -> Wait<'a, E, G>
+    pub fn wait<'a, Q, G>(&self, event: Q, guard: G) -> Wait<'a, E, G>
     where
         G: WaitableLockerGuard<'a>,
         E: Clone,
+        Q: Borrow<E>,
     {
         Wait {
             wakers: self.wakers.clone(),
             reason: Arc::new(AtomicU8::new(Reason::None.into())),
             locker: guard.locker(),
             guard,
-            event_debug: event.clone(),
-            event: Some(event),
+            event_debug: event.borrow().clone(),
+            event: Some(event.borrow().clone()),
         }
     }
 }

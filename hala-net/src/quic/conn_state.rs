@@ -234,11 +234,11 @@ impl QuicConnState {
     pub async fn recv<'a>(&self, buf: &'a mut [u8], recv_info: RecvInfo) -> io::Result<usize> {
         let event = QuicConnEvents::Recv(self.trace_id.to_string());
 
-        let mut conn_state = self.conn_state.lock_mut_wait().await;
+        let mut conn_state = self.conn_state.async_lock().await;
 
         loop {
             if conn_state.quiche_conn.is_closed() {
-                handle_close(&self.mediator).await;
+                handle_close(&self.mediator);
 
                 return Err(io::Error::new(
                     io::ErrorKind::BrokenPipe,
@@ -249,8 +249,7 @@ impl QuicConnState {
             match conn_state.quiche_conn.recv(buf, recv_info.clone()) {
                 Ok(recv_size) => {
                     self.mediator
-                        .notify(QuicConnEvents::Send(self.trace_id.to_string()))
-                        .await;
+                        .notify_one(&QuicConnEvents::Send(self.trace_id.to_string()), Reason::On);
 
                     handle_stream(&self.mediator, &mut conn_state).await;
 
@@ -260,7 +259,7 @@ impl QuicConnState {
                     log::trace!("{:?} done ", event);
 
                     if conn_state.quiche_conn.is_closed() {
-                        handle_close(&self.mediator).await;
+                        handle_close(&self.mediator);
 
                         return Err(io::Error::new(
                             io::ErrorKind::BrokenPipe,
@@ -268,13 +267,17 @@ impl QuicConnState {
                         ));
                     }
 
-                    conn_state = self.mediator.event_wait(conn_state, event.clone()).await;
+                    conn_state = self
+                        .mediator
+                        .wait(event.clone(), conn_state)
+                        .await
+                        .map_err(into_io_error)?;
 
                     continue;
                 }
                 Err(err) => {
                     if conn_state.quiche_conn.is_closed() {
-                        handle_close(&self.mediator).await;
+                        handle_close(&self.mediator);
                     }
 
                     return Err(into_io_error(err));
@@ -292,11 +295,11 @@ impl QuicConnState {
     ) -> io::Result<usize> {
         let event = QuicConnEvents::StreamSend(self.trace_id.to_string(), stream_id);
 
-        let mut conn_state = self.conn_state.lock_mut_wait().await;
+        let mut conn_state = self.conn_state.async_lock().await;
 
         loop {
             if conn_state.quiche_conn.is_closed() {
-                handle_close(&self.mediator).await;
+                handle_close(&self.mediator);
 
                 return Err(io::Error::new(
                     io::ErrorKind::BrokenPipe,
@@ -307,8 +310,7 @@ impl QuicConnState {
             match conn_state.quiche_conn.stream_send(stream_id, buf, fin) {
                 Ok(recv_size) => {
                     self.mediator
-                        .notify(QuicConnEvents::Send(self.trace_id.to_string()))
-                        .await;
+                        .notify_one(&QuicConnEvents::Send(self.trace_id.to_string()), Reason::On);
 
                     if fin {
                         log::trace!("{:?}, status=fin", event);
@@ -324,7 +326,7 @@ impl QuicConnState {
                     );
 
                     if conn_state.quiche_conn.is_closed() {
-                        handle_close(&self.mediator).await;
+                        handle_close(&self.mediator);
 
                         return Err(io::Error::new(
                             io::ErrorKind::BrokenPipe,
@@ -332,13 +334,17 @@ impl QuicConnState {
                         ));
                     }
 
-                    conn_state = self.mediator.event_wait(conn_state, event.clone()).await;
+                    conn_state = self
+                        .mediator
+                        .wait(event.clone(), conn_state)
+                        .await
+                        .map_err(into_io_error)?;
 
                     continue;
                 }
                 Err(err) => {
                     if conn_state.quiche_conn.is_closed() {
-                        handle_close(&self.mediator).await;
+                        handle_close(&self.mediator);
                     }
 
                     return Err(into_io_error(err));
@@ -355,11 +361,11 @@ impl QuicConnState {
     ) -> io::Result<(usize, bool)> {
         let event = QuicConnEvents::StreamRecv(self.trace_id.to_string(), stream_id);
 
-        let mut conn_state = self.conn_state.lock_mut_wait().await;
+        let mut conn_state = self.conn_state.async_lock().await;
 
         loop {
             if conn_state.quiche_conn.is_closed() {
-                handle_close(&self.mediator).await;
+                handle_close(&self.mediator);
 
                 return Err(io::Error::new(
                     io::ErrorKind::BrokenPipe,
@@ -369,12 +375,13 @@ impl QuicConnState {
 
             match conn_state.quiche_conn.stream_recv(stream_id, buf) {
                 Ok((read_size, fin)) => {
-                    self.mediator
-                        .notify_all(&[
+                    self.mediator.notify_all(
+                        &[
                             QuicConnEvents::Send(self.trace_id.to_string()),
                             QuicConnEvents::Recv(self.trace_id.to_string()),
-                        ])
-                        .await;
+                        ],
+                        Reason::On,
+                    );
 
                     if fin {
                         log::trace!("{:?}, status=fin", event);
@@ -390,7 +397,7 @@ impl QuicConnState {
                     );
 
                     if conn_state.quiche_conn.is_closed() {
-                        handle_close(&self.mediator).await;
+                        handle_close(&self.mediator);
 
                         return Err(io::Error::new(
                             io::ErrorKind::BrokenPipe,
@@ -398,13 +405,17 @@ impl QuicConnState {
                         ));
                     }
 
-                    conn_state = self.mediator.event_wait(conn_state, event.clone()).await;
+                    conn_state = self
+                        .mediator
+                        .wait(event.clone(), conn_state)
+                        .await
+                        .map_err(into_io_error)?;
 
                     continue;
                 }
                 Err(err) => {
                     if conn_state.quiche_conn.is_closed() {
-                        handle_close(&self.mediator).await;
+                        handle_close(&self.mediator);
                     }
 
                     return Err(into_io_error(err));
@@ -415,7 +426,7 @@ impl QuicConnState {
 
     /// Open new stream to communicate with remote peer.
     pub async fn open_stream(&self) -> io::Result<QuicStream> {
-        let mut state = self.conn_state.lock_mut_wait().await;
+        let mut state = self.conn_state.async_lock().await;
 
         if state.quiche_conn.is_closed() {
             return Err(io::Error::new(
@@ -428,8 +439,7 @@ impl QuicConnState {
         state.stream_id_seed += 4;
 
         self.mediator
-            .notify(QuicConnEvents::Send(self.trace_id.to_string()))
-            .await;
+            .notify_one(QuicConnEvents::Send(self.trace_id.to_string()), Reason::On);
 
         Ok(QuicStream::new(stream_id, self.clone()))
     }
@@ -447,7 +457,7 @@ impl QuicConnState {
 
     pub(super) async fn is_stream_closed(&self, stream_id: u64) -> bool {
         self.conn_state
-            .lock_wait()
+            .async_lock()
             .await
             .quiche_conn
             .stream_finished(stream_id)
@@ -456,7 +466,7 @@ impl QuicConnState {
     /// Close connection.
     pub(super) async fn close(&self, app: bool, err: u64, reason: &[u8]) -> io::Result<()> {
         self.conn_state
-            .lock_mut_wait()
+            .async_lock()
             .await
             .quiche_conn
             .close(app, err, reason)
@@ -464,13 +474,13 @@ impl QuicConnState {
     }
 
     pub(super) async fn is_closed(&self) -> bool {
-        self.conn_state.lock_wait().await.quiche_conn.is_closed()
+        self.conn_state.async_lock().await.quiche_conn.is_closed()
     }
 
     pub async fn accept(&self) -> Option<QuicStream> {
         let event = QuicConnEvents::Accept(self.trace_id.to_string());
 
-        let mut conn_state = self.conn_state.lock_mut_wait().await;
+        let mut conn_state = self.conn_state.async_lock().await;
 
         loop {
             if conn_state.quiche_conn.is_closed() {
@@ -481,7 +491,10 @@ impl QuicConnState {
             if let Some(stream_id) = conn_state.incoming_streams.pop_front() {
                 return Some(QuicStream::new(stream_id, self.clone()));
             } else {
-                conn_state = self.mediator.event_wait(conn_state, event.clone()).await;
+                conn_state = match self.mediator.wait(&event, conn_state).await {
+                    Err(_) => return None,
+                    Ok(conn_state) => conn_state,
+                };
             }
         }
     }
