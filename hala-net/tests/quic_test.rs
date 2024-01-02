@@ -8,7 +8,7 @@ use hala_net::quic::{
 
 const MAX_DATAGRAM_SIZE: usize = 1350;
 
-use std::{io, net::SocketAddr, path::Path};
+use std::{io, net::SocketAddr, path::Path, time::Duration};
 
 use quiche::RecvInfo;
 
@@ -167,7 +167,7 @@ async fn test_connector_timeout() {
 
 #[hala_test::test(local_io_test)]
 async fn test_conn_timeout() {
-    _ = pretty_env_logger::try_init_timed();
+    // _ = pretty_env_logger::try_init_timed();
 
     let (mut listener, laddrs) = create_listener(1).await;
 
@@ -181,6 +181,10 @@ async fn test_conn_timeout() {
         Ok(())
     })
     .unwrap();
+
+    sleep_with(Duration::from_secs(1), get_local_poller().unwrap())
+        .await
+        .unwrap();
 
     log::trace!("Client connect");
 
@@ -233,6 +237,10 @@ async fn test_multi_quic_stream() {
         Ok(())
     })
     .unwrap();
+
+    sleep_with(Duration::from_secs(1), get_local_poller().unwrap())
+        .await
+        .unwrap();
 
     let conn = connector.connect(laddrs.as_slice()).await.unwrap();
 
@@ -328,6 +336,7 @@ async fn test_quic_stream_drop() {
 
 #[hala_test::test(local_io_test)]
 async fn test_quic_stream_heartbeat() {
+    _ = pretty_env_logger::try_init_timed();
     let (mut listener, laddrs) = create_listener(1).await;
 
     let mut config = config(false);
@@ -344,6 +353,10 @@ async fn test_quic_stream_heartbeat() {
         Ok(())
     })
     .unwrap();
+
+    sleep_with(Duration::from_millis(200), get_local_poller().unwrap())
+        .await
+        .unwrap();
 
     let conn = connector.connect(laddrs.as_slice()).await.unwrap();
 
