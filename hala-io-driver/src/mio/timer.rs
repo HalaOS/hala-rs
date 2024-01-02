@@ -8,7 +8,8 @@ pub(super) struct MioTimer {
     /// timer start timestamp.
     start_instant: Option<Instant>,
     /// Timeout duration of this timer.
-    duration: Duration,
+    pub(super) duration: Duration,
+    /// The duration of timewheel duration
     tick_duration: Option<Duration>,
     /// register expired ticks of [`TimeWheel`](HashedTimeWheel) returns by [`new_timer`](HashedTimeWheel::new_timer)
     timewheel_ticks: Option<u64>,

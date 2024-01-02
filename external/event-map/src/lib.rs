@@ -91,6 +91,15 @@ impl<E> EventMap<E>
 where
     E: Send + Eq + Hash,
 {
+    /// Only remove event waker, without wakeup it.
+    pub fn wait_cancel<Q>(&self, event: Q)
+    where
+        E: Debug,
+        Q: Borrow<E>,
+    {
+        self.wakers.remove(event.borrow());
+    }
+
     /// Notify one event `E` on.
     pub fn notify_one<Q>(&self, event: Q, reason: Reason) -> bool
     where

@@ -159,6 +159,12 @@ impl QuicListenerEventLoop {
                     }
                 }
             }
+
+            if self.incoming_sender.is_closed() {
+                log::trace!("quic listener, trace_id={:?} closed", conn_id);
+
+                return Ok(());
+            }
         }
     }
 

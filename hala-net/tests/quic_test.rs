@@ -35,7 +35,7 @@ fn config(is_server: bool) -> Config {
         .set_application_protos(&[b"hq-interop", b"hq-29", b"hq-28", b"hq-27", b"http/0.9"])
         .unwrap();
 
-    config.set_max_idle_timeout(2000);
+    config.set_max_idle_timeout(1000);
     config.set_max_recv_udp_payload_size(MAX_DATAGRAM_SIZE);
     config.set_max_send_udp_payload_size(MAX_DATAGRAM_SIZE);
     config.set_initial_max_data(10_000_000);
@@ -121,6 +121,10 @@ async fn test_async_quic() {
     let (mut listener, laddrs) = create_listener(10).await;
 
     local_io_spawn(async move {
+        sleep_with(Duration::from_secs(1), get_local_poller().unwrap())
+            .await
+            .unwrap();
+
         let mut connector = QuicConnector::bind("127.0.0.1:0", config(false)).unwrap();
 
         let conn = connector.connect(laddrs.as_slice()).await.unwrap();
@@ -167,7 +171,7 @@ async fn test_connector_timeout() {
 
 #[hala_test::test(local_io_test)]
 async fn test_conn_timeout() {
-    // _ = pretty_env_logger::try_init_timed();
+    _ = pretty_env_logger::try_init_timed();
 
     let (mut listener, laddrs) = create_listener(1).await;
 
@@ -313,6 +317,10 @@ async fn test_quic_stream_drop() {
     })
     .unwrap();
 
+    sleep_with(Duration::from_secs(1), get_local_poller().unwrap())
+        .await
+        .unwrap();
+
     let conn = connector.connect(laddrs.as_slice()).await.unwrap();
 
     let count = 90;
@@ -354,7 +362,7 @@ async fn test_quic_stream_heartbeat() {
     })
     .unwrap();
 
-    sleep_with(Duration::from_millis(200), get_local_poller().unwrap())
+    sleep_with(Duration::from_secs(1), get_local_poller().unwrap())
         .await
         .unwrap();
 

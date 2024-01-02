@@ -160,9 +160,17 @@ impl MioPoller {
                     obj.register_poller(self.clone());
 
                     if !obj.start(handle.token, self.0.tick_duration, &self.0.hashed_timewheel) {
-                        log::trace!("timer, token={:?} already timeout.", handle.token);
+                        log::trace!(
+                            "timer, token={:?}, timeout={:?}, already timeout.",
+                            handle.token,
+                            obj.duration
+                        );
                     } else {
-                        log::trace!("timer, token={:?} register successful.", handle.token);
+                        log::trace!(
+                            "timer, token={:?}, timeout={:?}, register successful.",
+                            handle.token,
+                            obj.duration
+                        );
                     }
                 });
             }

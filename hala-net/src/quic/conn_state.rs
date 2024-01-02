@@ -9,7 +9,8 @@ use event_map::{
     locks::{Locker, WaitableLocker, WaitableSpinMutex},
     EventMap, Reason,
 };
-use hala_io_util::{get_local_poller, local_io_spawn};
+
+use hala_io_util::{get_local_poller, local_io_spawn, timeout_with};
 use quiche::{RecvInfo, SendInfo};
 
 use crate::{errors::into_io_error, quic::QuicStream};
@@ -23,6 +24,8 @@ pub struct RawQuicConnState {
     opened_streams: HashSet<u64>,
     /// Incoming stream deque.
     incoming_streams: VecDeque<u64>,
+    /// Send ping package flag.
+    send_ack_eliciting: bool,
 }
 
 impl Debug for RawQuicConnState {
@@ -43,7 +46,12 @@ impl RawQuicConnState {
             quiche_conn,
             opened_streams: Default::default(),
             incoming_streams: Default::default(),
+            send_ack_eliciting: false,
         }
+    }
+
+    fn is_closed_or_draining(&self) -> bool {
+        self.quiche_conn.is_closed() || self.quiche_conn.is_draining()
     }
 }
 
@@ -150,9 +158,7 @@ impl QuicConnState {
         log::trace!("{:?} locked conn_state", event);
 
         loop {
-            log::trace!("{:?} loop", event);
-
-            if conn_state.quiche_conn.is_closed() {
+            if conn_state.is_closed_or_draining() {
                 handle_close(&self.mediator);
 
                 return Err(io::Error::new(
@@ -162,16 +168,25 @@ impl QuicConnState {
             }
 
             match conn_state.quiche_conn.send(buf) {
-                Ok((recv_size, send_info)) => {
+                Ok((send_size, send_info)) => {
                     self.mediator
                         .notify_one(&QuicConnEvents::Recv(self.trace_id.to_string()), Reason::On);
 
                     handle_stream(&self.mediator, &mut conn_state).await;
 
-                    return Ok((recv_size, send_info));
+                    log::trace!(
+                        "conn={:?}, send_size={:?}, send_info={:?}",
+                        conn_state.quiche_conn.trace_id(),
+                        send_size,
+                        send_info
+                    );
+
+                    return Ok((send_size, send_info));
                 }
                 Err(quiche::Error::Done) => {
-                    if conn_state.quiche_conn.is_closed() {
+                    log::trace!("conn={:?} send done", conn_state.quiche_conn.trace_id());
+
+                    if conn_state.is_closed_or_draining() {
                         handle_close(&self.mediator);
 
                         return Err(io::Error::new(
@@ -180,47 +195,71 @@ impl QuicConnState {
                         ));
                     }
 
-                    let timeout = conn_state.quiche_conn.timeout();
+                    let timer_timeout = conn_state.quiche_conn.timeout();
 
-                    log::trace!("{:?} done with timeout={:?}", event, timeout);
+                    if let Some(timer_timeout) = timer_timeout {
+                        if timer_timeout.is_zero() {
+                            // upgrade priority of handle connection time_out
+                            conn_state.send_ack_eliciting = true;
+                        }
+                    }
 
-                    conn_state = match hala_io_util::timeout_with(
+                    let result = timeout_with(
                         async {
-                            let conn_state = self
-                                .mediator
+                            self.mediator
                                 .wait(event.clone(), conn_state)
                                 .await
-                                .map_err(into_io_error)?;
-
-                            log::trace!("{:?} event_wait ready", event);
-
-                            Ok(conn_state)
+                                .map_err(into_io_error)
                         },
-                        timeout,
+                        timer_timeout,
                         get_local_poller()?,
                     )
-                    .await
-                    {
-                        Ok(conn_state) => {
-                            log::trace!("{:?} event_wait ready,{:?}", event, conn_state);
-                            conn_state
+                    .await;
+
+                    match result {
+                        Ok(guard) => {
+                            conn_state = guard;
+
+                            continue;
                         }
                         Err(err) if err.kind() == io::ErrorKind::TimedOut => {
+                            self.mediator.wait_cancel(&event);
+
                             conn_state = self.conn_state.async_lock().await;
+
+                            if !conn_state.send_ack_eliciting {
+                                conn_state
+                                    .quiche_conn
+                                    .send_ack_eliciting()
+                                    .map_err(into_io_error)?;
+
+                                conn_state.send_ack_eliciting = true;
+
+                                log::trace!(
+                                    "conn={:?} send ack_eliciting",
+                                    conn_state.quiche_conn.trace_id()
+                                );
+
+                                continue;
+                            }
+
                             conn_state.quiche_conn.on_timeout();
 
+                            conn_state.send_ack_eliciting = false;
+
                             log::trace!("{:?} on_timeout", event);
+
                             continue;
                         }
                         Err(err) => {
-                            return Err(err);
-                        }
-                    };
+                            self.mediator.wait_cancel(&event);
 
-                    continue;
+                            return Err(into_io_error(err));
+                        }
+                    }
                 }
                 Err(err) => {
-                    if conn_state.quiche_conn.is_closed() {
+                    if conn_state.is_closed_or_draining() {
                         handle_close(&self.mediator);
                     }
 
@@ -237,7 +276,7 @@ impl QuicConnState {
         let mut conn_state = self.conn_state.async_lock().await;
 
         loop {
-            if conn_state.quiche_conn.is_closed() {
+            if conn_state.is_closed_or_draining() {
                 handle_close(&self.mediator);
 
                 return Err(io::Error::new(
@@ -258,7 +297,7 @@ impl QuicConnState {
                 Err(quiche::Error::Done) => {
                     log::trace!("{:?} done ", event);
 
-                    if conn_state.quiche_conn.is_closed() {
+                    if conn_state.is_closed_or_draining() {
                         handle_close(&self.mediator);
 
                         return Err(io::Error::new(
@@ -276,7 +315,7 @@ impl QuicConnState {
                     continue;
                 }
                 Err(err) => {
-                    if conn_state.quiche_conn.is_closed() {
+                    if conn_state.is_closed_or_draining() {
                         handle_close(&self.mediator);
                     }
 
@@ -298,7 +337,7 @@ impl QuicConnState {
         let mut conn_state = self.conn_state.async_lock().await;
 
         loop {
-            if conn_state.quiche_conn.is_closed() {
+            if conn_state.is_closed_or_draining() {
                 handle_close(&self.mediator);
 
                 return Err(io::Error::new(
@@ -325,7 +364,7 @@ impl QuicConnState {
                         stream_id
                     );
 
-                    if conn_state.quiche_conn.is_closed() {
+                    if conn_state.is_closed_or_draining() {
                         handle_close(&self.mediator);
 
                         return Err(io::Error::new(
@@ -343,7 +382,7 @@ impl QuicConnState {
                     continue;
                 }
                 Err(err) => {
-                    if conn_state.quiche_conn.is_closed() {
+                    if conn_state.is_closed_or_draining() {
                         handle_close(&self.mediator);
                     }
 
@@ -364,7 +403,7 @@ impl QuicConnState {
         let mut conn_state = self.conn_state.async_lock().await;
 
         loop {
-            if conn_state.quiche_conn.is_closed() {
+            if conn_state.is_closed_or_draining() {
                 handle_close(&self.mediator);
 
                 return Err(io::Error::new(
@@ -396,7 +435,7 @@ impl QuicConnState {
                         stream_id
                     );
 
-                    if conn_state.quiche_conn.is_closed() {
+                    if conn_state.is_closed_or_draining() {
                         handle_close(&self.mediator);
 
                         return Err(io::Error::new(
@@ -414,7 +453,7 @@ impl QuicConnState {
                     continue;
                 }
                 Err(err) => {
-                    if conn_state.quiche_conn.is_closed() {
+                    if conn_state.is_closed_or_draining() {
                         handle_close(&self.mediator);
                     }
 
@@ -483,7 +522,7 @@ impl QuicConnState {
         let mut conn_state = self.conn_state.async_lock().await;
 
         loop {
-            if conn_state.quiche_conn.is_closed() {
+            if conn_state.is_closed_or_draining() {
                 log::trace!("{:?}, conn_status=closed", event);
                 return None;
             }
