@@ -2,7 +2,7 @@ use std::{
     collections::{HashSet, VecDeque},
     fmt::Debug,
     io,
-    sync::Arc,
+    rc::Rc,
     time::{Duration, Instant},
 };
 
@@ -12,7 +12,7 @@ use event_map::{
 };
 
 use hala_io_util::{get_local_poller, local_io_spawn, timeout_with};
-use quiche::{RecvInfo, SendInfo};
+use quiche::{ConnectionId, RecvInfo, SendInfo};
 
 use crate::{errors::into_io_error, quic::QuicStream};
 
@@ -65,11 +65,11 @@ impl Drop for RawQuicConnState {
 /// `QuicConnState` support event variant.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum QuicConnEvents {
-    Send(String),
-    Recv(String),
-    StreamSend(String, u64),
-    StreamRecv(String, u64),
-    Accept(String),
+    Send(ConnectionId<'static>),
+    Recv(ConnectionId<'static>),
+    StreamSend(ConnectionId<'static>, u64),
+    StreamRecv(ConnectionId<'static>, u64),
+    Accept(ConnectionId<'static>),
     OpenStream,
 }
 
@@ -89,7 +89,7 @@ async fn handle_accept(
         state.incoming_streams.push_back(stream_id);
 
         mediator.notify_one(
-            &QuicConnEvents::Accept(state.quiche_conn.trace_id().into()),
+            &QuicConnEvents::Accept(state.quiche_conn.source_id().into_owned()),
             Reason::On,
         );
     }
@@ -102,7 +102,7 @@ async fn handle_stream(mediator: &EventMap<QuicConnEvents>, state: &mut RawQuicC
         handle_accept(mediator, state, stream_id).await;
 
         events.push(QuicConnEvents::StreamRecv(
-            state.quiche_conn.trace_id().into(),
+            state.quiche_conn.source_id().into_owned(),
             stream_id,
         ));
     }
@@ -113,7 +113,7 @@ async fn handle_stream(mediator: &EventMap<QuicConnEvents>, state: &mut RawQuicC
         handle_accept(mediator, state, stream_id).await;
 
         events.push(QuicConnEvents::StreamSend(
-            state.quiche_conn.trace_id().into(),
+            state.quiche_conn.source_id().into_owned(),
             stream_id,
         ));
     }
@@ -128,19 +128,18 @@ fn handle_close(mediator: &EventMap<QuicConnEvents>) {
 /// Quic connection state object
 #[derive(Clone)]
 pub struct QuicConnState {
-    conn_state: Arc<WaitableSpinMutex<RawQuicConnState>>,
+    conn_state: Rc<WaitableSpinMutex<RawQuicConnState>>,
     /// core inner state.
     pub(crate) mediator: EventMap<QuicConnEvents>,
-
     /// String type trace id.
-    pub trace_id: Arc<String>,
+    pub conn_id: Rc<ConnectionId<'static>>,
 }
 
 impl QuicConnState {
     pub fn new(quiche_conn: quiche::Connection, stream_id_seed: u64) -> Self {
         Self {
-            trace_id: Arc::new(quiche_conn.trace_id().to_owned()),
-            conn_state: Arc::new(WaitableSpinMutex::new(RawQuicConnState::new(
+            conn_id: Rc::new(quiche_conn.source_id().into_owned()),
+            conn_state: Rc::new(WaitableSpinMutex::new(RawQuicConnState::new(
                 quiche_conn,
                 stream_id_seed,
             ))),
@@ -150,7 +149,7 @@ impl QuicConnState {
 
     /// Create new future for send connection data
     pub async fn send<'a>(&self, buf: &'a mut [u8]) -> io::Result<(usize, SendInfo)> {
-        let event = QuicConnEvents::Send(self.trace_id.to_string());
+        let event = QuicConnEvents::Send((*self.conn_id).clone());
 
         log::trace!("{:?} try get conn_state locker", event);
 
@@ -171,7 +170,7 @@ impl QuicConnState {
             match conn_state.quiche_conn.send(buf) {
                 Ok((send_size, send_info)) => {
                     self.mediator
-                        .notify_one(&QuicConnEvents::Recv(self.trace_id.to_string()), Reason::On);
+                        .notify_one(&QuicConnEvents::Recv((*self.conn_id).clone()), Reason::On);
 
                     handle_stream(&self.mediator, &mut conn_state).await;
 
@@ -267,7 +266,7 @@ impl QuicConnState {
 
     /// Create new future for recv connection data
     pub async fn recv<'a>(&self, buf: &'a mut [u8], recv_info: RecvInfo) -> io::Result<usize> {
-        let event = QuicConnEvents::Recv(self.trace_id.to_string());
+        let event = QuicConnEvents::Recv((*self.conn_id).clone());
 
         let mut conn_state = self.conn_state.async_lock().await;
 
@@ -284,7 +283,7 @@ impl QuicConnState {
             match conn_state.quiche_conn.recv(buf, recv_info.clone()) {
                 Ok(recv_size) => {
                     self.mediator
-                        .notify_one(&QuicConnEvents::Send(self.trace_id.to_string()), Reason::On);
+                        .notify_one(&QuicConnEvents::Send((*self.conn_id).clone()), Reason::On);
 
                     handle_stream(&self.mediator, &mut conn_state).await;
 
@@ -328,7 +327,7 @@ impl QuicConnState {
         buf: &'a [u8],
         fin: bool,
     ) -> io::Result<usize> {
-        let event = QuicConnEvents::StreamSend(self.trace_id.to_string(), stream_id);
+        let event = QuicConnEvents::StreamSend((*self.conn_id).clone(), stream_id);
 
         let mut conn_state = self.conn_state.async_lock().await;
 
@@ -345,7 +344,7 @@ impl QuicConnState {
             match conn_state.quiche_conn.stream_send(stream_id, buf, fin) {
                 Ok(recv_size) => {
                     self.mediator
-                        .notify_one(&QuicConnEvents::Send(self.trace_id.to_string()), Reason::On);
+                        .notify_one(&QuicConnEvents::Send((*self.conn_id).clone()), Reason::On);
 
                     if fin {
                         log::trace!("{:?}, status=fin", event);
@@ -354,11 +353,7 @@ impl QuicConnState {
                     return Ok(recv_size);
                 }
                 Err(quiche::Error::Done) => {
-                    log::trace!(
-                        "StreamSend({}, {}) done ",
-                        self.trace_id.to_string(),
-                        stream_id
-                    );
+                    log::trace!("StreamSend({:?}, {}) done ", self.conn_id, stream_id);
 
                     if conn_state.is_closed_or_draining() {
                         handle_close(&self.mediator);
@@ -394,7 +389,7 @@ impl QuicConnState {
         stream_id: u64,
         buf: &'a mut [u8],
     ) -> io::Result<(usize, bool)> {
-        let event = QuicConnEvents::StreamRecv(self.trace_id.to_string(), stream_id);
+        let event = QuicConnEvents::StreamRecv((*self.conn_id).clone(), stream_id);
 
         let mut conn_state = self.conn_state.async_lock().await;
 
@@ -412,8 +407,8 @@ impl QuicConnState {
                 Ok((read_size, fin)) => {
                     self.mediator.notify_all(
                         &[
-                            QuicConnEvents::Send(self.trace_id.to_string()),
-                            QuicConnEvents::Recv(self.trace_id.to_string()),
+                            QuicConnEvents::Send((*self.conn_id).clone()),
+                            QuicConnEvents::Recv((*self.conn_id).clone()),
                         ],
                         Reason::On,
                     );
@@ -425,11 +420,7 @@ impl QuicConnState {
                     return Ok((read_size, fin));
                 }
                 Err(quiche::Error::Done) => {
-                    log::trace!(
-                        "StreamSend({}, {}) done ",
-                        self.trace_id.to_string(),
-                        stream_id
-                    );
+                    log::trace!("StreamSend({:?}, {}) done ", self.conn_id, stream_id);
 
                     if conn_state.is_closed_or_draining() {
                         handle_close(&self.mediator);
@@ -474,7 +465,7 @@ impl QuicConnState {
         state.stream_id_seed += 4;
 
         self.mediator
-            .notify_one(QuicConnEvents::Send(self.trace_id.to_string()), Reason::On);
+            .notify_one(QuicConnEvents::Send((*self.conn_id).clone()), Reason::On);
 
         Ok(QuicStream::new(stream_id, self.clone()))
     }
@@ -513,7 +504,7 @@ impl QuicConnState {
     }
 
     pub async fn accept(&self) -> Option<QuicStream> {
-        let event = QuicConnEvents::Accept(self.trace_id.to_string());
+        let event = QuicConnEvents::Accept((*self.conn_id).clone());
 
         let mut conn_state = self.conn_state.async_lock().await;
 

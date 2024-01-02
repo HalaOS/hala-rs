@@ -171,8 +171,6 @@ async fn test_connector_timeout() {
 
 #[hala_test::test(local_io_test)]
 async fn test_conn_timeout() {
-    _ = pretty_env_logger::try_init_timed();
-
     let (mut listener, laddrs) = create_listener(1).await;
 
     let mut connector = QuicConnector::bind("127.0.0.1:0", config(false)).unwrap();
@@ -298,8 +296,6 @@ async fn stream_close(conn: QuicConn) -> io::Result<()> {
 
 #[hala_test::test(local_io_test)]
 async fn test_quic_stream_drop() {
-    // _ = pretty_env_logger::try_init_timed();
-
     let (mut listener, laddrs) = create_listener(1).await;
 
     let mut config = config(false);
@@ -344,7 +340,6 @@ async fn test_quic_stream_drop() {
 
 #[hala_test::test(local_io_test)]
 async fn test_quic_stream_heartbeat() {
-    _ = pretty_env_logger::try_init_timed();
     let (mut listener, laddrs) = create_listener(1).await;
 
     let mut config = config(false);

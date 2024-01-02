@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     net::{SocketAddr, ToSocketAddrs},
-    sync::Arc,
+    rc::Rc,
 };
 
 use futures::{
@@ -14,7 +14,7 @@ use quiche::{ConnectionId, RecvInfo};
 
 use crate::UdpGroup;
 
-use super::{Config, QuicAcceptor, QuicConn, QuicConnEventLoop};
+use super::{eventloop::QuicConnEventLoop, Config, QuicAcceptor, QuicConn};
 
 pub struct QuicListener {
     incoming: Receiver<QuicConn>,
@@ -71,11 +71,15 @@ impl QuicListener {
 
 #[allow(unused)]
 struct QuicListenerEventLoop {
-    udp_group: Arc<UdpGroup>,
+    udp_group: Rc<UdpGroup>,
     incoming_sender: Sender<QuicConn>,
     acceptor: QuicAcceptor,
     /// incoming connection states
     conns: HashMap<ConnectionId<'static>, QuicConn>,
+    /// receiver for quic connection close event
+    close_receiver: Receiver<ConnectionId<'static>>,
+    /// sender for quic connection close event.
+    close_sender: Sender<ConnectionId<'static>>,
 }
 
 impl QuicListenerEventLoop {
@@ -84,11 +88,15 @@ impl QuicListenerEventLoop {
         incoming_sender: Sender<QuicConn>,
         config: Config,
     ) -> io::Result<Self> {
+        let (close_sender, close_receiver) = channel(100);
+
         Ok(Self {
-            udp_group: Arc::new(udp_group),
+            udp_group: Rc::new(udp_group),
             incoming_sender,
             acceptor: QuicAcceptor::new(config)?,
             conns: Default::default(),
+            close_receiver,
+            close_sender,
         })
     }
 
@@ -178,12 +186,12 @@ impl QuicListenerEventLoop {
             }
 
             // crate event loop
-            let event_loop = QuicConnEventLoop {
-                conn: conn.clone(),
-                udp_group: self.udp_group.clone(),
-            };
 
-            local_io_spawn(async move { event_loop.send_loop().await })?;
+            QuicConnEventLoop::server_event_loop(
+                conn.clone(),
+                self.udp_group.clone(),
+                self.close_sender.clone(),
+            )?;
 
             // register conn
             self.conns.insert(id, conn);

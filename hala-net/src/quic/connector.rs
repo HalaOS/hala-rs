@@ -1,8 +1,8 @@
 use std::{
     io,
     net::{SocketAddr, ToSocketAddrs},
-    sync::Arc,
-    time::{Duration, Instant},
+    rc::Rc,
+    time::Duration,
 };
 
 use hala_io_driver::Handle;
@@ -13,7 +13,7 @@ use ring::rand::{SecureRandom, SystemRandom};
 
 use crate::{errors::into_io_error, UdpGroup};
 
-use super::{Config, QuicConn, QuicConnState};
+use super::{eventloop::QuicConnEventLoop, Config, QuicConn, QuicConnState};
 
 /// Quic client connector
 pub struct InnerConnector {
@@ -101,7 +101,7 @@ impl From<InnerConnector> for QuicConn {
 /// Quic client connector instance.
 pub struct QuicConnector {
     config: Config,
-    udp_group: Arc<UdpGroup>,
+    udp_group: Rc<UdpGroup>,
 }
 
 impl QuicConnector {
@@ -119,7 +119,7 @@ impl QuicConnector {
         let udp_group = UdpGroup::bind_with(laddrs, poller)?;
 
         Ok(Self {
-            udp_group: Arc::new(udp_group),
+            udp_group: Rc::new(udp_group),
             config,
         })
     }
@@ -151,12 +151,7 @@ impl QuicConnector {
 
             match self.connect_once(connector).await {
                 Ok(conn) => {
-                    let event_loop = QuicConnEventLoop {
-                        conn: conn.clone(),
-                        udp_group: self.udp_group.clone(),
-                    };
-
-                    event_loop.run_loop()?;
+                    QuicConnEventLoop::client_event_loop(conn.clone(), self.udp_group.clone())?;
 
                     return Ok(conn);
                 }
@@ -212,102 +207,6 @@ impl QuicConnector {
             if connector.is_established() {
                 return Ok(connector.into());
             }
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct QuicConnEventLoop {
-    pub(super) conn: QuicConn,
-    pub(super) udp_group: Arc<UdpGroup>,
-}
-
-impl QuicConnEventLoop {
-    fn run_loop(&self) -> io::Result<()> {
-        let clonsed = self.clone();
-
-        local_io_spawn(async move { clonsed.clone().recv_loop().await })?;
-
-        let clonsed = self.clone();
-
-        local_io_spawn(async move { clonsed.clone().send_loop().await })?;
-
-        Ok(())
-    }
-
-    pub async fn recv_loop(&self) -> io::Result<()> {
-        let mut buf = vec![0; 65535];
-
-        loop {
-            let (laddr, read_size, raddr) = self.udp_group.recv_from(&mut buf).await?;
-
-            let recv_info = RecvInfo {
-                from: raddr,
-                to: laddr,
-            };
-
-            log::trace!(
-                "udp socket recv data, len={:?}, recv_info={:?}, {:?}",
-                read_size,
-                recv_info,
-                self.conn
-            );
-
-            let mut start_offset = 0;
-
-            let end_offset = read_size;
-
-            loop {
-                let read_size = self
-                    .conn
-                    .state
-                    .recv(&mut buf[start_offset..end_offset], recv_info)
-                    .await?;
-
-                start_offset += read_size;
-
-                if start_offset == end_offset {
-                    break;
-                }
-            }
-        }
-    }
-
-    pub async fn send_loop(&self) -> io::Result<()> {
-        let mut buf = vec![0; 65535];
-
-        loop {
-            let (send_size, send_info) = match self.conn.state.send(&mut buf).await {
-                Ok(r) => r,
-                Err(err) => {
-                    log::error!("Stop send_loop, conn={}, {}", self.conn.state.trace_id, err);
-
-                    return Ok(());
-                }
-            };
-
-            let now = Instant::now();
-
-            if now < send_info.at {
-                let duration = send_info.at - now;
-
-                if !duration.is_zero() {
-                    sleep_with(duration, get_local_poller()?).await?;
-                }
-            }
-
-            let sent_size = self
-                .udp_group
-                .send_to_on_path(&buf[..send_size], send_info.from, send_info.to)
-                .await?;
-
-            log::trace!(
-                "{:?} send_info={:?}, send_size={}, sent_size={}",
-                self.conn,
-                send_info,
-                send_size,
-                sent_size
-            );
         }
     }
 }

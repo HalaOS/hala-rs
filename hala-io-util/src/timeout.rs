@@ -9,7 +9,7 @@ use std::{
 use futures::{select, FutureExt};
 use hala_io_driver::{Cmd, Description, Driver, Handle, Interest, OpenFlags};
 
-use crate::{get_driver, get_poller};
+use crate::{get_driver, get_local_poller, get_poller};
 
 pub struct Sleep {
     fd: Option<Handle>,
@@ -143,6 +143,10 @@ pub async fn sleep(duration: Duration) -> io::Result<()> {
 
 pub async fn sleep_with(duration: Duration, poller: Handle) -> io::Result<()> {
     Sleep::new_with(poller, duration)?.await
+}
+
+pub async fn local_sleep(duration: Duration) -> io::Result<()> {
+    Sleep::new_with(get_local_poller()?, duration)?.await
 }
 
 #[cfg(test)]

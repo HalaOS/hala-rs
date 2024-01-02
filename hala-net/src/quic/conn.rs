@@ -1,5 +1,7 @@
 use std::{fmt::Debug, io};
 
+use quiche::ConnectionId;
+
 use super::{QuicConnState, QuicStream};
 
 /// Quic connection between a local and a remote.
@@ -10,7 +12,7 @@ pub struct QuicConn {
 
 impl Debug for QuicConn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "quic_conn={}", self.state.trace_id)
+        write!(f, "{:?}", self.state.conn_id)
     }
 }
 
@@ -34,8 +36,8 @@ impl QuicConn {
     }
 
     /// Get `QuicConn` trace id &str
-    pub fn trace_id(&self) -> &str {
-        &self.state.trace_id
+    pub fn conn_id(&self) -> &ConnectionId<'static> {
+        &self.state.conn_id
     }
 
     pub async fn is_closed(&self) -> bool {
