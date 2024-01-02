@@ -24,7 +24,9 @@ pub struct MioPoller(Arc<RawMioPoller>);
 
 impl Drop for MioPoller {
     fn drop(&mut self) {
-        log::trace!("Close mio poller");
+        if Arc::strong_count(&self.0) == 1 {
+            log::trace!("Close mio poller");
+        }
     }
 }
 
