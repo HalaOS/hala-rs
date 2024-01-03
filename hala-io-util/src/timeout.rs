@@ -106,6 +106,15 @@ where
 }
 
 /// Add timeout feature for exists `Fut`
+pub async fn local_timeout<'a, Fut, R>(fut: Fut, expired: Option<Duration>) -> io::Result<R>
+where
+    Fut: Future<Output = io::Result<R>> + 'a,
+    R: Debug,
+{
+    timeout_with(fut, expired, get_local_poller()?).await
+}
+
+/// Add timeout feature for exists `Fut`
 pub async fn timeout_with<'a, Fut, R>(
     fut: Fut,
     expired: Option<Duration>,

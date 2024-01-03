@@ -1,10 +1,15 @@
-use std::{collections::HashMap, io, rc::Rc, time::Instant};
+use std::{
+    collections::HashMap,
+    io,
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
 use futures::{
     channel::mpsc::{self, channel, Receiver, Sender},
     select, FutureExt, SinkExt, StreamExt,
 };
-use hala_io_util::{get_local_poller, local_io_spawn, sleep_with};
+use hala_io_util::{get_local_poller, local_io_spawn, local_sleep, sleep_with};
 use quiche::{ConnectionId, RecvInfo};
 
 use crate::{errors::into_io_error, UdpGroup};
@@ -240,85 +245,142 @@ impl QuicListenerEventLoop {
 
         let mut buf = vec![0; 65535];
         loop {
-            let (laddr, read_size, raddr) = this.udp_group.recv_from(&mut buf).await?;
+            let (laddr, read_size, raddr) = select! {
+                recv_data = this.udp_group.recv_from(&mut buf).fuse() => {
+                    let recv_data = recv_data?;
+
+                    recv_data
+                }
+                conn_id = this.close_receiver.next().fuse() => {
+                    // Safety: this `QuicListenerEventLoop` holds at least one instance of close_sender.
+
+                    this.conns.remove(conn_id.as_ref().unwrap());
+
+                    log::trace!("remove closed conn, conn_id={:?}",conn_id.unwrap());
+
+                    continue;
+                }
+                _ = local_sleep(Duration::from_secs(1)).fuse() => {
+                     // check QuicListener status
+                    if this.incoming_sender.is_closed() {
+                        log::trace!("QuicAccept closed, exit quic listener event loop");
+
+                        return Ok(());
+                    }
+
+                    continue;
+                }
+            };
 
             let recv_info = RecvInfo {
                 from: raddr,
                 to: laddr,
             };
 
-            let conn_id = {
-                let (read_size, header) = match this.acceptor.recv(&mut buf[..read_size], recv_info)
-                {
-                    Ok(r) => r,
-                    Err(err) => {
-                        log::error!("Recv invalid data from={},error={}", recv_info.from, err);
-
-                        continue;
-                    }
-                };
-
-                // handle init/handshake package response
-                if read_size != 0 {
-                    let (send_size, send_info) = match this.acceptor.send(&mut buf) {
-                        Ok(len) => len,
-                        Err(err) => {
-                            log::error!("Recv invalid data from={},error={}", recv_info.from, err);
-
-                            continue;
-                        }
-                    };
-
-                    this.udp_group
-                        .send_to_on_path(&buf[..send_size], send_info.from, send_info.to)
-                        .await?;
-
-                    if !this.handle_established().await? {
-                        return Ok(());
-                    }
-
-                    continue;
+            let conn_id = match this.handle_acceptor(&mut buf[..read_size], recv_info).await {
+                Ok(Some(conn_id)) => conn_id,
+                Ok(None) => continue,
+                Err(err) if err.kind() == io::ErrorKind::BrokenPipe => {
+                    log::trace!("QuicAccept closed, exit quic listener event loop");
+                    return Ok(());
                 }
-
-                header.dcid.into_owned()
+                Err(err) => return Err(err),
             };
 
-            log::trace!(
-                "quic listener recv data, len={}, quic_conn={:?}",
-                read_size,
-                conn_id
-            );
-
-            if let Some(conn) = this.conns.get(&conn_id) {
-                match conn.state.recv(&mut buf[..read_size], recv_info).await {
-                    Ok(_) => {}
-                    Err(err) => {
-                        log::error!(
-                            "Recv invalid data from={}, conn_id={:?}, error={}",
-                            recv_info.from,
-                            conn_id,
-                            err
-                        );
-
-                        this.conns.remove(&conn_id);
-                    }
+            match this
+                .dispatch_package(&mut buf[..read_size], recv_info, conn_id)
+                .await
+            {
+                Err(err) if err.kind() == io::ErrorKind::BrokenPipe => {
+                    log::trace!("exit quic listener event loop");
+                    return Ok(());
                 }
-            }
-
-            if this.incoming_sender.is_closed() {
-                log::trace!("quic listener, trace_id={:?} closed", conn_id);
-
-                return Ok(());
+                Err(err) => return Err(err),
+                _ => {}
             }
         }
     }
 
-    async fn handle_established<'a>(&mut self) -> io::Result<bool> {
+    async fn dispatch_package(
+        &mut self,
+        buf: &mut [u8],
+        recv_info: RecvInfo,
+        conn_id: ConnectionId<'static>,
+    ) -> io::Result<()> {
+        log::trace!(
+            "quic listener dispatch package, len={}, conn_id={:?}, recv_info={:?}",
+            buf.len(),
+            conn_id,
+            recv_info,
+        );
+
+        if let Some(conn) = self.conns.get(&conn_id) {
+            match conn.state.recv(buf, recv_info).await {
+                Ok(_) => {}
+                Err(err) => {
+                    self.conns.remove(&conn_id);
+
+                    log::error!(
+                        "remove quic conn for recv error, recv_info={:?}, conn={:?}, err={}",
+                        recv_info,
+                        conn_id,
+                        err
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn handle_acceptor(
+        &mut self,
+        buf: &mut [u8],
+        recv_info: RecvInfo,
+    ) -> io::Result<Option<ConnectionId<'static>>> {
+        let (read_size, header) = match self.acceptor.recv(buf, recv_info) {
+            Ok(r) => r,
+            Err(err) => {
+                log::error!("Recv invalid data from={},error={}", recv_info.from, err);
+
+                return Ok(None);
+            }
+        };
+
+        // handle init/handshake package response
+        if read_size != 0 {
+            let (send_size, send_info) = match self.acceptor.send(&mut buf[..read_size]) {
+                Ok(len) => len,
+                Err(err) => {
+                    log::error!("Recv invalid data from={},error={}", recv_info.from, err);
+
+                    return Ok(None);
+                }
+            };
+
+            self.udp_group
+                .send_to_on_path(&buf[..send_size], send_info.from, send_info.to)
+                .await?;
+
+            self.handle_established().await?;
+
+            return Ok(None);
+        }
+
+        Ok(Some(header.dcid.into_owned()))
+    }
+
+    async fn handle_established<'a>(&mut self) -> io::Result<()> {
         for (id, conn) in self.acceptor.pop_established() {
             // try send incoming connection.
             match self.incoming_sender.send(conn.clone()).await {
                 // listener already disposed
-                Err(_) => return Ok(false),
+                Err(_) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "Accept listener closed",
+                    ))
+                }
                 _ => {}
             }
 
@@ -333,7 +395,8 @@ impl QuicListenerEventLoop {
             // register conn
             self.conns.insert(id, conn);
         }
-        Ok(true)
+
+        Ok(())
     }
 }
 
@@ -342,7 +405,9 @@ mod tests {
     use std::{io, rc::Rc, time::Duration};
 
     use futures::{channel::mpsc::channel, SinkExt};
-    use hala_io_util::{get_local_poller, local_io_spawn, local_io_test, sleep_with, timeout_with};
+    use hala_io_util::{
+        get_local_poller, local_io_spawn, local_io_test, local_timeout, sleep_with, timeout_with,
+    };
     use ring::rand::{SecureRandom, SystemRandom};
 
     use crate::{
@@ -351,7 +416,7 @@ mod tests {
         UdpGroup,
     };
 
-    use super::QuicConnEventLoop;
+    use super::*;
 
     fn create_event_loop() -> io::Result<QuicConnEventLoop> {
         let udp_group = Rc::new(UdpGroup::bind("127.0.0.1:0").unwrap());
@@ -411,6 +476,42 @@ mod tests {
         )
         .await
         .expect_err("Expect recv_loop timeout");
+
+        assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+    }
+
+    #[hala_test::test(local_io_test)]
+    async fn test_listener_recv_loop_with_break() {
+        let udp_group = UdpGroup::bind("127.0.0.1:0").unwrap();
+        let (sender, receiver) = channel(10);
+
+        local_io_spawn(async move {
+            local_sleep(Duration::from_secs(4)).await.unwrap();
+            drop(receiver);
+
+            Ok(())
+        })
+        .unwrap();
+
+        local_timeout(
+            QuicListenerEventLoop::run_loop(udp_group, sender, mock_config(true)),
+            Some(Duration::from_secs(8)),
+        )
+        .await
+        .unwrap();
+    }
+
+    #[hala_test::test(local_io_test)]
+    async fn test_listener_recv_loop() {
+        let udp_group = UdpGroup::bind("127.0.0.1:0").unwrap();
+        let (sender, _receiver) = channel(10);
+
+        let err = local_timeout(
+            QuicListenerEventLoop::run_loop(udp_group, sender, mock_config(true)),
+            Some(Duration::from_secs(4)),
+        )
+        .await
+        .expect_err("Expect timeout");
 
         assert_eq!(err.kind(), io::ErrorKind::TimedOut);
     }
