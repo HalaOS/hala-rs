@@ -1,7 +1,6 @@
 use std::{fmt::Debug, io, sync::Arc};
 
 use futures::{AsyncRead, AsyncWrite, FutureExt};
-use quiche::ConnectionId;
 
 use super::QuicConnState;
 
@@ -13,7 +12,11 @@ pub struct QuicStream {
 
 impl Debug for QuicStream {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}, stream_id={}", self.state.conn_id, self.stream_id)
+        write!(
+            f,
+            "scid={:?}, dcid={:?}, stream_id={}",
+            self.state.scid, self.state.dcid, self.stream_id
+        )
     }
 }
 
@@ -37,10 +40,6 @@ impl QuicStream {
 
     pub async fn is_closed(&self) -> bool {
         self.state.is_stream_closed(*self.stream_id).await
-    }
-
-    pub fn trace_id(&self) -> &ConnectionId<'static> {
-        &self.state.conn_id
     }
 }
 

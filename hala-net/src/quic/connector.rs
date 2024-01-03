@@ -45,30 +45,54 @@ impl InnerConnector {
     /// Generate send data.
     pub fn send(&mut self, buf: &mut [u8]) -> io::Result<Option<(usize, SendInfo)>> {
         match self.quiche_conn.send(buf) {
-            Ok(r) => Ok(Some(r)),
-            Err(err) if err == quiche::Error::Done => {
-                log::info!(
-                    "Connector send done, conn_id={:?}, {:?}",
+            Ok((send_size, send_info)) => {
+                log::trace!(
+                    "connector, id={:?}, send_size={}, send_info={:?}",
                     self.quiche_conn.source_id(),
-                    self.quiche_conn.stats(),
+                    send_size,
+                    send_info
                 );
-                Ok(None)
+
+                return Ok(Some((send_size, send_info)));
             }
-            Err(err) => Err(io::Error::new(io::ErrorKind::ConnectionRefused, err)),
+            Err(err) if err == quiche::Error::Done => {
+                log::error!(
+                    "connector, id={:?}, send done",
+                    self.quiche_conn.source_id(),
+                );
+
+                return Ok(None);
+            }
+            Err(err) => {
+                log::error!(
+                    "connector, id={:?}, send err={}",
+                    self.quiche_conn.source_id(),
+                    err
+                );
+                return Err(io::Error::new(io::ErrorKind::ConnectionRefused, err));
+            }
         }
     }
 
     /// Accept remote peer data.
     pub fn recv(&mut self, buf: &mut [u8], recv_info: RecvInfo) -> io::Result<usize> {
-        let len = self
-            .quiche_conn
-            .recv(buf, recv_info)
-            .map_err(|err| io::Error::new(io::ErrorKind::ConnectionRefused, err))?;
+        let len = self.quiche_conn.recv(buf, recv_info).map_err(|err| {
+            log::error!(
+                "connector, id={:?}, recv err={}",
+                self.quiche_conn.source_id(),
+                err
+            );
+
+            return io::Error::new(io::ErrorKind::ConnectionRefused, err);
+        })?;
 
         if self.quiche_conn.is_closed() {
             return Err(io::Error::new(
                 io::ErrorKind::ConnectionRefused,
-                "Early stage reject",
+                format!(
+                    "Early stage reject, conn_id={:?}",
+                    self.quiche_conn.source_id()
+                ),
             ));
         }
 

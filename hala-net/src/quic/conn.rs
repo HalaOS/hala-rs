@@ -12,7 +12,7 @@ pub struct QuicConn {
 
 impl Debug for QuicConn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self.state.conn_id)
+        write!(f, "scid={:?}, dcid={:?}", self.state.scid, self.state.dcid)
     }
 }
 
@@ -37,7 +37,7 @@ impl QuicConn {
 
     /// Get `QuicConn` trace id &str
     pub fn conn_id(&self) -> &ConnectionId<'static> {
-        &self.state.conn_id
+        &self.state.scid
     }
 
     pub async fn is_closed(&self) -> bool {

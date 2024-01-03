@@ -67,6 +67,8 @@ impl QuicAcceptor {
         let mut conns = vec![];
 
         for id in ids {
+            log::info!("established conn={:?}", id);
+
             let state = QuicConn::new(QuicConnState::new(self.conns.remove(&id).unwrap(), 5));
             conns.push((id, state));
         }
@@ -165,15 +167,14 @@ impl QuicAcceptor {
                 }
             }
             quiche::Type::Handshake => {
-                let conn = self.conns.get_mut(&header.dcid).ok_or(io::Error::new(
-                    io::ErrorKind::ConnectionRefused,
-                    format!("Quic connection not found, decid={:?}", header.dcid),
-                ))?;
-
-                return conn
-                    .recv(buf, recv_info)
-                    .map_err(into_io_error)
-                    .map(|len| (len, header));
+                if let Some(conn) = self.conns.get_mut(&header.dcid) {
+                    return conn
+                        .recv(buf, recv_info)
+                        .map_err(into_io_error)
+                        .map(|len| (len, header));
+                } else {
+                    return Ok((0, header));
+                }
             }
             _ => {
                 return Ok((0, header));

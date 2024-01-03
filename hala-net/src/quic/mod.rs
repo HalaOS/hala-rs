@@ -43,7 +43,7 @@ mod tests {
         loop {
             let mut buf = [0; MAX_DATAGRAM_SIZE];
 
-            let (send_size, send_info) = connector.send(&mut buf).unwrap();
+            let (send_size, send_info) = connector.send(&mut buf).unwrap().unwrap();
 
             assert_eq!(send_info.from, laddr);
             assert_eq!(send_info.to, raddr);

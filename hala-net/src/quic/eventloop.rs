@@ -55,11 +55,7 @@ impl QuicConnSendEventLoop {
             let (send_size, send_info) = match self.conn.state.send(&mut buf).await {
                 Ok(r) => r,
                 Err(err) => {
-                    log::error!(
-                        "Stop send_loop, conn={:?}, {}",
-                        self.conn.state.conn_id,
-                        err
-                    );
+                    log::error!("Stop send_loop, {:?}, {}", self.conn, err);
 
                     return Ok(());
                 }
@@ -160,8 +156,8 @@ impl QuicConnEventLoop {
                 }
                 _ = close_receiver => {
                     log::error!(
-                        "Stop recv_loop, conn_id={:?}",
-                        self.send_event_loop.conn.state.conn_id,
+                        "Stop recv_loop, {:?}",
+                        self.send_event_loop.conn,
                     );
                     return Ok(())
                 }

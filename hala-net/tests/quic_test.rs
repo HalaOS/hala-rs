@@ -1,10 +1,10 @@
-use std::{io, net::SocketAddr};
+use std::{io, net::SocketAddr, time::Duration};
 
 use futures::{
     channel::{mpsc, oneshot},
     select, AsyncReadExt, AsyncWriteExt, Future, FutureExt, SinkExt, StreamExt,
 };
-use hala_io_util::{local_io_spawn, local_io_test};
+use hala_io_util::{local_io_spawn, local_io_test, local_sleep};
 use hala_net::*;
 
 fn mock_config(is_server: bool, max_stream: u64) -> Config {
@@ -34,7 +34,7 @@ fn mock_config(is_server: bool, max_stream: u64) -> Config {
         .set_application_protos(&[b"hq-interop", b"hq-29", b"hq-28", b"hq-27", b"http/0.9"])
         .unwrap();
 
-    config.set_max_idle_timeout(1000);
+    config.set_max_idle_timeout(5000);
     config.set_max_recv_udp_payload_size(MAX_DATAGRAM_SIZE);
     config.set_max_send_udp_payload_size(MAX_DATAGRAM_SIZE);
     config.set_initial_max_data(10_000_000);
@@ -64,6 +64,7 @@ where
     F: FnMut(QuicConn) -> Fut,
     Fut: Future<Output = io::Result<()>> + 'static,
 {
+    let mut i = 0;
     loop {
         let incoming = select! {
             incoming = listener.accept().fuse() => {
@@ -79,6 +80,8 @@ where
         };
 
         local_io_spawn(handle(incoming))?;
+
+        i += 1;
     }
 }
 
@@ -110,16 +113,14 @@ fn echod_server(max_stream: u64) -> io::Result<(oneshot::Sender<()>, Vec<SocketA
 
 #[hala_test::test(local_io_test)]
 async fn test_connect() {
-    _ = pretty_env_logger::formatted_timed_builder()
-        .parse_filters("info")
-        .try_init();
-
-    let clients = 80;
+    let clients = 200;
     let loops = 1;
 
     let (_close_sender, raddrs) = echod_server(loops + 1).unwrap();
 
     let (join_sender, mut join_receiver) = mpsc::channel::<()>(clients);
+
+    local_sleep(Duration::from_secs(2)).await.unwrap();
 
     for _ in 0..clients {
         let raddrs = raddrs.clone();
