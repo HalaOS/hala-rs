@@ -43,14 +43,19 @@ impl InnerConnector {
     }
 
     /// Generate send data.
-    pub fn send(&mut self, buf: &mut [u8]) -> io::Result<(usize, SendInfo)> {
-        self.quiche_conn.send(buf).map_err(|err| {
-            if err == quiche::Error::Done {
-                io::Error::new(io::ErrorKind::TimedOut, err)
-            } else {
-                io::Error::new(io::ErrorKind::ConnectionRefused, err)
+    pub fn send(&mut self, buf: &mut [u8]) -> io::Result<Option<(usize, SendInfo)>> {
+        match self.quiche_conn.send(buf) {
+            Ok(r) => Ok(Some(r)),
+            Err(err) if err == quiche::Error::Done => {
+                log::info!(
+                    "Connector send done, conn_id={:?}, {:?}",
+                    self.quiche_conn.source_id(),
+                    self.quiche_conn.stats(),
+                );
+                Ok(None)
             }
-        })
+            Err(err) => Err(io::Error::new(io::ErrorKind::ConnectionRefused, err)),
+        }
     }
 
     /// Accept remote peer data.
@@ -169,11 +174,11 @@ impl QuicConnector {
         let mut buf = vec![0; 65535];
 
         loop {
-            let (send_size, send_info) = connector.send(&mut buf)?;
-
-            self.udp_group
-                .send_to(&buf[..send_size], send_info.to)
-                .await?;
+            if let Some((send_size, send_info)) = connector.send(&mut buf)? {
+                self.udp_group
+                    .send_to(&buf[..send_size], send_info.to)
+                    .await?;
+            }
 
             let recv_timeout = connector.timeout();
 

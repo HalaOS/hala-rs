@@ -490,13 +490,16 @@ impl QuicConnState {
     }
 
     /// Close connection.
-    pub(super) async fn close(&self, app: bool, err: u64, reason: &[u8]) -> io::Result<()> {
+    pub(super) fn close(&self, app: bool, err: u64, reason: &[u8]) -> io::Result<()> {
         self.conn_state
-            .async_lock()
-            .await
+            .sync_lock()
             .quiche_conn
             .close(app, err, reason)
-            .map_err(into_io_error)
+            .map_err(into_io_error)?;
+
+        self.mediator.notify_any(Reason::Destroy);
+
+        Ok(())
     }
 
     pub(super) async fn is_closed(&self) -> bool {

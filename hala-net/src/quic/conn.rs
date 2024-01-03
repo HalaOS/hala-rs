@@ -31,8 +31,8 @@ impl QuicConn {
     }
 
     /// Close current quic connection.
-    pub async fn close(&self, app: bool, err: u64, reason: &[u8]) -> io::Result<()> {
-        self.state.close(app, err, reason).await
+    pub fn close(&self, app: bool, err: u64, reason: &[u8]) -> io::Result<()> {
+        self.state.close(app, err, reason)
     }
 
     /// Get `QuicConn` trace id &str

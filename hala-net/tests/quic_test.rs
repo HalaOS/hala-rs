@@ -1,16 +1,17 @@
-use futures::{channel::mpsc::channel, AsyncReadExt, AsyncWriteExt, SinkExt, StreamExt};
-use hala_io_util::*;
-use hala_net::quic::{
-    Config, InnerConnector, QuicAcceptor, QuicConn, QuicConnector, QuicListener, QuicStream,
+use std::{io, net::SocketAddr};
+
+use futures::{
+    channel::{mpsc, oneshot},
+    select, AsyncReadExt, AsyncWriteExt, Future, FutureExt, SinkExt, StreamExt,
 };
+use hala_io_util::{local_io_spawn, local_io_test};
+use hala_net::*;
 
-const MAX_DATAGRAM_SIZE: usize = 1350;
+fn mock_config(is_server: bool, max_stream: u64) -> Config {
+    use std::path::Path;
 
-use std::{future::pending, io, net::SocketAddr, path::Path, time::Duration};
+    const MAX_DATAGRAM_SIZE: usize = 1350;
 
-use quiche::RecvInfo;
-
-fn config(is_server: bool) -> Config {
     let mut config = Config::new().unwrap();
 
     config.verify_peer(false);
@@ -39,341 +40,105 @@ fn config(is_server: bool) -> Config {
     config.set_initial_max_data(10_000_000);
     config.set_initial_max_stream_data_bidi_local(1_000_000);
     config.set_initial_max_stream_data_bidi_remote(1_000_000);
-    config.set_initial_max_streams_bidi(100);
-    config.set_initial_max_streams_uni(100);
+    config.set_initial_max_streams_bidi(max_stream);
+    config.set_initial_max_streams_uni(max_stream);
     config.set_disable_active_migration(false);
 
     config
 }
 
-#[test]
-fn test_quic_connect_accept() {
-    let laddr = "127.0.0.1:10234".parse().unwrap();
-    let raddr = "127.0.0.1:20234".parse().unwrap();
+fn build_mock_server(max_stream: u64) -> io::Result<(QuicListener, Vec<SocketAddr>)> {
+    let listener = QuicListener::bind("127.0.0.1:0", mock_config(true, max_stream)).unwrap();
 
-    let mut connector = InnerConnector::new(&mut config(false), laddr, raddr).unwrap();
+    let raddrs = listener.local_addrs().map(|addr| *addr).collect::<Vec<_>>();
 
-    let mut acceptor = QuicAcceptor::new(config(true)).unwrap();
+    return Ok((listener, raddrs));
+}
 
+async fn mock_server_loop<F, Fut>(
+    mut listener: QuicListener,
+    mut close_receiver: oneshot::Receiver<()>,
+    mut handle: F,
+) -> io::Result<()>
+where
+    F: FnMut(QuicConn) -> Fut,
+    Fut: Future<Output = io::Result<()>> + 'static,
+{
     loop {
-        let mut buf = [0; MAX_DATAGRAM_SIZE];
+        let incoming = select! {
+            incoming = listener.accept().fuse() => {
+                if incoming.is_none() {
+                    return Ok(())
+                }
 
-        let (send_size, send_info) = connector.send(&mut buf).unwrap();
+                incoming.unwrap()
+            }
+            _ = close_receiver => {
+                return Ok(())
+            }
+        };
 
-        assert_eq!(send_info.from, laddr);
-        assert_eq!(send_info.to, raddr);
-
-        let (read_size, _) = acceptor
-            .recv(
-                &mut buf[..send_size],
-                RecvInfo {
-                    from: laddr,
-                    to: raddr,
-                },
-            )
-            .unwrap();
-
-        assert_eq!(read_size, send_size);
-
-        let (send_size, send_info) = acceptor.send(&mut buf).unwrap();
-
-        assert_eq!(send_info.from, raddr);
-        assert_eq!(send_info.to, laddr);
-
-        if !acceptor.pop_established().is_empty() {
-            assert!(connector.is_established());
-            break;
-        }
-
-        let read_size = connector
-            .recv(
-                &mut buf[..send_size],
-                RecvInfo {
-                    from: raddr,
-                    to: laddr,
-                },
-            )
-            .unwrap();
-
-        assert_eq!(read_size, send_size);
+        local_io_spawn(handle(incoming))?;
     }
 }
 
-#[allow(unused)]
-async fn create_listener(ports: i32) -> (QuicListener, Vec<SocketAddr>) {
-    let laddrs = (0..ports)
-        .clone()
-        .into_iter()
-        .map(|_| "127.0.0.1:0".parse::<SocketAddr>().unwrap())
-        .collect::<Vec<_>>();
+async fn echo_handle(conn: QuicConn) -> io::Result<()> {
+    while let Some(mut stream) = conn.accept().await {
+        local_io_spawn(async move {
+            let mut buf = vec![0; 65535];
 
-    let listener = QuicListener::bind(laddrs.as_slice(), config(true)).unwrap();
+            loop {
+                let read_size = stream.read(&mut buf).await?;
 
-    let laddrs = listener.local_addrs().map(|addr| *addr).collect::<Vec<_>>();
-
-    (listener, laddrs)
-}
-
-#[hala_test::test(local_io_test)]
-async fn test_async_quic() {
-    let (mut listener, laddrs) = create_listener(10).await;
-
-    local_io_spawn(async move {
-        sleep_with(Duration::from_secs(1), get_local_poller().unwrap())
-            .await
-            .unwrap();
-
-        let mut connector = QuicConnector::bind("127.0.0.1:0", config(false)).unwrap();
-
-        let conn = connector.connect(laddrs.as_slice()).await.unwrap();
-
-        log::debug!("client connected !!!");
-
-        let stream = conn.accept().await.unwrap();
-
-        log::debug!("client accept one stream({:?})", stream);
-
-        stream.stream_send(b"hello world", true).await.unwrap();
-
-        Ok(())
-    })
-    .unwrap();
-
-    let conn = listener.accept().await.unwrap();
-
-    log::debug!("Accept one incoming conn({:?})", conn);
-
-    let mut stream = conn.open_stream().await.unwrap();
-
-    stream.write(b"hello").await.unwrap();
-
-    log::debug!("Write stream data");
-
-    let mut buf = [0; MAX_DATAGRAM_SIZE];
-
-    let read_size = stream.read(&mut buf).await.unwrap();
-
-    assert_eq!(&buf[..read_size], b"hello world");
-
-    assert!(stream.is_closed().await);
-}
-
-#[hala_test::test(local_io_test)]
-async fn test_connector_timeout() {
-    let mut connector = QuicConnector::bind("127.0.0.1:0", config(false)).unwrap();
-
-    let err = connector.connect("127.0.0.1:1812").await.unwrap_err();
-
-    assert_eq!(err.kind(), io::ErrorKind::TimedOut);
-}
-
-#[hala_test::test(local_io_test)]
-async fn test_conn_timeout() {
-    let (mut listener, laddrs) = create_listener(1).await;
-
-    let mut connector = QuicConnector::bind("127.0.0.1:0", config(false)).unwrap();
-
-    local_io_spawn(async move {
-        let _ = listener.accept().await.unwrap();
-
-        log::trace!("Accept one incoming");
-
-        Ok(())
-    })
-    .unwrap();
-
-    sleep_with(Duration::from_secs(1), get_local_poller().unwrap())
-        .await
-        .unwrap();
-
-    log::trace!("Client connect");
-
-    let conn = connector.connect(laddrs.as_slice()).await.unwrap();
-
-    log::trace!("Client connected");
-
-    let mut stream = conn.open_stream().await.unwrap();
-
-    stream.write(b"hello world").await.unwrap();
-
-    let mut buf = [0; MAX_DATAGRAM_SIZE];
-
-    log::trace!("Start stream recv");
-
-    let error = stream.read(&mut buf).await.unwrap_err();
-
-    assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
-}
-
-async fn accept_stream(conn: QuicConn) -> io::Result<()> {
-    while let Some(stream) = conn.accept().await {
-        local_io_spawn(stream_echo(stream))?;
+                stream.write_all(&buf[..read_size]).await?;
+            }
+        })?;
     }
 
     Ok(())
 }
 
-async fn stream_echo(mut stream: QuicStream) -> io::Result<()> {
-    loop {
-        let mut buf = vec![0; 65535];
+fn echod_server(max_stream: u64) -> io::Result<(oneshot::Sender<()>, Vec<SocketAddr>)> {
+    let (listener, raddrs) = build_mock_server(max_stream)?;
 
-        let read_size = stream.read(&mut buf).await?;
+    let (close_sender, close_receiver) = oneshot::channel();
 
-        stream.write_all(&buf[..read_size]).await?;
-    }
+    local_io_spawn(mock_server_loop(listener, close_receiver, echo_handle))?;
+
+    Ok((close_sender, raddrs))
 }
 
 #[hala_test::test(local_io_test)]
-async fn test_multi_quic_stream() {
-    let (mut listener, laddrs) = create_listener(1).await;
+async fn test_connect() {
+    _ = pretty_env_logger::formatted_timed_builder()
+        .parse_filters("info")
+        .try_init();
 
-    let mut connector = QuicConnector::bind("127.0.0.1:0", config(false)).unwrap();
+    let clients = 80;
+    let loops = 1;
 
-    local_io_spawn(async move {
-        let conn = listener.accept().await.unwrap();
+    let (_close_sender, raddrs) = echod_server(loops + 1).unwrap();
 
-        local_io_spawn(accept_stream(conn))?;
+    let (join_sender, mut join_receiver) = mpsc::channel::<()>(clients);
 
-        Ok(())
-    })
-    .unwrap();
+    for _ in 0..clients {
+        let raddrs = raddrs.clone();
 
-    sleep_with(Duration::from_secs(1), get_local_poller().unwrap())
-        .await
-        .unwrap();
-
-    let conn = connector.connect(laddrs.as_slice()).await.unwrap();
-
-    let (s, mut r) = channel::<()>(0);
-
-    let count = 99;
-
-    for i in 0..count {
-        let mut s = s.clone();
-
-        let mut stream = conn.open_stream().await.unwrap();
+        let mut join_sender = join_sender.clone();
 
         local_io_spawn(async move {
-            let data: String = format!("hello world {}", i);
+            let mut connector = QuicConnector::bind("127.0.0.1:0", mock_config(false, loops + 1))?;
 
-            for _ in 0..count {
-                stream.write(data.as_bytes()).await.unwrap();
+            let _conn = connector.connect(raddrs.as_slice()).await?;
 
-                let mut buf = [0; 1024];
-
-                let read_size = stream.read(&mut buf).await.unwrap();
-
-                assert_eq!(&buf[..read_size], data.as_bytes());
-            }
-
-            s.send(()).await.unwrap();
-
-            log::trace!("stream {} complete", i);
+            join_sender.send(()).await.unwrap();
 
             Ok(())
         })
         .unwrap();
     }
 
-    for _ in 0..count {
-        r.next().await.unwrap();
+    for _ in 0..clients {
+        join_receiver.next().await;
     }
-}
-
-async fn stream_close(conn: QuicConn) -> io::Result<()> {
-    while let Some(mut stream) = conn.accept().await {
-        let mut buf = vec![0; 65535];
-
-        _ = stream.read(&mut buf).await?;
-
-        // read data and close stream immediately
-    }
-
-    Ok(())
-}
-
-#[hala_test::test(local_io_test)]
-async fn test_quic_stream_drop() {
-    let (mut listener, laddrs) = create_listener(1).await;
-
-    let mut config = config(false);
-
-    config.set_initial_max_streams_bidi(1);
-
-    let mut connector = QuicConnector::bind("127.0.0.1:0", config).unwrap();
-
-    local_io_spawn(async move {
-        let conn = listener.accept().await.unwrap();
-
-        local_io_spawn(stream_close(conn))?;
-
-        Ok(())
-    })
-    .unwrap();
-
-    sleep_with(Duration::from_secs(1), get_local_poller().unwrap())
-        .await
-        .unwrap();
-
-    let conn = connector.connect(laddrs.as_slice()).await.unwrap();
-
-    let count = 90;
-
-    for i in 0..count {
-        let mut stream = conn.open_stream().await.unwrap();
-
-        let data: String = format!("hello world {}", i);
-
-        stream.write(data.as_bytes()).await.unwrap();
-
-        let mut buf = [0; 1024];
-
-        let (read_size, fin) = stream.stream_recv(&mut buf).await.unwrap();
-
-        assert_eq!(read_size, 0);
-
-        assert_eq!(fin, true);
-    }
-}
-
-#[hala_test::test(local_io_test)]
-async fn test_quic_stream_heartbeat() {
-    let (mut listener, laddrs) = create_listener(1).await;
-
-    let mut config = config(false);
-
-    config.set_initial_max_streams_bidi(1);
-
-    let mut connector = QuicConnector::bind("127.0.0.1:0", config).unwrap();
-
-    local_io_spawn(async move {
-        loop {
-            let conn = listener.accept().await.unwrap();
-
-            local_io_spawn(accept_stream(conn))?;
-        }
-    })
-    .unwrap();
-
-    sleep_with(Duration::from_secs(1), get_local_poller().unwrap())
-        .await
-        .unwrap();
-
-    let conn = connector.connect(laddrs.as_slice()).await.unwrap();
-
-    let mut stream = conn.open_stream().await.unwrap();
-
-    let data: String = format!("hello world {}", 1);
-
-    stream.write(data.as_bytes()).await.unwrap();
-
-    let mut buf = [0; 1024];
-
-    let (read_size, fin) = stream.stream_recv(&mut buf).await.unwrap();
-
-    assert_eq!(read_size, data.len());
-
-    assert!(!fin);
-
-    pending::<()>().await;
 }

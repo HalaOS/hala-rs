@@ -33,7 +33,7 @@ enum InitAck {
 }
 
 /// Quic server connection acceptor
-pub struct QuicAcceptor {
+pub(super) struct QuicAcceptor {
     config: Config,
     conn_id_seed: Key,
     conns: HashMap<ConnectionId<'static>, quiche::Connection>,

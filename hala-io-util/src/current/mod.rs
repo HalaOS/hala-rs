@@ -135,6 +135,7 @@ struct LocalBlockOnIoSpawner(LocalSpawner);
 
 impl IoSpawner for LocalBlockOnIoSpawner {
     type Fut = LocalBoxFuture<'static, std::io::Result<()>>;
+
     fn spawn(&self, fut: LocalBoxFuture<'static, std::io::Result<()>>) -> std::io::Result<()> {
         self.0
             .spawn_local(async move {

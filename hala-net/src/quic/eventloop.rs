@@ -159,6 +159,10 @@ impl QuicConnEventLoop {
                     recv_data
                 }
                 _ = close_receiver => {
+                    log::error!(
+                        "Stop recv_loop, conn_id={:?}",
+                        self.send_event_loop.conn.state.conn_id,
+                    );
                     return Ok(())
                 }
             };
@@ -277,7 +281,7 @@ impl QuicListenerEventLoop {
                 to: laddr,
             };
 
-            let conn_id = match this.handle_acceptor(&mut buf[..read_size], recv_info).await {
+            let conn_id = match this.handle_acceptor(&mut buf, read_size, recv_info).await {
                 Ok(Some(conn_id)) => conn_id,
                 Ok(None) => continue,
                 Err(err) if err.kind() == io::ErrorKind::BrokenPipe => {
@@ -315,6 +319,7 @@ impl QuicListenerEventLoop {
         );
 
         if let Some(conn) = self.conns.get(&conn_id) {
+            // Attention!! , this method must not block or pending current task.
             match conn.state.recv(buf, recv_info).await {
                 Ok(_) => {}
                 Err(err) => {
@@ -336,9 +341,10 @@ impl QuicListenerEventLoop {
     async fn handle_acceptor(
         &mut self,
         buf: &mut [u8],
+        read_size: usize,
         recv_info: RecvInfo,
     ) -> io::Result<Option<ConnectionId<'static>>> {
-        let (read_size, header) = match self.acceptor.recv(buf, recv_info) {
+        let (read_size, header) = match self.acceptor.recv(&mut buf[..read_size], recv_info) {
             Ok(r) => r,
             Err(err) => {
                 log::error!("Recv invalid data from={},error={}", recv_info.from, err);
@@ -349,7 +355,7 @@ impl QuicListenerEventLoop {
 
         // handle init/handshake package response
         if read_size != 0 {
-            let (send_size, send_info) = match self.acceptor.send(&mut buf[..read_size]) {
+            let (send_size, send_info) = match self.acceptor.send(buf) {
                 Ok(len) => len,
                 Err(err) => {
                     log::error!("Recv invalid data from={},error={}", recv_info.from, err);

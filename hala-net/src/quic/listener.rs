@@ -4,7 +4,7 @@ use futures::{
     channel::mpsc::{channel, Receiver},
     io, StreamExt,
 };
-use hala_io_driver::Handle;
+
 use hala_io_util::*;
 
 use crate::UdpGroup;
@@ -37,18 +37,7 @@ impl QuicListener {
 
     /// Create new quic server listener and bind to `laddrs`
     pub fn bind<Addrs: ToSocketAddrs>(laddrs: Addrs, config: Config) -> io::Result<Self> {
-        Self::bind_with(laddrs, config, get_local_poller()?)
-    }
-
-    /// Create new quic server listener and bind to `laddrs`
-    ///
-    /// `poller` is the reactor event notify handle bind to this socket.
-    pub fn bind_with<Addrs: ToSocketAddrs>(
-        laddrs: Addrs,
-        config: Config,
-        poller: Handle,
-    ) -> io::Result<Self> {
-        let udp_group = UdpGroup::bind_with(laddrs, poller)?;
+        let udp_group = UdpGroup::bind_with(laddrs, get_local_poller()?)?;
 
         Self::new(udp_group, config)
     }

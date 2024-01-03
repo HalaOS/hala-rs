@@ -34,6 +34,7 @@ impl From<HalaIoError> for std::io::Error {
                 quiche::Error::StreamStopped(_) | quiche::Error::InvalidStreamState(_) => {
                     std::io::Error::new(std::io::ErrorKind::BrokenPipe, err)
                 }
+                quiche::Error::StreamLimit => std::io::Error::new(std::io::ErrorKind::Other, err),
                 _ => std::io::Error::new(std::io::ErrorKind::Other, err),
             },
             #[cfg(feature = "quice")]

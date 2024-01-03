@@ -40,7 +40,7 @@ impl DerefMut for Config {
 }
 
 #[cfg(test)]
-pub(crate) fn mock_config(is_server: bool) -> Config {
+pub(super) fn mock_config(is_server: bool) -> Config {
     use std::path::Path;
 
     const MAX_DATAGRAM_SIZE: usize = 1350;
