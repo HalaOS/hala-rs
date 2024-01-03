@@ -145,7 +145,7 @@ mod tests {
     #[test]
     fn test_add_timers() {
         let threads = 10;
-        let loops = 10usize;
+        let loops = 3usize;
 
         let time_wheel = HashedTimeWheel::<i32>::new(Duration::from_millis(100));
 

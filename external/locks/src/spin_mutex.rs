@@ -1,4 +1,4 @@
-use std::ops;
+use std::{collections::VecDeque, ops, task::Waker};
 
 use crate::{Locker, LockerGuard};
 
@@ -90,7 +90,7 @@ impl<'a, T> LockerGuard<'a> for SpinMutexGuard<'a, T> {
 
 use super::*;
 
-pub type WaitableSpinMutex<T> = WaitableLockerMaker<SpinMutex<T>>;
+pub type WaitableSpinMutex<T> = WaitableLockerMaker<SpinMutex<T>, SpinMutex<VecDeque<Waker>>>;
 
 #[cfg(test)]
 mod tests {

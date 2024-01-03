@@ -1,6 +1,6 @@
-use std::ops;
+use std::{collections::VecDeque, ops, task::Waker};
 
-use crate::{Locker, LockerGuard, WaitableLockerMaker};
+use crate::{Locker, LockerGuard, SpinMutex, WaitableLockerMaker};
 
 impl<T> Locker for std::sync::Mutex<T> {
     type Data = T;
@@ -54,7 +54,7 @@ impl<'a, T> LockerGuard<'a> for MutexGuard<'a, T> {
     }
 }
 
-pub type WaitableMutex<T> = WaitableLockerMaker<std::sync::Mutex<T>>;
+pub type WaitableMutex<T> = WaitableLockerMaker<std::sync::Mutex<T>, SpinMutex<VecDeque<Waker>>>;
 
 #[cfg(test)]
 mod tests {

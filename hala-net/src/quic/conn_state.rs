@@ -7,7 +7,7 @@ use std::{
 };
 
 use event_map::{
-    locks::{Locker, WaitableLocker, WaitableSpinMutex},
+    locks::{Locker, WaitableLocker, WaitableRefCell},
     EventMap, Reason,
 };
 
@@ -128,7 +128,7 @@ fn handle_close(mediator: &EventMap<QuicConnEvents>) {
 /// Quic connection state object
 #[derive(Clone)]
 pub struct QuicConnState {
-    conn_state: Rc<WaitableSpinMutex<RawQuicConnState>>,
+    conn_state: Rc<WaitableRefCell<RawQuicConnState>>,
     /// core inner state.
     pub(crate) mediator: EventMap<QuicConnEvents>,
     /// String type trace id.
@@ -139,7 +139,7 @@ impl QuicConnState {
     pub fn new(quiche_conn: quiche::Connection, stream_id_seed: u64) -> Self {
         Self {
             conn_id: Rc::new(quiche_conn.source_id().into_owned()),
-            conn_state: Rc::new(WaitableSpinMutex::new(RawQuicConnState::new(
+            conn_state: Rc::new(WaitableRefCell::new(RawQuicConnState::new(
                 quiche_conn,
                 stream_id_seed,
             ))),

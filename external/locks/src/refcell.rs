@@ -1,4 +1,4 @@
-use std::ops;
+use std::{cell::RefCell, collections::VecDeque, ops, task::Waker};
 
 use crate::{Locker, LockerGuard, WaitableLockerMaker};
 
@@ -54,7 +54,7 @@ impl<'a, T> LockerGuard<'a> for RefcellGuard<'a, T> {
     }
 }
 
-pub type WaitableRefCell<T> = WaitableLockerMaker<std::sync::Mutex<T>>;
+pub type WaitableRefCell<T> = WaitableLockerMaker<RefCell<T>, RefCell<VecDeque<Waker>>>;
 
 #[cfg(test)]
 mod tests {

@@ -1,6 +1,4 @@
-use futures::{
-    channel::mpsc::channel, future::pending, AsyncReadExt, AsyncWriteExt, SinkExt, StreamExt,
-};
+use futures::{channel::mpsc::channel, AsyncReadExt, AsyncWriteExt, SinkExt, StreamExt};
 use hala_io_util::*;
 use hala_net::quic::{
     Config, InnerConnector, QuicAcceptor, QuicConn, QuicConnector, QuicListener, QuicStream,
@@ -8,7 +6,7 @@ use hala_net::quic::{
 
 const MAX_DATAGRAM_SIZE: usize = 1350;
 
-use std::{io, net::SocketAddr, path::Path, time::Duration};
+use std::{future::pending, io, net::SocketAddr, path::Path, time::Duration};
 
 use quiche::RecvInfo;
 

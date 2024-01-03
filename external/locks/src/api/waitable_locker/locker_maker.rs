@@ -1,22 +1,24 @@
 use std::{collections::VecDeque, task::Waker};
 
-use crate::{Locker, SpinMutex, WaitableLocker, WaitableLockerGuardMaker};
+use crate::{Locker, WaitableLocker, WaitableLockerGuardMaker};
 
 /// A type factory of [`WaitableLocker`].
 ///
 /// This type combine a [`Locker`] type and [`SpinMutex<VecDeque<Waker>>`] to implement [`WaitableLocker`] trait.
 #[derive(Debug)]
-pub struct WaitableLockerMaker<L>
+pub struct WaitableLockerMaker<L, W>
 where
     L: Locker,
+    W: Locker<Data = VecDeque<Waker>>,
 {
-    wakers: SpinMutex<VecDeque<Waker>>,
+    wakers: W,
     inner_locker: L,
 }
 
-impl<L> Default for WaitableLockerMaker<L>
+impl<L, W> Default for WaitableLockerMaker<L, W>
 where
     L: Locker + Default,
+    W: Locker<Data = VecDeque<Waker>> + Default,
 {
     fn default() -> Self {
         Self {
@@ -26,9 +28,10 @@ where
     }
 }
 
-impl<L> WaitableLocker for WaitableLockerMaker<L>
+impl<L, W> WaitableLocker for WaitableLockerMaker<L, W>
 where
     L: Locker,
+    W: Locker<Data = VecDeque<Waker>> + Default,
 {
     type WaitableGuard<'a> = WaitableLockerGuardMaker<'a,Self,L::Guard<'a>>
     where
@@ -58,9 +61,10 @@ where
     }
 }
 
-impl<L> Locker for WaitableLockerMaker<L>
+impl<L, W> Locker for WaitableLockerMaker<L, W>
 where
     L: Locker,
+    W: Locker<Data = VecDeque<Waker>> + Default,
 {
     type Data = L::Data;
 
