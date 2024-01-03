@@ -1,12 +1,15 @@
-use std::{io, rc::Rc, time::Instant};
+use std::{collections::HashMap, io, rc::Rc, time::Instant};
 
-use futures::{channel::mpsc, select, FutureExt, SinkExt, StreamExt};
+use futures::{
+    channel::mpsc::{self, channel, Receiver, Sender},
+    select, FutureExt, SinkExt, StreamExt,
+};
 use hala_io_util::{get_local_poller, local_io_spawn, sleep_with};
 use quiche::{ConnectionId, RecvInfo};
 
 use crate::{errors::into_io_error, UdpGroup};
 
-use super::QuicConn;
+use super::{Config, QuicAcceptor, QuicConn};
 
 #[derive(Clone)]
 struct QuicConnSendEventLoop {
@@ -186,6 +189,151 @@ impl QuicConnEventLoop {
                 }
             }
         }
+    }
+}
+
+/// The background event loop for [`QuicListener`]
+pub(super) struct QuicListenerEventLoop {
+    /// The udp group bound to this event loop.
+    udp_group: Rc<UdpGroup>,
+
+    /// Sender for incoming connection object.
+    incoming_sender: Sender<QuicConn>,
+
+    /// New incoming connection fitler.
+    acceptor: QuicAcceptor,
+
+    /// incoming connection states
+    conns: HashMap<ConnectionId<'static>, QuicConn>,
+
+    /// receiver for quic connection close event
+    close_receiver: Receiver<ConnectionId<'static>>,
+
+    /// sender for quic connection close event.
+    close_sender: Sender<ConnectionId<'static>>,
+}
+
+impl QuicListenerEventLoop {
+    fn new(
+        udp_group: UdpGroup,
+        incoming_sender: Sender<QuicConn>,
+        config: Config,
+    ) -> io::Result<Self> {
+        let (close_sender, close_receiver) = channel(100);
+
+        Ok(Self {
+            udp_group: Rc::new(udp_group),
+            incoming_sender,
+            acceptor: QuicAcceptor::new(config)?,
+            conns: Default::default(),
+            close_receiver,
+            close_sender,
+        })
+    }
+
+    pub(super) async fn run_loop(
+        udp_group: UdpGroup,
+        incoming_sender: Sender<QuicConn>,
+        config: Config,
+    ) -> io::Result<()> {
+        let mut this = Self::new(udp_group, incoming_sender, config)?;
+
+        let mut buf = vec![0; 65535];
+        loop {
+            let (laddr, read_size, raddr) = this.udp_group.recv_from(&mut buf).await?;
+
+            let recv_info = RecvInfo {
+                from: raddr,
+                to: laddr,
+            };
+
+            let conn_id = {
+                let (read_size, header) = match this.acceptor.recv(&mut buf[..read_size], recv_info)
+                {
+                    Ok(r) => r,
+                    Err(err) => {
+                        log::error!("Recv invalid data from={},error={}", recv_info.from, err);
+
+                        continue;
+                    }
+                };
+
+                // handle init/handshake package response
+                if read_size != 0 {
+                    let (send_size, send_info) = match this.acceptor.send(&mut buf) {
+                        Ok(len) => len,
+                        Err(err) => {
+                            log::error!("Recv invalid data from={},error={}", recv_info.from, err);
+
+                            continue;
+                        }
+                    };
+
+                    this.udp_group
+                        .send_to_on_path(&buf[..send_size], send_info.from, send_info.to)
+                        .await?;
+
+                    if !this.handle_established().await? {
+                        return Ok(());
+                    }
+
+                    continue;
+                }
+
+                header.dcid.into_owned()
+            };
+
+            log::trace!(
+                "quic listener recv data, len={}, quic_conn={:?}",
+                read_size,
+                conn_id
+            );
+
+            if let Some(conn) = this.conns.get(&conn_id) {
+                match conn.state.recv(&mut buf[..read_size], recv_info).await {
+                    Ok(_) => {}
+                    Err(err) => {
+                        log::error!(
+                            "Recv invalid data from={}, conn_id={:?}, error={}",
+                            recv_info.from,
+                            conn_id,
+                            err
+                        );
+
+                        this.conns.remove(&conn_id);
+                    }
+                }
+            }
+
+            if this.incoming_sender.is_closed() {
+                log::trace!("quic listener, trace_id={:?} closed", conn_id);
+
+                return Ok(());
+            }
+        }
+    }
+
+    async fn handle_established<'a>(&mut self) -> io::Result<bool> {
+        for (id, conn) in self.acceptor.pop_established() {
+            // try send incoming connection.
+            match self.incoming_sender.send(conn.clone()).await {
+                // listener already disposed
+                Err(_) => return Ok(false),
+                _ => {}
+            }
+
+            // crate event loop
+
+            QuicConnEventLoop::server_event_loop(
+                conn.clone(),
+                self.udp_group.clone(),
+                self.close_sender.clone(),
+            )?;
+
+            // register conn
+            self.conns.insert(id, conn);
+        }
+        Ok(true)
     }
 }
 
