@@ -109,7 +109,6 @@ where
 pub async fn local_timeout<'a, Fut, R>(fut: Fut, expired: Option<Duration>) -> io::Result<R>
 where
     Fut: Future<Output = io::Result<R>> + 'a,
-    R: Debug,
 {
     timeout_with(fut, expired, get_local_poller()?).await
 }
@@ -122,7 +121,6 @@ pub async fn timeout_with<'a, Fut, R>(
 ) -> io::Result<R>
 where
     Fut: Future<Output = io::Result<R>> + 'a,
-    R: Debug,
 {
     if let Some(expired) = expired {
         if !expired.is_zero() {

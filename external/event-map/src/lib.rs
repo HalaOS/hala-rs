@@ -68,12 +68,12 @@ impl WakerWrapper {
 }
 
 /// Event waitable map using [`DashMap`](dashmap::DashMap) inner
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct EventMap<E>
 where
     E: Send + Eq + Hash,
 {
-    wakers: Arc<DashMap<E, WakerWrapper>>,
+    wakers: DashMap<E, WakerWrapper>,
 }
 
 impl<E> Default for EventMap<E>
@@ -82,28 +82,52 @@ where
 {
     fn default() -> Self {
         Self {
-            wakers: Arc::new(DashMap::new()),
+            wakers: DashMap::new(),
         }
     }
 }
 
-impl<E> EventMap<E>
-where
-    E: Send + Eq + Hash,
-{
+pub trait WaitableEventMap {
+    type E: Send + Eq + Hash + Debug + Clone;
+
     /// Only remove event waker, without wakeup it.
-    pub fn wait_cancel<Q>(&self, event: Q)
+    fn wait_cancel<Q>(&self, event: Q)
     where
-        E: Debug,
+        Q: Borrow<Self::E>;
+
+    /// Notify one event `E` on.
+    fn notify_one<Q>(&self, event: Q, reason: Reason) -> bool
+    where
+        Q: Borrow<Self::E>;
+
+    /// Notify all event on in the providing `events` list
+    fn notify_all<L: AsRef<[Self::E]>>(&self, events: L, reason: Reason);
+
+    /// Notify all event on in the providing `events` list
+    fn notify_any(&self, reason: Reason);
+
+    fn wait<'a, Q, G>(&'a self, event: Q, guard: G) -> Wait<'a, Self::E, G>
+    where
+        G: WaitableLockerGuard<'a>,
+        Q: Borrow<Self::E>;
+}
+
+impl<E> WaitableEventMap for EventMap<E>
+where
+    E: Send + Eq + Hash + Debug + Clone,
+{
+    type E = E;
+    /// Only remove event waker, without wakeup it.
+    fn wait_cancel<Q>(&self, event: Q)
+    where
         Q: Borrow<E>,
     {
         self.wakers.remove(event.borrow());
     }
 
     /// Notify one event `E` on.
-    pub fn notify_one<Q>(&self, event: Q, reason: Reason) -> bool
+    fn notify_one<Q>(&self, event: Q, reason: Reason) -> bool
     where
-        E: Debug,
         Q: Borrow<E>,
     {
         if let Some((_, waker)) = self.wakers.remove(event.borrow()) {
@@ -116,20 +140,14 @@ where
     }
 
     /// Notify all event on in the providing `events` list
-    pub fn notify_all<L: AsRef<[E]>>(&self, events: L, reason: Reason)
-    where
-        E: Debug,
-    {
+    fn notify_all<L: AsRef<[E]>>(&self, events: L, reason: Reason) {
         for event in events.as_ref() {
             self.notify_one(event, reason);
         }
     }
 
     /// Notify all event on in the providing `events` list
-    pub fn notify_any(&self, reason: Reason)
-    where
-        E: Debug + Clone,
-    {
+    fn notify_any(&self, reason: Reason) {
         let events = self
             .wakers
             .iter()
@@ -139,14 +157,14 @@ where
         self.notify_all(&events, reason);
     }
 
-    pub fn wait<'a, Q, G>(&self, event: Q, guard: G) -> Wait<'a, E, G>
+    fn wait<'a, Q, G>(&'a self, event: Q, guard: G) -> Wait<'a, E, G>
     where
         G: WaitableLockerGuard<'a>,
         E: Clone,
         Q: Borrow<E>,
     {
         Wait {
-            wakers: self.wakers.clone(),
+            wakers: &self.wakers,
             reason: Arc::new(AtomicU8::new(Reason::None.into())),
             locker: guard.locker(),
             guard,
@@ -161,11 +179,8 @@ where
     E: Send + Eq + Hash,
 {
     fn drop(&mut self) {
-        if Arc::strong_count(&self.wakers) == 1 {
-            // wakeup all pending future.
-            for entry in self.wakers.iter() {
-                entry.value().wake_by_ref(Reason::Destroy);
-            }
+        for entry in self.wakers.iter() {
+            entry.value().wake_by_ref(Reason::Destroy);
         }
     }
 }
@@ -176,7 +191,7 @@ where
     G: 'a,
     G: WaitableLockerGuard<'a>,
 {
-    wakers: Arc<DashMap<E, WakerWrapper>>,
+    wakers: &'a DashMap<E, WakerWrapper>,
     reason: Arc<AtomicU8>,
     event: Option<E>,
     event_debug: E,
@@ -270,7 +285,7 @@ mod tests {
     fn test_local_mediator() {
         let mut local_pool = LocalPool::new();
 
-        let mediator = EventMap::<i32>::default();
+        let mediator = Rc::new(EventMap::<i32>::default());
 
         let shared = Rc::new(WaitableRefCell::new(1));
 
@@ -309,7 +324,7 @@ mod tests {
     async fn test_multi_thread_notify() {
         let local_pool = ThreadPool::builder().pool_size(10).create().unwrap();
 
-        let mediator = EventMap::<i32>::default();
+        let mediator = Arc::new(EventMap::<i32>::default());
 
         let shared = Arc::new(WaitableSpinMutex::new(1));
 
@@ -353,7 +368,7 @@ mod tests {
 
         let local_pool = ThreadPool::builder().pool_size(10).create().unwrap();
 
-        let mediator = EventMap::<i32>::default();
+        let mediator = Arc::new(EventMap::<i32>::default());
 
         let shared = Arc::new(WaitableSpinMutex::new(1));
 

@@ -9,10 +9,11 @@ use crate::{Locker, LockerGuard};
 /// `Locker` for asynchronous mode
 pub trait WaitableLocker: Locker {
     /// Lock guard type for immutable reference.
-    type WaitableGuard<'a>: WaitableLockerGuard<'a, Locker = Self> + ops::Deref<Target = Self::Data>
+    type WaitableGuard<'a>: WaitableLockerGuard<'a, Locker = Self>
+        + ops::DerefMut<Target = Self::Value>
     where
         Self: 'a,
-        Self::Data: 'a;
+        Self::Value: 'a;
 
     /// [`lock`](Locker::try_lock) for asynchronous mode
     fn async_lock(&self) -> LockFuture<'_, Self>

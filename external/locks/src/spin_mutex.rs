@@ -23,12 +23,12 @@ unsafe impl<T> Send for SpinMutex<T> {}
 unsafe impl<T: Send> Sync for SpinMutex<T> {}
 
 impl<T> Locker for SpinMutex<T> {
-    type Data = T;
+    type Value = T;
 
     type Guard<'a> = SpinMutexGuard<'a,T>
     where
         Self: 'a,
-        Self::Data: 'a;
+        Self::Value: 'a;
 
     #[inline(always)]
     fn sync_lock(&self) -> Self::Guard<'_> {
@@ -44,7 +44,7 @@ impl<T> Locker for SpinMutex<T> {
             .map(|guard| SpinMutexGuard { guard: Some(guard) })
     }
 
-    fn new(data: Self::Data) -> Self {
+    fn new(data: Self::Value) -> Self {
         SpinMutex {
             mutex: parking_lot::Mutex::new(data),
         }

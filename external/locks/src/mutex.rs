@@ -3,12 +3,12 @@ use std::{collections::VecDeque, ops, task::Waker};
 use crate::{Locker, LockerGuard, SpinMutex, WaitableLockerMaker};
 
 impl<T> Locker for std::sync::Mutex<T> {
-    type Data = T;
+    type Value = T;
 
     type Guard<'a> = MutexGuard<'a, T>
     where
         Self: 'a,
-        Self::Data: 'a;
+        Self::Value: 'a;
 
     fn sync_lock(&self) -> Self::Guard<'_> {
         MutexGuard {
@@ -25,7 +25,7 @@ impl<T> Locker for std::sync::Mutex<T> {
         }
     }
 
-    fn new(data: Self::Data) -> Self {
+    fn new(data: Self::Value) -> Self {
         std::sync::Mutex::new(data)
     }
 }

@@ -1,18 +1,18 @@
 use std::ops;
 
 pub trait Locker {
-    type Data: ?Sized;
+    type Value: ?Sized;
 
     /// RAII lock guard type .
-    type Guard<'a>: LockerGuard<'a> + ops::DerefMut<Target = Self::Data>
+    type Guard<'a>: LockerGuard<'a> + ops::DerefMut<Target = Self::Value>
     where
         Self: 'a,
-        Self::Data: 'a;
+        Self::Value: 'a;
 
     #[must_use]
-    fn new(data: Self::Data) -> Self
+    fn new(data: Self::Value) -> Self
     where
-        Self::Data: Sized;
+        Self::Value: Sized;
 
     /// Lock this object and returns a `RAII` lock guard object.
     #[must_use]

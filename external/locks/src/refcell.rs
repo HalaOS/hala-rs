@@ -3,12 +3,12 @@ use std::{cell::RefCell, collections::VecDeque, ops, task::Waker};
 use crate::{Locker, LockerGuard, WaitableLockerMaker};
 
 impl<T> Locker for std::cell::RefCell<T> {
-    type Data = T;
+    type Value = T;
 
     type Guard<'a> = RefcellGuard<'a, T>
     where
         Self: 'a,
-        Self::Data: 'a;
+        Self::Value: 'a;
 
     fn sync_lock(&self) -> Self::Guard<'_> {
         RefcellGuard {
@@ -25,7 +25,7 @@ impl<T> Locker for std::cell::RefCell<T> {
         }
     }
 
-    fn new(data: Self::Data) -> Self {
+    fn new(data: Self::Value) -> Self {
         std::cell::RefCell::new(data)
     }
 }

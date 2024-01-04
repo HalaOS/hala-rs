@@ -71,9 +71,9 @@ where
 impl<'a, L, G> ops::Deref for WaitableLockerGuardMaker<'a, L, G>
 where
     L: WaitableLocker<WaitableGuard<'a> = Self>,
-    G: 'a + ops::Deref<Target = L::Data>,
+    G: 'a + ops::Deref<Target = L::Value>,
 {
-    type Target = L::Data;
+    type Target = L::Value;
     fn deref(&self) -> &Self::Target {
         self.guard.as_deref().expect("Deref on unlocked guard")
     }
@@ -82,7 +82,7 @@ where
 impl<'a, L, G> ops::DerefMut for WaitableLockerGuardMaker<'a, L, G>
 where
     L: WaitableLocker<WaitableGuard<'a> = Self>,
-    G: 'a + ops::DerefMut<Target = L::Data>,
+    G: 'a + ops::DerefMut<Target = L::Value>,
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.guard

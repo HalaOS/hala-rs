@@ -9,7 +9,7 @@ use crate::{Locker, WaitableLocker, WaitableLockerGuardMaker};
 pub struct WaitableLockerMaker<L, W>
 where
     L: Locker,
-    W: Locker<Data = VecDeque<Waker>>,
+    W: Locker<Value = VecDeque<Waker>>,
 {
     wakers: W,
     inner_locker: L,
@@ -18,7 +18,7 @@ where
 impl<L, W> Default for WaitableLockerMaker<L, W>
 where
     L: Locker + Default,
-    W: Locker<Data = VecDeque<Waker>> + Default,
+    W: Locker<Value = VecDeque<Waker>> + Default,
 {
     fn default() -> Self {
         Self {
@@ -31,12 +31,12 @@ where
 impl<L, W> WaitableLocker for WaitableLockerMaker<L, W>
 where
     L: Locker,
-    W: Locker<Data = VecDeque<Waker>> + Default,
+    W: Locker<Value = VecDeque<Waker>> + Default,
 {
     type WaitableGuard<'a> = WaitableLockerGuardMaker<'a,Self,L::Guard<'a>>
     where
         Self: 'a,
-        Self::Data: 'a;
+        Self::Value: 'a;
 
     fn try_lock_with_context(
         &self,
@@ -64,14 +64,14 @@ where
 impl<L, W> Locker for WaitableLockerMaker<L, W>
 where
     L: Locker,
-    W: Locker<Data = VecDeque<Waker>> + Default,
+    W: Locker<Value = VecDeque<Waker>> + Default,
 {
-    type Data = L::Data;
+    type Value = L::Value;
 
     type Guard<'a> = WaitableLockerGuardMaker<'a,Self,L::Guard<'a>>
     where
         Self: 'a,
-        Self::Data: 'a;
+        Self::Value: 'a;
 
     fn sync_lock(&self) -> Self::Guard<'_> {
         let guard = self.inner_locker.sync_lock();
@@ -85,9 +85,9 @@ where
             .map(|guard| (self, guard).into())
     }
 
-    fn new(data: Self::Data) -> Self
+    fn new(data: Self::Value) -> Self
     where
-        Self::Data: Sized,
+        Self::Value: Sized,
     {
         Self {
             wakers: Default::default(),
