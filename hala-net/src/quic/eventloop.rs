@@ -351,10 +351,27 @@ impl QuicListenerEventLoop {
 
         // handle init/handshake package response
         if read_size != 0 {
+            let scid = header.scid.into_owned();
+            let dcid = header.dcid.into_owned();
             let (send_size, send_info) = match self.acceptor.send(buf) {
                 Ok(len) => len,
+                Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                    log::trace!(
+                        "acceptor, scid={:?}, dcid={:?}, recv_info={:?}, no more data to send",
+                        scid,
+                        dcid,
+                        recv_info
+                    );
+                    return Ok(None);
+                }
                 Err(err) => {
-                    log::error!("Recv invalid data from={},error={}", recv_info.from, err);
+                    log::error!(
+                        "acceptor, scid={:?}, dcid={:?}, recv_info={:?}, err={}",
+                        scid,
+                        dcid,
+                        recv_info,
+                        err
+                    );
 
                     return Ok(None);
                 }

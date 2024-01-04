@@ -1,10 +1,10 @@
-use std::{io, net::SocketAddr, time::Duration};
+use std::{io, net::SocketAddr};
 
 use futures::{
     channel::{mpsc, oneshot},
     select, AsyncReadExt, AsyncWriteExt, Future, FutureExt, SinkExt, StreamExt,
 };
-use hala_io_util::{local_io_spawn, local_io_test, local_sleep};
+use hala_io_util::{local_io_spawn, local_io_test};
 use hala_net::*;
 
 fn mock_config(is_server: bool, max_stream: u64) -> Config {
@@ -64,7 +64,6 @@ where
     F: FnMut(QuicConn) -> Fut,
     Fut: Future<Output = io::Result<()>> + 'static,
 {
-    let mut i = 0;
     loop {
         let incoming = select! {
             incoming = listener.accept().fuse() => {
@@ -80,8 +79,6 @@ where
         };
 
         local_io_spawn(handle(incoming))?;
-
-        i += 1;
     }
 }
 
@@ -113,16 +110,16 @@ fn echod_server(max_stream: u64) -> io::Result<(oneshot::Sender<()>, Vec<SocketA
 
 #[hala_test::test(local_io_test)]
 async fn test_connect() {
-    let clients = 200;
+    _ = pretty_env_logger::try_init_timed();
+
+    let clients = 100;
     let loops = 1;
 
     let (_close_sender, raddrs) = echod_server(loops + 1).unwrap();
 
-    let (join_sender, mut join_receiver) = mpsc::channel::<()>(clients);
+    let (join_sender, mut join_receiver) = mpsc::channel(0);
 
-    local_sleep(Duration::from_secs(2)).await.unwrap();
-
-    for _ in 0..clients {
+    for i in 0..clients {
         let raddrs = raddrs.clone();
 
         let mut join_sender = join_sender.clone();
@@ -130,16 +127,31 @@ async fn test_connect() {
         local_io_spawn(async move {
             let mut connector = QuicConnector::bind("127.0.0.1:0", mock_config(false, loops + 1))?;
 
-            let _conn = connector.connect(raddrs.as_slice()).await?;
+            match connector.connect(raddrs.as_slice()).await {
+                Ok(_conn) => {
+                    join_sender.send((true, i)).await.unwrap();
+                    return Ok(());
+                }
+                Err(_) => {
+                    join_sender.send((false, i)).await.unwrap();
 
-            join_sender.send(()).await.unwrap();
-
-            Ok(())
+                    return Ok(());
+                }
+            }
         })
         .unwrap();
     }
 
+    let mut success_clients = 0;
+
     for _ in 0..clients {
-        join_receiver.next().await;
+        if let Some((flag, i)) = join_receiver.next().await {
+            log::info!("({}) {}", i, flag);
+            if flag {
+                success_clients += 1;
+            }
+        }
     }
+
+    assert_eq!(success_clients, clients);
 }

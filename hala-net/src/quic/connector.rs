@@ -56,7 +56,7 @@ impl InnerConnector {
                 return Ok(Some((send_size, send_info)));
             }
             Err(err) if err == quiche::Error::Done => {
-                log::error!(
+                log::trace!(
                     "connector, id={:?}, send done",
                     self.quiche_conn.source_id(),
                 );
@@ -215,7 +215,11 @@ impl QuicConnector {
             {
                 Ok(r) => r,
                 Err(err) if err.kind() == io::ErrorKind::TimedOut => {
-                    log::trace!("connector={} timeout", connector.quiche_conn.trace_id());
+                    log::error!(
+                        "connector={} timeout, duration={:?}",
+                        connector.quiche_conn.trace_id(),
+                        recv_timeout
+                    );
                     // generate timeout retry package
                     connector.on_timeout();
                     continue;
