@@ -1,5 +1,4 @@
 use std::{
-    fmt::Debug,
     future::Future,
     io,
     task::{Context, Poll},
@@ -100,7 +99,6 @@ impl Drop for Sleep {
 pub async fn timeout<'a, Fut, R>(fut: Fut, expired: Option<Duration>) -> io::Result<R>
 where
     Fut: Future<Output = io::Result<R>> + 'a,
-    R: Debug,
 {
     timeout_with(fut, expired, get_poller()?).await
 }

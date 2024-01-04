@@ -106,7 +106,7 @@ pub trait WaitableEventMap {
     /// Notify all event on in the providing `events` list
     fn notify_any(&self, reason: Reason);
 
-    fn wait<'a, Q, G>(&'a self, event: Q, guard: G) -> Wait<'a, Self::E, G>
+    fn wait_with<'a, Q, G>(&'a self, event: Q, guard: G) -> WaitWith<'a, Self::E, G>
     where
         G: WaitableLockerGuard<'a>,
         Q: Borrow<Self::E>;
@@ -157,13 +157,13 @@ where
         self.notify_all(&events, reason);
     }
 
-    fn wait<'a, Q, G>(&'a self, event: Q, guard: G) -> Wait<'a, E, G>
+    fn wait_with<'a, Q, G>(&'a self, event: Q, guard: G) -> WaitWith<'a, E, G>
     where
         G: WaitableLockerGuard<'a>,
         E: Clone,
         Q: Borrow<E>,
     {
-        Wait {
+        WaitWith {
             wakers: &self.wakers,
             reason: Arc::new(AtomicU8::new(Reason::None.into())),
             locker: guard.locker(),
@@ -186,7 +186,7 @@ where
 }
 
 /// Future created by [`wait`](EventMap::wait) function.
-pub struct Wait<'a, E, G>
+pub struct WaitWith<'a, E, G>
 where
     G: 'a,
     G: WaitableLockerGuard<'a>,
@@ -199,7 +199,7 @@ where
     locker: &'a G::Locker,
 }
 
-impl<'a, E, G> Debug for Wait<'a, E, G>
+impl<'a, E, G> Debug for WaitWith<'a, E, G>
 where
     E: Debug,
     G: 'a,
@@ -214,7 +214,7 @@ where
     }
 }
 
-impl<'a, E, G> Future for Wait<'a, E, G>
+impl<'a, E, G> Future for WaitWith<'a, E, G>
 where
     E: Send + Eq + Hash + Unpin + Debug,
     G: WaitableLockerGuard<'a> + Unpin,
@@ -312,7 +312,7 @@ mod tests {
                 let mut shared = shared_cloned.async_lock().await;
 
                 if *shared != i + 1 {
-                    shared = mediator_cloned.wait(i, shared).await.unwrap();
+                    shared = mediator_cloned.wait_with(i, shared).await.unwrap();
                 }
 
                 assert_eq!(*shared, i + 1);
@@ -353,7 +353,7 @@ mod tests {
             let mut shared = shared.async_lock().await;
             log::trace!("lock shared {} -- success", i);
             if *shared != i + 1 {
-                shared = mediator.wait(i, shared).await.unwrap();
+                shared = mediator.wait_with(i, shared).await.unwrap();
             }
 
             assert_eq!(*shared, i + 1);
@@ -397,7 +397,10 @@ mod tests {
             let shared = shared.async_lock().await;
             log::trace!("lock shared {} -- success", i);
             if *shared != i + 1 {
-                let error = mediator.wait(i, shared).await.expect_err("expect cancel");
+                let error = mediator
+                    .wait_with(i, shared)
+                    .await
+                    .expect_err("expect cancel");
 
                 assert_eq!(error, EventMapError::Cancel);
             }
