@@ -1,6 +1,7 @@
 use std::{
     io,
     ops::{Deref, DerefMut},
+    time::Duration,
 };
 
 /// Hala quic peer config, Adds hala quic specific configuration options to [`quiche::Config`](quiche::Config)
@@ -9,6 +10,8 @@ pub struct Config {
     pub(crate) udp_data_channel_len: usize,
     #[allow(unused)]
     pub(crate) stream_buffer: usize,
+
+    pub ping_timeout: Duration,
 
     quiche_config: quiche::Config,
 }
@@ -19,6 +22,7 @@ impl Config {
         Ok(Self {
             udp_data_channel_len: 1024,
             stream_buffer: 1024,
+            ping_timeout: Duration::from_secs(1),
             quiche_config: quiche::Config::new(quiche::PROTOCOL_VERSION)
                 .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?,
         })

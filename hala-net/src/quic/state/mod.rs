@@ -5,3 +5,9 @@ mod listener;
 pub use conn::*;
 pub use connector::*;
 pub use listener::*;
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_connect() {}
+}

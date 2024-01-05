@@ -1,210 +1,146 @@
 use std::{
-    collections::{HashMap, VecDeque},
-    io,
+    collections::VecDeque,
     net::SocketAddr,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
-use quiche::{ConnectionId, Header, RecvInfo, SendInfo};
-use rand::seq::IteratorRandom;
+use dashmap::DashMap;
+use event_map::{
+    locks::{WaitableLocker, WaitableSpinMutex},
+    EventMap, WaitableEventMap,
+};
+use futures::io;
+use quiche::{RecvInfo, SendInfo};
 use ring::{hmac::Key, rand::SystemRandom};
 
 use crate::{errors::into_io_error, Config};
 
 use super::QuicConnState;
 
-enum StateSendCmd {
-    NegotiationVersion {
-        scid: ConnectionId<'static>,
-        dcid: ConnectionId<'static>,
-        send_info: SendInfo,
+/// [`handshake`](Acceptor::handshake) result.
+pub enum QuicAcceptorHandshake {
+    Unhandled(quiche::ConnectionId<'static>),
+    Incoming {
+        conn: quiche::Connection,
+        ping_timeout: Duration,
+        write_size: usize,
     },
+
     Retry {
-        scid: ConnectionId<'static>,
-        dcid: ConnectionId<'static>,
-        new_scid: ConnectionId<'static>,
+        scid: quiche::ConnectionId<'static>,
+        dcid: quiche::ConnectionId<'static>,
+        new_scid: quiche::ConnectionId<'static>,
         token: Vec<u8>,
         version: u32,
         send_info: SendInfo,
     },
+
+    NegotiationVersion {
+        scid: quiche::ConnectionId<'static>,
+        dcid: quiche::ConnectionId<'static>,
+        send_info: SendInfo,
+    },
 }
 
-/// Quic server connection acceptor
-pub struct QuicListenerState {
+impl QuicAcceptorHandshake {
+    /// Try writes handshake result to be sent to the peer.
+    pub fn send(&self, buf: &mut [u8]) -> io::Result<Option<(usize, SendInfo)>> {
+        match self {
+            QuicAcceptorHandshake::Unhandled(_) => Ok(None),
+            QuicAcceptorHandshake::Incoming {
+                conn: _,
+                write_size: _,
+                ping_timeout: _,
+            } => Ok(None),
+            QuicAcceptorHandshake::Retry {
+                scid,
+                dcid,
+                new_scid,
+                token,
+                version,
+                send_info,
+            } => {
+                let send_size = quiche::retry(scid, dcid, new_scid, token, *version, buf)
+                    .map_err(into_io_error)?;
+
+                return Ok(Some((send_size, *send_info)));
+            }
+            QuicAcceptorHandshake::NegotiationVersion {
+                scid,
+                dcid,
+                send_info,
+            } => {
+                let send_size =
+                    quiche::negotiate_version(scid, dcid, buf).map_err(into_io_error)?;
+
+                return Ok(Some((send_size, *send_info)));
+            }
+        }
+    }
+}
+
+/// Raw incoming connection acceptor for quic server.
+pub struct QuicAcceptor {
+    /// Quic connection config
     config: Config,
+    /// connection id seed.
     conn_id_seed: Key,
-    conns: HashMap<ConnectionId<'static>, quiche::Connection>,
-    init_acks: VecDeque<StateSendCmd>,
 }
 
-impl QuicListenerState {
-    /// Create new acceptor.
+impl QuicAcceptor {
+    /// Create new acceptor with the given quic connection [`config`](Config)
     pub fn new(config: Config) -> io::Result<Self> {
         let rng = SystemRandom::new();
 
         let conn_id_seed = ring::hmac::Key::generate(ring::hmac::HMAC_SHA256, &rng)
-            .map_err(|err| io::Error::new(io::ErrorKind::Other, format!("${err}")))?;
+            .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
 
         Ok(Self {
             config,
             conn_id_seed,
-            conns: Default::default(),
-            init_acks: Default::default(),
         })
     }
 
-    pub fn accept_once(&mut self) -> Vec<(ConnectionId<'static>, QuicConnState)> {
-        let ids = self
-            .conns
-            .values()
-            .filter(|conn| conn.is_established())
-            .map(|conn| conn.source_id().clone().into_owned())
-            .collect::<Vec<_>>();
-
-        let mut conns = vec![];
-
-        for id in ids {
-            log::info!("established conn={:?}", id);
-
-            let state =
-                QuicConnState::new(self.conns.remove(&id).unwrap(), Duration::from_secs(1), 5);
-            conns.push((id, state));
-        }
-
-        conns
-    }
-
-    pub fn send(&mut self, buf: &mut [u8]) -> io::Result<(usize, SendInfo)> {
-        // first handle init acks
-        if let Some(ack) = self.init_acks.pop_front() {
-            match ack {
-                StateSendCmd::NegotiationVersion {
-                    scid,
-                    dcid,
-                    send_info,
-                } => {
-                    let send_size =
-                        quiche::negotiate_version(&scid, &dcid, buf).map_err(into_io_error)?;
-
-                    return Ok((send_size, send_info));
-                }
-                StateSendCmd::Retry {
-                    scid,
-                    dcid,
-                    new_scid,
-                    token,
-                    version,
-                    send_info,
-                } => {
-                    let send_size = quiche::retry(&scid, &dcid, &new_scid, &token, version, buf)
-                        .map_err(into_io_error)?;
-
-                    return Ok((send_size, send_info));
-                }
-            }
-        }
-
-        // secondary, handle conn send
-
-        let len = self.conns.len();
-
-        let conns = self
-            .conns
-            .values_mut()
-            .choose_multiple(&mut rand::thread_rng(), len);
-
-        for conn in conns {
-            match conn.send(buf) {
-                Ok((send_size, send_info)) => {
-                    return Ok((send_size, send_info));
-                }
-                Err(quiche::Error::Done) => {}
-                Err(_) => todo!(),
-            }
-        }
-
-        return Err(io::Error::new(
-            io::ErrorKind::WouldBlock,
-            "No more data to send",
-        ));
-    }
-
-    /// Recv new from remote.
-    pub fn recv(
+    /// Try to process quic init/handshake protocol and returns [`Handshake`] result
+    pub fn handshake<'a>(
         &mut self,
-        buf: &mut [u8],
+        buf: &'a mut [u8],
         recv_info: RecvInfo,
-    ) -> io::Result<(Option<usize>, Header<'_>)> {
+    ) -> io::Result<QuicAcceptorHandshake> {
         let header =
             quiche::Header::from_slice(buf, quiche::MAX_CONN_ID_LEN).map_err(into_io_error)?;
 
-        log::trace!("Recv package {:?}", header.ty);
-
-        match header.ty {
-            quiche::Type::Initial => {
-                if let Some(conn) = self.conns.get_mut(&header.dcid) {
-                    let token = header.token.as_ref().unwrap();
-
-                    // generate new token and retry
-                    if token.is_empty() {
-                        return Err(io::Error::new(
-                            io::ErrorKind::ConnectionRefused,
-                            "Quic token is null",
-                        ));
-                    }
-
-                    _ = Self::validate_token(token, &recv_info.from)?;
-
-                    let read_size = conn.recv(buf, recv_info).map_err(into_io_error)?;
-
-                    return Ok((Some(read_size), header));
-                } else {
-                    let len = self.client_hello(&header, buf, recv_info)?;
-
-                    return Ok((Some(len), header));
-                }
-            }
-            quiche::Type::Handshake => {
-                if let Some(conn) = self.conns.get_mut(&header.dcid) {
-                    return conn
-                        .recv(buf, recv_info)
-                        .map_err(into_io_error)
-                        .map(|len| (Some(len), header));
-                } else {
-                    return Ok((None, header));
-                }
-            }
-            _ => {
-                return Ok((None, header));
-            }
+        if header.ty == quiche::Type::Initial {
+            return self.client_hello(&header, buf, recv_info);
+        } else {
+            return Ok(QuicAcceptorHandshake::Unhandled(
+                header.dcid.clone().into_owned(),
+            ));
         }
     }
 
-    fn client_hello(
+    fn client_hello<'a>(
         &mut self,
-        header: &Header<'_>,
-        buf: &mut [u8],
+        header: &quiche::Header<'a>,
+        buf: &'a mut [u8],
         recv_info: RecvInfo,
-    ) -> io::Result<usize> {
+    ) -> io::Result<QuicAcceptorHandshake> {
         if !quiche::version_is_supported(header.version) {
-            self.negotiation_version(header, recv_info)?;
-
-            return Ok(buf.len());
+            return self.negotiation_version(header, recv_info);
         }
 
         let token = header.token.as_ref().unwrap();
 
         // generate new token and retry
         if token.is_empty() {
-            self.retry(header, recv_info)?;
-
-            return Ok(buf.len());
+            return self.retry(header, recv_info);
         }
 
         // check token .
         let odcid = Self::validate_token(token, &recv_info.from)?;
 
-        let scid: ConnectionId<'_> = header.dcid.clone();
+        let scid: quiche::ConnectionId<'_> = header.dcid.clone();
 
         if quiche::MAX_CONN_ID_LEN != scid.len() {
             return Err(io::Error::new(
@@ -225,26 +161,32 @@ impl QuicListenerState {
         let read_size = conn.recv(buf, recv_info).map_err(into_io_error)?;
 
         log::trace!(
-            "Create new incoming conn, scid={:?},dcid={:?},handshake={}",
+            "Create new incoming conn, scid={:?}, dcid={:?}, read_size={}",
             conn.source_id(),
             conn.destination_id(),
             read_size,
         );
 
-        self.conns.insert(scid.into_owned(), conn);
-
-        Ok(read_size)
+        return Ok(QuicAcceptorHandshake::Incoming {
+            conn,
+            write_size: read_size,
+            ping_timeout: self.config.ping_timeout,
+        });
     }
 
     /// Generate retry package
-    fn retry(&mut self, header: &Header<'_>, recv_info: RecvInfo) -> io::Result<()> {
+    fn retry<'a>(
+        &mut self,
+        header: &quiche::Header<'a>,
+        recv_info: RecvInfo,
+    ) -> io::Result<QuicAcceptorHandshake> {
         let token = self.mint_token(&header, &recv_info.from);
 
         let new_scid = ring::hmac::sign(&self.conn_id_seed, &header.dcid);
         let new_scid = &new_scid.as_ref()[..quiche::MAX_CONN_ID_LEN];
-        let new_scid = ConnectionId::from_vec(new_scid.to_vec());
+        let new_scid = quiche::ConnectionId::from_vec(new_scid.to_vec());
 
-        self.init_acks.push_back(StateSendCmd::Retry {
+        Ok(QuicAcceptorHandshake::Retry {
             scid: header.scid.clone().into_owned(),
             dcid: header.dcid.clone().into_owned(),
             new_scid,
@@ -255,9 +197,7 @@ impl QuicListenerState {
                 to: recv_info.from,
                 at: Instant::now(),
             },
-        });
-
-        Ok(())
+        })
     }
 
     fn validate_token<'a>(
@@ -311,8 +251,12 @@ impl QuicListenerState {
         token
     }
 
-    fn negotiation_version(&mut self, header: &Header<'_>, recv_info: RecvInfo) -> io::Result<()> {
-        self.init_acks.push_back(StateSendCmd::NegotiationVersion {
+    fn negotiation_version<'a>(
+        &mut self,
+        header: &quiche::Header<'a>,
+        recv_info: RecvInfo,
+    ) -> io::Result<QuicAcceptorHandshake> {
+        Ok(QuicAcceptorHandshake::NegotiationVersion {
             scid: header.scid.clone().into_owned(),
             dcid: header.dcid.clone().into_owned(),
             send_info: SendInfo {
@@ -320,8 +264,128 @@ impl QuicListenerState {
                 to: recv_info.from,
                 at: Instant::now(),
             },
-        });
+        })
+    }
+}
 
-        Ok(())
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+enum QuicListenerStateEvent {
+    Incoming,
+}
+
+/// The state machine for quic server listener.
+pub struct QuicListenerState {
+    /// the acceptor for incoming connections.
+    acceptor: Arc<WaitableSpinMutex<QuicAcceptor>>,
+    /// The set of activing [`QuicConnState`]s.
+    conns: Arc<DashMap<quiche::ConnectionId<'static>, QuicConnState>>,
+    /// The queue for new incoming connections.
+    incoming: Arc<WaitableSpinMutex<Option<VecDeque<QuicConnState>>>>,
+    /// event notify center.
+    mediator: Arc<EventMap<QuicListenerStateEvent>>,
+}
+
+pub enum QuicListenerStateRecv {
+    WriteSize(usize),
+    Handshake(usize, QuicAcceptorHandshake),
+}
+
+impl QuicListenerState {
+    /// Processes QUIC packets received from the peer.
+    pub async fn write(
+        &self,
+        buf: &mut [u8],
+        recv_info: RecvInfo,
+    ) -> io::Result<QuicListenerStateRecv> {
+        let handshake = {
+            let mut acceptor = self.acceptor.async_lock().await;
+
+            acceptor.handshake(buf, recv_info)?
+        };
+
+        match handshake {
+            QuicAcceptorHandshake::Unhandled(dcid) => {
+                let conn = self.conns.get_mut(&dcid).map(|conn| conn.clone());
+
+                if let Some(conn) = conn {
+                    return conn
+                        .write(buf, recv_info)
+                        .await
+                        .map(|write_size| QuicListenerStateRecv::WriteSize(write_size));
+                } else {
+                    return Err(io::Error::new(
+                        io::ErrorKind::NotFound,
+                        format!("Quic conn not found, scid={:?}", dcid),
+                    ));
+                }
+            }
+            QuicAcceptorHandshake::Incoming {
+                conn,
+                ping_timeout,
+                write_size,
+            } => {
+                log::info!(
+                    "accept incoming conn, scid={:?}, dcid={:?}",
+                    conn.source_id(),
+                    conn.destination_id()
+                );
+
+                let scid = conn.source_id().clone().into_owned();
+
+                let conn = QuicConnState::new(conn, ping_timeout, 5);
+
+                self.conns.insert(scid, conn.clone());
+
+                self.incoming
+                    .async_lock()
+                    .await
+                    .as_mut()
+                    .ok_or(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "quic listener state closed.",
+                    ))?
+                    .push_back(conn);
+
+                self.mediator
+                    .notify_one(QuicListenerStateEvent::Incoming, event_map::Reason::On);
+
+                return Ok(QuicListenerStateRecv::WriteSize(write_size));
+            }
+            handshake => {
+                return Ok(QuicListenerStateRecv::Handshake(buf.len(), handshake));
+            }
+        }
+    }
+
+    /// Close this listener.
+    pub async fn close(&self) {
+        let mut incoming = self.incoming.async_lock().await;
+
+        *incoming = None;
+
+        self.mediator
+            .notify_one(QuicListenerStateEvent::Incoming, event_map::Reason::On);
+    }
+
+    /// Accept one incoming connection, or returns `None` if this listener had been closed.
+    pub async fn accept(&self) -> Option<QuicConnState> {
+        let mut incoming = self.incoming.async_lock().await;
+
+        loop {
+            if let Some(incoming) = incoming.as_mut() {
+                if let Some(conn) = incoming.pop_front() {
+                    return Some(conn);
+                }
+            } else {
+                return None;
+            }
+
+            // Safety: the close function uses `event_map::Reason::On` to notify incoming listener
+            incoming = self
+                .mediator
+                .wait_with(QuicListenerStateEvent::Incoming, incoming)
+                .await
+                .expect("Please always use `event_map::Reason::On` to notify me!!");
+        }
     }
 }

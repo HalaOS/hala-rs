@@ -110,6 +110,10 @@ pub trait WaitableEventMap {
     where
         G: WaitableLockerGuard<'a>,
         Q: Borrow<Self::E>;
+
+    fn wait<Q>(&self, event: Q, waker: Waker)
+    where
+        Q: Borrow<Self::E>;
 }
 
 impl<E> WaitableEventMap for EventMap<E>
@@ -171,6 +175,19 @@ where
             event_debug: event.borrow().clone(),
             event: Some(event.borrow().clone()),
         }
+    }
+
+    fn wait<Q>(&self, event: Q, waker: Waker)
+    where
+        Q: Borrow<Self::E>,
+    {
+        self.wakers.insert(
+            event.borrow().clone(),
+            WakerWrapper {
+                inner: waker,
+                reason: Arc::new(AtomicU8::new(Reason::None.into())),
+            },
+        );
     }
 }
 
