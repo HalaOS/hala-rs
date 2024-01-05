@@ -7,7 +7,7 @@ use std::{
 
 use dashmap::DashMap;
 use event_map::{
-    locks::{WaitableLocker, WaitableSpinMutex},
+    locks::{Locker, WaitableLocker, WaitableSpinMutex},
     EventMap, WaitableEventMap,
 };
 use futures::io;
@@ -285,14 +285,25 @@ pub struct QuicListenerState {
     mediator: Arc<EventMap<QuicListenerStateEvent>>,
 }
 
+/// Result returns by [`QuicListenerState::recv`](QuicListenerState::recv)
 pub enum QuicListenerStateRecv {
     WriteSize(usize),
     Handshake(usize, QuicAcceptorHandshake),
 }
 
 impl QuicListenerState {
+    /// Use [`config`](Config) to create new [`QuicListenerState`]
+    pub fn new(config: Config) -> io::Result<Self> {
+        Ok(Self {
+            acceptor: Arc::new(WaitableSpinMutex::new(QuicAcceptor::new(config)?)),
+            conns: Default::default(),
+            incoming: Arc::new(WaitableSpinMutex::new(Some(Default::default()))),
+            mediator: Default::default(),
+        })
+    }
+
     /// Processes QUIC packets received from the peer.
-    pub async fn write(
+    pub async fn recv(
         &self,
         buf: &mut [u8],
         recv_info: RecvInfo,

@@ -6,18 +6,18 @@ use ring::rand::{SecureRandom, SystemRandom};
 use crate::{errors::into_io_error, Config};
 
 /// Quic client connector
-pub struct ConnectorState {
+pub struct QuicConnectorState {
     /// source connection id.
     pub(super) quiche_conn: quiche::Connection,
 }
 
-impl ConnectorState {
+impl QuicConnectorState {
     /// Create new quic connector
     pub fn new(
         config: &mut Config,
         laddr: SocketAddr,
         raddr: SocketAddr,
-    ) -> io::Result<ConnectorState> {
+    ) -> io::Result<QuicConnectorState> {
         let mut scid = vec![0; quiche::MAX_CONN_ID_LEN];
 
         SystemRandom::new().fill(&mut scid).map_err(into_io_error)?;
