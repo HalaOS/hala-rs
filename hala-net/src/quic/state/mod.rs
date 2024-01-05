@@ -28,6 +28,8 @@ mod tests {
 
         let mut buf = vec![0; 65535];
 
+        let mut server_conn = None;
+
         loop {
             let (send_size, send_info) = connector.send(&mut buf).unwrap().unwrap();
 
@@ -46,9 +48,11 @@ mod tests {
                 QuicListenerStateRecv::WriteSize(write_size) => {
                     assert_eq!(write_size, send_size);
 
-                    let conn = listener.accept().await.unwrap();
+                    if server_conn.is_none() {
+                        server_conn = Some(listener.accept().await.unwrap());
+                    }
 
-                    conn.read(&mut buf).await.unwrap()
+                    server_conn.as_ref().unwrap().read(&mut buf).await.unwrap()
                 }
                 QuicListenerStateRecv::Handshake(write_size, handshake) => {
                     assert_eq!(write_size, send_size);

@@ -482,12 +482,17 @@ impl QuicConnState {
     ///
     /// see quiche [`doc`](https://docs.rs/quiche/latest/quiche/struct.Connection.html#method.close) for more details.
     pub async fn close(&self, app: bool, err: u64, reason: &[u8]) -> io::Result<()> {
-        self.state
+        match self
+            .state
             .async_lock()
             .await
             .quiche_conn
             .close(app, err, reason)
-            .map_err(into_io_error)
+        {
+            Ok(_) => Ok(()),
+            Err(quiche::Error::Done) => Ok(()),
+            Err(err) => Err(into_io_error(err)),
+        }
     }
 
     /// Returns true if all the data has been read from the specified stream.
