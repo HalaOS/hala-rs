@@ -62,7 +62,7 @@ mod tests {
 
     use futures::{executor::LocalPool, task::LocalSpawnExt};
 
-    use crate::{Locker, LockerGuard, WaitableLocker, WaitableLockerGuard, WaitableRefCell};
+    use crate::{WaitableLocker, WaitableLockerGuard, WaitableRefCell};
 
     #[test]
     fn test_waitable_refcell_async() {

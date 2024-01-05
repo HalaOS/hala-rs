@@ -62,7 +62,7 @@ mod tests {
 
     use futures::{executor::ThreadPool, task::SpawnExt};
 
-    use crate::{Locker, WaitableLocker, WaitableMutex};
+    use crate::{WaitableLocker, WaitableMutex};
 
     #[futures_test::test]
     async fn test_waitable_mutex_async() {
@@ -93,32 +93,5 @@ mod tests {
         }
 
         assert_eq!(*mutex.async_lock().await, tasks * tasks);
-    }
-
-    #[test]
-    fn test_waitable_mutex() {
-        let threads = 10;
-        let tasks = 100000;
-
-        let mutex = Arc::new(WaitableMutex::new(0));
-
-        let mut join_handles = vec![];
-
-        for _ in 0..threads {
-            let mutex = mutex.clone();
-            join_handles.push(std::thread::spawn(move || {
-                for _ in 0..tasks {
-                    let mut data = mutex.sync_lock();
-
-                    *data = *data + 1;
-                }
-            }));
-        }
-
-        for handle in join_handles {
-            handle.join().unwrap();
-        }
-
-        assert_eq!(*mutex.sync_lock(), tasks * threads);
     }
 }

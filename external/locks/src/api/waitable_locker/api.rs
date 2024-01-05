@@ -1,19 +1,14 @@
 use std::{
     future::Future,
-    ops,
     task::{Context, Poll},
 };
 
-use crate::{Locker, LockerGuard};
-
 /// `Locker` for asynchronous mode
-pub trait WaitableLocker: Locker {
+pub trait WaitableLocker {
     /// Lock guard type for immutable reference.
     type WaitableGuard<'a>: WaitableLockerGuard<'a, Locker = Self>
-        + ops::DerefMut<Target = Self::Value>
     where
-        Self: 'a,
-        Self::Value: 'a;
+        Self: 'a;
 
     /// [`lock`](Locker::try_lock) for asynchronous mode
     fn async_lock(&self) -> LockFuture<'_, Self>
@@ -23,30 +18,21 @@ pub trait WaitableLocker: Locker {
         LockFuture { locker: self }
     }
 
-    fn try_lock_with_context(&self, cx: &mut Context<'_>) -> Option<Self::WaitableGuard<'_>>;
+    fn poll_lock(&self, cx: &mut Context<'_>) -> Poll<Self::WaitableGuard<'_>>;
 
     /// Wakeup another one pending [`LockFuture`], which created by [`async_lock`](WaitableLocker::async_lock) function
     fn wakeup_another_one(&self);
 }
 
 /// `LockerGuard` for asynchronous mode
-pub trait WaitableLockerGuard<'a>: LockerGuard<'a> {
+pub trait WaitableLockerGuard<'a> {
     type Locker: WaitableLocker<WaitableGuard<'a> = Self>
     where
         Self: 'a;
-
     /// Get locker reference.
     fn locker(&self) -> &'a Self::Locker;
 
-    /// [`lock`](Locker::try_lock) for asynchronous mode
-    fn async_relock(&self) -> LockFuture<'a, Self::Locker>
-    where
-        Self: Sized,
-    {
-        LockFuture {
-            locker: self.locker(),
-        }
-    }
+    fn unlock(&mut self);
 }
 
 /// future create by [`lock`](WaitableLocker::lock)
@@ -71,9 +57,6 @@ where
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
-        match self.locker.try_lock_with_context(cx) {
-            Some(guard) => Poll::Ready(guard),
-            None => Poll::Pending,
-        }
+        self.locker.poll_lock(cx)
     }
 }

@@ -1,7 +1,5 @@
 use std::ops;
 
-use crate::LockerGuard;
-
 use super::*;
 
 /// The type factory of [`WaitableLockerGuard`] type
@@ -30,20 +28,6 @@ where
     }
 }
 
-impl<'a, L, G> LockerGuard<'a> for WaitableLockerGuardMaker<'a, L, G>
-where
-    L: WaitableLocker<WaitableGuard<'a> = Self>,
-    G: 'a,
-{
-    fn unlock(&mut self) {
-        if let Some(guard) = self.guard.take() {
-            drop(guard);
-
-            self.locker.wakeup_another_one();
-        }
-    }
-}
-
 impl<'a, L, G> WaitableLockerGuard<'a> for WaitableLockerGuardMaker<'a, L, G>
 where
     L: WaitableLocker<WaitableGuard<'a> = Self>,
@@ -55,6 +39,14 @@ where
 
     fn locker(&self) -> &'a Self::Locker {
         self.locker
+    }
+
+    fn unlock(&mut self) {
+        if let Some(guard) = self.guard.take() {
+            drop(guard);
+
+            self.locker.wakeup_another_one();
+        }
     }
 }
 
@@ -71,9 +63,9 @@ where
 impl<'a, L, G> ops::Deref for WaitableLockerGuardMaker<'a, L, G>
 where
     L: WaitableLocker<WaitableGuard<'a> = Self>,
-    G: 'a + ops::Deref<Target = L::Value>,
+    G: 'a + ops::Deref,
 {
-    type Target = L::Value;
+    type Target = G::Target;
     fn deref(&self) -> &Self::Target {
         self.guard.as_deref().expect("Deref on unlocked guard")
     }
@@ -82,7 +74,7 @@ where
 impl<'a, L, G> ops::DerefMut for WaitableLockerGuardMaker<'a, L, G>
 where
     L: WaitableLocker<WaitableGuard<'a> = Self>,
-    G: 'a + ops::DerefMut<Target = L::Value>,
+    G: 'a + ops::DerefMut,
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.guard

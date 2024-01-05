@@ -46,11 +46,9 @@ mod tests {
                 QuicListenerStateRecv::WriteSize(write_size) => {
                     assert_eq!(write_size, send_size);
 
-                    // let conn = listener.accept().await.unwrap();
+                    let conn = listener.accept().await.unwrap();
 
-                    // conn.read(&mut buf).await.unwrap()
-
-                    todo!();
+                    conn.read(&mut buf).await.unwrap()
                 }
                 QuicListenerStateRecv::Handshake(write_size, handshake) => {
                     assert_eq!(write_size, send_size);

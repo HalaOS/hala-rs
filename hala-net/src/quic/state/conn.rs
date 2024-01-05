@@ -10,7 +10,7 @@ use std::{
 };
 
 use event_map::{
-    locks::{Locker, WaitableLocker, WaitableSpinMutex},
+    locks::{WaitableLocker, WaitableSpinMutex},
     EventMap, WaitableEventMap,
 };
 

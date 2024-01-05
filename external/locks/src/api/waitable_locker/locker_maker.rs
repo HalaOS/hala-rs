@@ -1,4 +1,7 @@
-use std::{collections::VecDeque, task::Waker};
+use std::{
+    collections::VecDeque,
+    task::{Poll, Waker},
+};
 
 use crate::{Locker, WaitableLocker, WaitableLockerGuardMaker};
 
@@ -28,6 +31,22 @@ where
     }
 }
 
+impl<L, W> WaitableLockerMaker<L, W>
+where
+    L: Locker,
+    W: Locker<Value = VecDeque<Waker>> + Default,
+{
+    pub fn new(value: L::Value) -> Self
+    where
+        L::Value: Sized,
+    {
+        Self {
+            wakers: Default::default(),
+            inner_locker: L::new(value),
+        }
+    }
+}
+
 impl<L, W> WaitableLocker for WaitableLockerMaker<L, W>
 where
     L: Locker,
@@ -35,21 +54,17 @@ where
 {
     type WaitableGuard<'a> = WaitableLockerGuardMaker<'a,Self,L::Guard<'a>>
     where
-        Self: 'a,
-        Self::Value: 'a;
+        Self: 'a;
 
-    fn try_lock_with_context(
-        &self,
-        cx: &mut std::task::Context<'_>,
-    ) -> Option<Self::WaitableGuard<'_>> {
+    fn poll_lock(&self, cx: &mut std::task::Context<'_>) -> Poll<Self::WaitableGuard<'_>> {
         let mut wakers = self.wakers.sync_lock();
 
-        match self.try_sync_lock() {
-            Some(guard) => Some(guard),
+        match self.inner_locker.try_sync_lock() {
+            Some(guard) => Poll::Ready((self, guard).into()),
             None => {
                 wakers.push_back(cx.waker().clone());
 
-                None
+                Poll::Pending
             }
         }
     }
@@ -57,41 +72,6 @@ where
     fn wakeup_another_one(&self) {
         if let Some(waker) = self.wakers.sync_lock().pop_front() {
             waker.wake();
-        }
-    }
-}
-
-impl<L, W> Locker for WaitableLockerMaker<L, W>
-where
-    L: Locker,
-    W: Locker<Value = VecDeque<Waker>> + Default,
-{
-    type Value = L::Value;
-
-    type Guard<'a> = WaitableLockerGuardMaker<'a,Self,L::Guard<'a>>
-    where
-        Self: 'a,
-        Self::Value: 'a;
-
-    fn sync_lock(&self) -> Self::Guard<'_> {
-        let guard = self.inner_locker.sync_lock();
-
-        (self, guard).into()
-    }
-
-    fn try_sync_lock(&self) -> Option<Self::Guard<'_>> {
-        self.inner_locker
-            .try_sync_lock()
-            .map(|guard| (self, guard).into())
-    }
-
-    fn new(data: Self::Value) -> Self
-    where
-        Self::Value: Sized,
-    {
-        Self {
-            wakers: Default::default(),
-            inner_locker: L::new(data),
         }
     }
 }

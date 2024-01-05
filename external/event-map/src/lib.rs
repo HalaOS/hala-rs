@@ -106,7 +106,7 @@ pub trait WaitableEventMap {
     /// Notify all event on in the providing `events` list
     fn notify_any(&self, reason: Reason);
 
-    fn wait_with<'a, Q, G>(&'a self, event: Q, guard: G) -> WaitWith<'a, Self::E, G>
+    fn wait_with<'a, 'b, Q, G>(&'a self, event: Q, guard: G) -> WaitWith<'a, Self::E, G>
     where
         G: WaitableLockerGuard<'a>,
         Q: Borrow<Self::E>;
@@ -170,7 +170,6 @@ where
         WaitWith {
             wakers: &self.wakers,
             reason: Arc::new(AtomicU8::new(Reason::None.into())),
-            locker: guard.locker(),
             guard,
             event_debug: event.borrow().clone(),
             event: Some(event.borrow().clone()),
@@ -205,7 +204,6 @@ where
 /// Future created by [`wait`](EventMap::wait) function.
 pub struct WaitWith<'a, E, G>
 where
-    G: 'a,
     G: WaitableLockerGuard<'a>,
 {
     wakers: &'a DashMap<E, WakerWrapper>,
@@ -213,13 +211,11 @@ where
     event: Option<E>,
     event_debug: E,
     guard: G,
-    locker: &'a G::Locker,
 }
 
 impl<'a, E, G> Debug for WaitWith<'a, E, G>
 where
     E: Debug,
-    G: 'a,
     G: WaitableLockerGuard<'a>,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -234,7 +230,7 @@ where
 impl<'a, E, G> Future for WaitWith<'a, E, G>
 where
     E: Send + Eq + Hash + Unpin + Debug,
-    G: WaitableLockerGuard<'a> + Unpin,
+    G: WaitableLockerGuard<'a> + Unpin + 'a,
 {
     type Output = Result<G, EventMapError>;
 
@@ -254,7 +250,7 @@ where
 
             log::trace!("{:?} pending", self.event_debug);
 
-            self.guard.unlock();
+            // self.guard.unlock();
 
             return Poll::Pending;
         }
@@ -274,7 +270,7 @@ where
         {
             log::trace!("acquire locker {:?}", self.event_debug);
 
-            let mut relock = Box::pin(self.locker.async_lock());
+            let mut relock = Box::pin(self.guard.locker().async_lock());
 
             match Pin::new(&mut relock).poll(cx) {
                 Poll::Pending => {
@@ -296,7 +292,7 @@ mod tests {
         executor::{LocalPool, ThreadPool},
         task::{LocalSpawnExt, SpawnExt},
     };
-    use locks::{Locker, WaitableLocker, WaitableRefCell, WaitableSpinMutex};
+    use locks::{WaitableLocker, WaitableRefCell, WaitableSpinMutex};
 
     #[test]
     fn test_local_mediator() {
