@@ -1,7 +1,16 @@
-use std::{future::IntoFuture, pin::Pin};
+use std::{
+    future::IntoFuture,
+    pin::Pin,
+    sync::{
+        atomic::{AtomicBool, AtomicUsize},
+        Arc,
+    },
+};
 
+use dashmap::DashMap;
 use futures::FutureExt;
 
+/// A future will polling a wrapped future once within the current async context.
 pub struct PollOnce<Fut> {
     fut: Pin<Box<Fut>>,
 }
@@ -39,4 +48,21 @@ macro_rules! poll_once {
     ($fut: expr) => {
         $crate::PollOnce::new($fut).await
     };
+}
+
+struct BatchFutureWrapper<Fut> {
+    /// the orignal future instance of this wrapper.
+    orignal_future: Pin<Box<Fut>>,
+    /// the wake-up call flag
+    flag: Arc<AtomicBool>,
+}
+
+/// A future batch poll same type futures.
+pub struct BatchFuture<Fut> {
+    /// The generator for the wrapped future id.
+    idgen: Arc<AtomicUsize>,
+    /// Current set of pending futures
+    pending_futures: DashMap<usize, BatchFutureWrapper<Fut>>,
+    /// Current set of ready futures
+    wakeup_futures: boxcar::Vec<BatchFutureWrapper<Fut>>,
 }

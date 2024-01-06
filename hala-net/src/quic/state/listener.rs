@@ -368,7 +368,7 @@ impl QuicListenerState {
         }
     }
 
-    /// Close this listener.
+    /// Close this listener and drop the incoming queue.
     pub async fn close(&self) {
         let mut incoming = self.incoming.lock().await;
 
