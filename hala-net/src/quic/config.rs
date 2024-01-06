@@ -45,10 +45,8 @@ impl DerefMut for Config {
 
 #[allow(unused)]
 #[cfg(test)]
-pub(super) fn mock_config(is_server: bool) -> Config {
+pub(super) fn mock_config(is_server: bool, max_datagram_size: usize) -> Config {
     use std::path::Path;
-
-    const MAX_DATAGRAM_SIZE: usize = 1350;
 
     let mut config = Config::new().unwrap();
 
@@ -72,12 +70,12 @@ pub(super) fn mock_config(is_server: bool) -> Config {
         .set_application_protos(&[b"hq-interop", b"hq-29", b"hq-28", b"hq-27", b"http/0.9"])
         .unwrap();
 
-    config.set_max_idle_timeout(1000);
-    config.set_max_recv_udp_payload_size(MAX_DATAGRAM_SIZE);
-    config.set_max_send_udp_payload_size(MAX_DATAGRAM_SIZE);
+    config.set_max_idle_timeout(5000);
+    config.set_max_recv_udp_payload_size(max_datagram_size);
+    config.set_max_send_udp_payload_size(max_datagram_size);
     config.set_initial_max_data(10_000_000);
-    config.set_initial_max_stream_data_bidi_local(1_000_000);
-    config.set_initial_max_stream_data_bidi_remote(1_000_000);
+    config.set_initial_max_stream_data_bidi_local((max_datagram_size) as u64);
+    config.set_initial_max_stream_data_bidi_remote((max_datagram_size) as u64);
     config.set_initial_max_streams_bidi(100);
     config.set_initial_max_streams_uni(100);
     config.set_disable_active_migration(false);

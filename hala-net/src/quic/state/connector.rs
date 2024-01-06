@@ -5,10 +5,13 @@ use ring::rand::{SecureRandom, SystemRandom};
 
 use crate::{errors::into_io_error, Config};
 
+use super::QuicConnState;
+
 /// Quic client connector
 pub struct QuicConnectorState {
     /// source connection id.
     pub(super) quiche_conn: quiche::Connection,
+    pub(super) ping_timeout: Duration,
 }
 
 impl QuicConnectorState {
@@ -29,7 +32,10 @@ impl QuicConnectorState {
         let quiche_conn = quiche::connect(None, &scid, laddr, raddr, config)
             .map_err(|err| io::Error::new(io::ErrorKind::ConnectionRefused, err))?;
 
-        Ok(Self { quiche_conn })
+        Ok(Self {
+            quiche_conn,
+            ping_timeout: config.ping_timeout,
+        })
     }
 
     /// Generate send data.
@@ -108,5 +114,11 @@ impl QuicConnectorState {
     /// If no timeout has occurred it returns 0.
     pub fn on_timeout(&mut self) {
         self.quiche_conn.on_timeout();
+    }
+}
+
+impl From<QuicConnectorState> for QuicConnState {
+    fn from(value: QuicConnectorState) -> Self {
+        QuicConnState::new(value.quiche_conn, value.ping_timeout, 4)
     }
 }

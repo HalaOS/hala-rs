@@ -26,6 +26,7 @@ thiserror = {workspace = true}
 
 [dev-dependencies]
 divan = {workspace = true}
+futures-test = {workspace = true}
 hala-test = {workspace = true}
 pretty_env_logger = {workspace = true}
 rand = {workspace = true}

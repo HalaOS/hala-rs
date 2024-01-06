@@ -464,6 +464,18 @@ impl QuicConnState {
         }
     }
 
+    /// Open new stream to communicate with remote peer.
+    pub async fn open_stream(&self) -> io::Result<u64> {
+        let mut state = self.state.lock().await;
+
+        self.handle_quic_conn_status(&mut state)?;
+
+        let stream_id = state.lastest_outgoing_stream_id;
+        state.lastest_outgoing_stream_id += 4;
+
+        Ok(stream_id)
+    }
+
     /// Close stream by stream `id`.
     ///
     /// This function closes stream by sending len(0) data and fin flag.
