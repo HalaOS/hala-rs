@@ -39,3 +39,9 @@ mod current;
 
 #[cfg(feature = "current")]
 pub use current::*;
+
+#[cfg(feature = "poll")]
+mod poll;
+
+#[cfg(feature = "poll")]
+pub use poll::*;
