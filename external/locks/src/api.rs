@@ -33,7 +33,7 @@ pub trait AsyncLockable {
     ///
     /// A guard of futures-aware mutex must be able to transfer between threads
     /// In other words, this guard must not track any thread-specific details
-    type GuardMut<'a>: Send
+    type GuardMut<'a>: AsyncGuardMut<'a, Locker = Self> + Send + Unpin
     where
         Self: 'a;
 
@@ -48,5 +48,11 @@ pub trait AsyncLockable {
     /// Immediately drops the `guard`, and consequently unlocks the `Lockable` object.
     ///
     /// The return value is the associated [`Lockable`] object of this `guard`
-    fn unlock(guard: Self::GuardMut<'_>) -> &Self;
+    fn unlock<'a>(guard: Self::GuardMut<'a>) -> &'a Self;
+}
+
+pub trait AsyncGuardMut<'a> {
+    type Locker: AsyncLockable<GuardMut<'a> = Self>
+    where
+        Self: 'a;
 }

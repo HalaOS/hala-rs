@@ -28,7 +28,7 @@ where
 impl<Locker, Wakers> AsyncLockable for AsyncLockableMaker<Locker, Wakers>
 where
     Locker: Lockable + Send + Sync,
-    for<'a> Locker::GuardMut<'a>: Send,
+    for<'a> Locker::GuardMut<'a>: Send + Unpin,
     Wakers: Lockable + Send + Sync,
     for<'b> Wakers::GuardMut<'b>: DerefMut<Target = VecDeque<Waker>>,
 {
@@ -44,7 +44,7 @@ where
         AsyncLockableMakerFuture { locker: self }
     }
 
-    fn unlock(guard: Self::GuardMut<'_>) -> &Self {
+    fn unlock<'a>(guard: Self::GuardMut<'a>) -> &'a Self {
         let locker = guard.locker;
 
         drop(guard);
@@ -62,6 +62,16 @@ where
 {
     locker: &'a AsyncLockableMaker<Locker, Wakers>,
     inner_guard: Option<Locker::GuardMut<'a>>,
+}
+
+impl<'a, Locker, Wakers> AsyncGuardMut<'a> for AsyncLockableMakerGuard<'a, Locker, Wakers>
+where
+    Locker: Lockable + Send + Sync,
+    for<'b> Locker::GuardMut<'b>: Send + Unpin,
+    Wakers: Lockable + Send + Sync,
+    for<'c> Wakers::GuardMut<'c>: DerefMut<Target = VecDeque<Waker>>,
+{
+    type Locker = AsyncLockableMaker<Locker, Wakers>;
 }
 
 impl<'a, Locker, Wakers, T> ops::Deref for AsyncLockableMakerGuard<'a, Locker, Wakers>
