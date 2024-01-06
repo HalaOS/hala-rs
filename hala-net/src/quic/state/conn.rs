@@ -293,7 +293,7 @@ impl QuicConnState {
     }
 
     /// Writes data to stream.
-    pub async fn stream_write(&self, id: u64, buf: &[u8], fin: bool) -> io::Result<usize> {
+    pub async fn stream_send(&self, id: u64, buf: &[u8], fin: bool) -> io::Result<usize> {
         let event = QuicConnStateEvent::StreamWritable(self.scid.clone(), id);
 
         loop {
@@ -363,7 +363,7 @@ impl QuicConnState {
     }
 
     /// Reads data from stream, and returns tuple (read_size,fin)
-    pub async fn stream_read(&self, id: u64, buf: &mut [u8]) -> io::Result<(usize, bool)> {
+    pub async fn stream_recv(&self, id: u64, buf: &mut [u8]) -> io::Result<(usize, bool)> {
         let event = QuicConnStateEvent::StreamReadable(self.scid.clone(), id);
 
         loop {
@@ -480,7 +480,7 @@ impl QuicConnState {
     ///
     /// This function closes stream by sending len(0) data and fin flag.
     pub async fn close_stream(&self, id: u64) -> io::Result<()> {
-        self.stream_write(id, b"", true).await.map(|_| ())
+        self.stream_send(id, b"", true).await.map(|_| ())
     }
 
     /// Closes the connection with the given error and reason.

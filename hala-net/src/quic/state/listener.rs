@@ -303,7 +303,7 @@ impl QuicListenerState {
     }
 
     /// Processes QUIC packets received from the peer.
-    pub async fn recv(
+    pub async fn write(
         &self,
         buf: &mut [u8],
         recv_info: RecvInfo,

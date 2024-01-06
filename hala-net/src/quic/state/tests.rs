@@ -38,7 +38,7 @@ impl MockQuic {
             let (send_size, send_info) = connector.send(&mut buf).unwrap().unwrap();
 
             let recv = listener
-                .recv(
+                .write(
                     &mut buf[..send_size],
                     RecvInfo {
                         from: send_info.from,
@@ -127,7 +127,7 @@ async fn test_stream_write() {
 
     let send_buf = b"hello world";
 
-    let result = Box::pin(mock.client.stream_write(stream_id, send_buf, true))
+    let result = Box::pin(mock.client.stream_send(stream_id, send_buf, true))
         .poll_unpin(&mut cx)
         .map(|len| len.expect("stream_write"));
 
@@ -135,22 +135,22 @@ async fn test_stream_write() {
 }
 
 #[hala_test::test(io_test)]
-async fn test_stream_write_overflow() {
+async fn test_max_stream_data() {
     let mock = MockQuic::new().await;
 
     let stream_id = mock.client.open_stream().await.unwrap();
 
-    let send_buf = &[0; MAX_DATAGRAM_SIZE - 100];
+    let send_buf = &[0; MAX_DATAGRAM_SIZE];
 
-    for _ in 0..1 {
-        let result = poll_once!(mock.client.stream_write(stream_id, send_buf, true))
+    for _ in 0..10 {
+        let result = poll_once!(mock.client.stream_send(stream_id, send_buf, false))
             .map(|len| len.expect(""));
 
-        assert_eq!(result, Poll::Ready(MAX_DATAGRAM_SIZE - 100));
+        assert_eq!(result, Poll::Ready(MAX_DATAGRAM_SIZE));
     }
 
     let result =
-        poll_once!(mock.client.stream_write(stream_id, send_buf, true)).map(|len| len.expect(""));
+        poll_once!(mock.client.stream_send(stream_id, send_buf, false)).map(|len| len.expect(""));
 
     assert_eq!(result, Poll::Pending);
 }
