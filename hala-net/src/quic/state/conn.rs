@@ -10,8 +10,8 @@ use std::{
 };
 
 use event_map::{
-    locks::{WaitableLocker, WaitableSpinMutex},
-    EventMap, WaitableEventMap,
+    locks::{AsyncLockable, AsyncSpinMutex},
+    EventMap,
 };
 
 use hala_io_util::{io_spawn, timeout};
@@ -71,7 +71,7 @@ impl RawQuicConnState {
 #[derive(Clone)]
 pub struct QuicConnState {
     /// The [`QuicConnState`] instance with lock protected.
-    state: Arc<WaitableSpinMutex<RawQuicConnState>>,
+    state: Arc<AsyncSpinMutex<RawQuicConnState>>,
     /// The [`EventMap`] instance.
     mediator: Arc<EventMap<QuicConnStateEvent>>,
     /// The source id of this connection.
@@ -100,7 +100,7 @@ impl QuicConnState {
         Self {
             scid: quiche_conn.source_id().into_owned(),
             dcid: quiche_conn.destination_id().into_owned(),
-            state: Arc::new(WaitableSpinMutex::new(RawQuicConnState::new(
+            state: Arc::new(AsyncSpinMutex::new(RawQuicConnState::new(
                 quiche_conn,
                 ping_timeout,
                 first_outgoing_stream_id,
@@ -183,10 +183,10 @@ impl QuicConnState {
     pub async fn read(&self, buf: &mut [u8]) -> io::Result<(usize, SendInfo)> {
         let event = QuicConnStateEvent::Readable(self.scid.clone());
 
-        // Asynchronously lock the [`QuicConnState`]
-        let mut state = self.state.async_lock().await;
-
         loop {
+            // Asynchronously lock the [`QuicConnState`]
+            let mut state = self.state.lock().await;
+
             self.handle_quic_conn_status(&mut state)?;
 
             match state.quiche_conn.send(buf) {
@@ -211,7 +211,7 @@ impl QuicConnState {
 
                     let wait_fut = async {
                         self.mediator
-                            .wait_with(event.clone(), state)
+                            .wait(event.clone(), state)
                             .await
                             .map_err(into_io_error)
                     };
@@ -219,15 +219,14 @@ impl QuicConnState {
                     let wait_fut_with_timeout = timeout(wait_fut, send_timeout);
 
                     match wait_fut_with_timeout.await {
-                        Ok(s) => {
-                            state = s;
+                        Ok(_) => {
                             continue;
                         }
                         Err(err) if err.kind() == io::ErrorKind::TimedOut => {
                             // cancel waiting readable event notify.
                             self.mediator.wait_cancel(&event);
                             // relock state.
-                            state = self.state.async_lock().await;
+                            let mut state = self.state.lock().await;
 
                             if state.send_ack_eliciting_instant.elapsed() > state.ping_timeout {
                                 state
@@ -273,7 +272,7 @@ impl QuicConnState {
 
     /// Asynchronous write new data to state machine.
     pub async fn write(&self, buf: &mut [u8], recv_info: RecvInfo) -> io::Result<usize> {
-        let mut state = self.state.async_lock().await;
+        let mut state = self.state.lock().await;
 
         match state.quiche_conn.recv(buf, recv_info) {
             Ok(write_size) => {
@@ -297,10 +296,10 @@ impl QuicConnState {
     pub async fn stream_write(&self, id: u64, buf: &[u8], fin: bool) -> io::Result<usize> {
         let event = QuicConnStateEvent::StreamWritable(self.scid.clone(), id);
 
-        // Asynchronously lock the [`QuicConnState`]
-        let mut state = self.state.async_lock().await;
-
         loop {
+            // Asynchronously lock the [`QuicConnState`]
+            let mut state = self.state.lock().await;
+
             self.handle_quic_conn_status(&mut state)?;
 
             match state.quiche_conn.stream_send(id, buf, fin) {
@@ -321,11 +320,9 @@ impl QuicConnState {
 
                     log::trace!("{:?} stream no capacity, stream_id={}", self, id,);
 
-                    match self.mediator.wait_with(event.clone(), state).await {
-                        Ok(guard) => {
+                    match self.mediator.wait(event.clone(), state).await {
+                        Ok(_) => {
                             log::trace!("{:?} wakeup stream to write data, stream_id={}", self, id,);
-
-                            state = guard;
 
                             // try again.
                             continue;
@@ -369,10 +366,10 @@ impl QuicConnState {
     pub async fn stream_read(&self, id: u64, buf: &mut [u8]) -> io::Result<(usize, bool)> {
         let event = QuicConnStateEvent::StreamReadable(self.scid.clone(), id);
 
-        // Asynchronously lock the [`QuicConnState`]
-        let mut state = self.state.async_lock().await;
-
         loop {
+            // Asynchronously lock the [`QuicConnState`]
+            let mut state = self.state.lock().await;
+
             self.handle_quic_conn_status(&mut state)?;
 
             match state.quiche_conn.stream_recv(id, buf) {
@@ -394,11 +391,9 @@ impl QuicConnState {
 
                     log::trace!("{:?} stream no capacity, stream_id={}", self, id,);
 
-                    match self.mediator.wait_with(event.clone(), state).await {
-                        Ok(guard) => {
+                    match self.mediator.wait(event.clone(), state).await {
+                        Ok(_) => {
                             log::trace!("{:?} wakeup stream to read data, stream_id={}", self, id,);
-
-                            state = guard;
 
                             // try again.
                             continue;
@@ -437,10 +432,10 @@ impl QuicConnState {
     pub async fn accept(&self) -> Option<u64> {
         let event = QuicConnStateEvent::Accept(self.scid.clone());
 
-        // Asynchronously lock the [`QuicConnState`]
-        let mut state = self.state.async_lock().await;
-
         loop {
+            // Asynchronously lock the [`QuicConnState`]
+            let mut state = self.state.lock().await;
+
             if self.handle_quic_conn_status(&mut state).is_err() {
                 return None;
             }
@@ -451,11 +446,9 @@ impl QuicConnState {
 
             log::trace!("{:?} accept incoming strema pending.", self,);
 
-            match self.mediator.wait_with(event.clone(), state).await {
-                Ok(guard) => {
+            match self.mediator.wait(event.clone(), state).await {
+                Ok(_) => {
                     log::trace!("{:?} wakeup accept task", self,);
-
-                    state = guard;
 
                     // try again.
                     continue;
@@ -482,13 +475,7 @@ impl QuicConnState {
     ///
     /// see quiche [`doc`](https://docs.rs/quiche/latest/quiche/struct.Connection.html#method.close) for more details.
     pub async fn close(&self, app: bool, err: u64, reason: &[u8]) -> io::Result<()> {
-        match self
-            .state
-            .async_lock()
-            .await
-            .quiche_conn
-            .close(app, err, reason)
-        {
+        match self.state.lock().await.quiche_conn.close(app, err, reason) {
             Ok(_) => Ok(()),
             Err(quiche::Error::Done) => Ok(()),
             Err(err) => Err(into_io_error(err)),
@@ -500,7 +487,7 @@ impl QuicConnState {
     /// Basically this returns true when the peer either set the fin flag for the stream, or sent RESET_STREAM.
     pub async fn stream_finished(&self, stream_id: u64) -> bool {
         self.state
-            .async_lock()
+            .lock()
             .await
             .quiche_conn
             .stream_finished(stream_id)
@@ -508,12 +495,12 @@ impl QuicConnState {
 
     /// Returns true if the connection is closed.
     pub async fn is_closed(&self) -> bool {
-        self.state.async_lock().await.quiche_conn.is_closed()
+        self.state.lock().await.quiche_conn.is_closed()
     }
 
     /// Returns true if the connection is established.
     pub async fn is_established(&self) -> bool {
-        self.state.async_lock().await.quiche_conn.is_established()
+        self.state.lock().await.quiche_conn.is_established()
     }
 }
 

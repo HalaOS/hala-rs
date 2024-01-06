@@ -7,8 +7,8 @@ use std::{
 
 use dashmap::DashMap;
 use event_map::{
-    locks::{WaitableLocker, WaitableSpinMutex},
-    EventMap, WaitableEventMap,
+    locks::{AsyncLockable, AsyncSpinMutex},
+    EventMap,
 };
 use futures::io;
 use quiche::{RecvInfo, SendInfo};
@@ -276,11 +276,11 @@ enum QuicListenerStateEvent {
 /// The state machine for quic server listener.
 pub struct QuicListenerState {
     /// the acceptor for incoming connections.
-    acceptor: Arc<WaitableSpinMutex<QuicAcceptor>>,
+    acceptor: Arc<AsyncSpinMutex<QuicAcceptor>>,
     /// The set of activing [`QuicConnState`]s.
     conns: Arc<DashMap<quiche::ConnectionId<'static>, QuicConnState>>,
     /// The queue for new incoming connections.
-    incoming: Arc<WaitableSpinMutex<Option<VecDeque<QuicConnState>>>>,
+    incoming: Arc<AsyncSpinMutex<Option<VecDeque<QuicConnState>>>>,
     /// event notify center.
     mediator: Arc<EventMap<QuicListenerStateEvent>>,
 }
@@ -295,9 +295,9 @@ impl QuicListenerState {
     /// Use [`config`](Config) to create new [`QuicListenerState`]
     pub fn new(config: Config) -> io::Result<Self> {
         Ok(Self {
-            acceptor: Arc::new(WaitableSpinMutex::new(QuicAcceptor::new(config)?)),
+            acceptor: Arc::new(AsyncSpinMutex::new(QuicAcceptor::new(config)?)),
             conns: Default::default(),
-            incoming: Arc::new(WaitableSpinMutex::new(Some(Default::default()))),
+            incoming: Arc::new(AsyncSpinMutex::new(Some(Default::default()))),
             mediator: Default::default(),
         })
     }
@@ -309,7 +309,7 @@ impl QuicListenerState {
         recv_info: RecvInfo,
     ) -> io::Result<QuicListenerStateRecv> {
         let handshake = {
-            let mut acceptor = self.acceptor.async_lock().await;
+            let mut acceptor = self.acceptor.lock().await;
 
             acceptor.handshake(buf, recv_info)?
         };
@@ -348,7 +348,7 @@ impl QuicListenerState {
                 self.conns.insert(scid, conn.clone());
 
                 self.incoming
-                    .async_lock()
+                    .lock()
                     .await
                     .as_mut()
                     .ok_or(io::Error::new(
@@ -370,7 +370,7 @@ impl QuicListenerState {
 
     /// Close this listener.
     pub async fn close(&self) {
-        let mut incoming = self.incoming.async_lock().await;
+        let mut incoming = self.incoming.lock().await;
 
         *incoming = None;
 
@@ -380,9 +380,9 @@ impl QuicListenerState {
 
     /// Accept one incoming connection, or returns `None` if this listener had been closed.
     pub async fn accept(&self) -> Option<QuicConnState> {
-        let mut incoming = self.incoming.async_lock().await;
-
         loop {
+            let mut incoming = self.incoming.lock().await;
+
             if let Some(incoming) = incoming.as_mut() {
                 if let Some(conn) = incoming.pop_front() {
                     return Some(conn);
@@ -392,9 +392,8 @@ impl QuicListenerState {
             }
 
             // Safety: the close function uses `event_map::Reason::On` to notify incoming listener
-            incoming = self
-                .mediator
-                .wait_with(QuicListenerStateEvent::Incoming, incoming)
+            self.mediator
+                .wait(QuicListenerStateEvent::Incoming, incoming)
                 .await
                 .expect("Please always use `event_map::Reason::On` to notify me!!");
         }

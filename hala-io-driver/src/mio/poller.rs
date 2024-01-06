@@ -2,7 +2,7 @@ use std::{io, ops::DerefMut, sync::Arc, task::Waker, time::Duration};
 
 use dashmap::DashMap;
 use hashed_timer::HashedTimeWheel;
-use locks::{Locker, SpinMutex};
+use locks::{Lockable, LockableNew, SpinMutex};
 use mio::Poll;
 
 use crate::{Handle, Interest, Token, TypedHandle};
@@ -52,10 +52,7 @@ impl MioPoller {
         let mut events = mio::event::Events::with_capacity(1024);
 
         // first of all, poll io event.
-        self.0
-            .mio_poller
-            .sync_lock()
-            .poll(&mut events, Some(timeout))?;
+        self.0.mio_poller.lock().poll(&mut events, Some(timeout))?;
 
         let mut hala_events = vec![];
 

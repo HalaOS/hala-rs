@@ -114,12 +114,6 @@ pub struct SpinMutexGuard<'a, T> {
 
 impl<'a, T> Drop for SpinMutexGuard<'a, T> {
     fn drop(&mut self) {
-        log::trace!(
-            "self={},guard={}",
-            self as *const _ as usize,
-            self.locker.guard.load(Ordering::Acquire)
-        );
-
         self.locker
             .guard
             .compare_exchange(self.ptr, 0, Ordering::Release, Ordering::Relaxed)
