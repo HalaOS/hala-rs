@@ -155,7 +155,7 @@ mod tests {
 
         let send_buf = &[0; MAX_DATAGRAM_SIZE];
 
-        for _ in 0..1 {
+        for _ in 0..10 {
             let result = Box::pin(mock.client.stream_write(stream_id, send_buf, true))
                 .poll_unpin(&mut cx)
                 .map(|len| len.expect("stream_write"));
