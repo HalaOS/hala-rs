@@ -22,14 +22,14 @@ pretty_env_logger = {workspace = true}
 
 [features]
 
-[[bench]]
-harness = false
-name = "spin_lock"
+# [[bench]]
+# harness = false
+# name = "spin_lock"
 
-[[bench]]
-harness = false
-name = "mutex_lock"
+# [[bench]]
+# harness = false
+# name = "mutex_lock"
 
-[[bench]]
-harness = false
-name = "refcell_lock"
+# [[bench]]
+# harness = false
+# name = "refcell_lock"

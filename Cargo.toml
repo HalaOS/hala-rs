@@ -1,8 +1,8 @@
 [workspace]
-members = ["hala-io-driver", "hala-net", "hala-test", "hala-io-util", "external/*"]
+members = ["external/*"]
 resolver = "2"
 
-#
+#"hala-io-driver", "hala-net", "hala-test", "hala-io-util",
 
 [workspace.package]
 edition = "2021"
