@@ -7,7 +7,7 @@ use super::*;
 pub struct WaitableLockerGuardMaker<'a, L, G>
 where
     L: WaitableLocker<WaitableGuard<'a> = Self>,
-    G: 'a,
+    G: Send + 'a,
 {
     /// The [`Locker`] instance associated with this guard
     locker: &'a L,
@@ -18,7 +18,7 @@ where
 impl<'a, L, G> From<(&'a L, G)> for WaitableLockerGuardMaker<'a, L, G>
 where
     L: WaitableLocker<WaitableGuard<'a> = Self>,
-    G: 'a,
+    G: Send + 'a,
 {
     fn from(value: (&'a L, G)) -> Self {
         Self {
@@ -31,7 +31,7 @@ where
 impl<'a, L, G> WaitableLockerGuard<'a> for WaitableLockerGuardMaker<'a, L, G>
 where
     L: WaitableLocker<WaitableGuard<'a> = Self>,
-    G: 'a,
+    G: Send + 'a,
 {
     type Locker = L
     where
@@ -53,7 +53,7 @@ where
 impl<'a, L, G> Drop for WaitableLockerGuardMaker<'a, L, G>
 where
     L: WaitableLocker<WaitableGuard<'a> = Self>,
-    G: 'a,
+    G: Send + 'a,
 {
     fn drop(&mut self) {
         self.unlock();
@@ -63,7 +63,7 @@ where
 impl<'a, L, G> ops::Deref for WaitableLockerGuardMaker<'a, L, G>
 where
     L: WaitableLocker<WaitableGuard<'a> = Self>,
-    G: 'a + ops::Deref,
+    G: Send + 'a + ops::Deref,
 {
     type Target = G::Target;
     fn deref(&self) -> &Self::Target {
@@ -74,7 +74,7 @@ where
 impl<'a, L, G> ops::DerefMut for WaitableLockerGuardMaker<'a, L, G>
 where
     L: WaitableLocker<WaitableGuard<'a> = Self>,
-    G: 'a + ops::DerefMut,
+    G: Send + 'a + ops::DerefMut,
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.guard

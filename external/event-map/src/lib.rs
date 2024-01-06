@@ -284,54 +284,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::rc::Rc;
 
     use super::*;
 
-    use futures::{
-        executor::{LocalPool, ThreadPool},
-        task::{LocalSpawnExt, SpawnExt},
-    };
-    use locks::{WaitableLocker, WaitableRefCell, WaitableSpinMutex};
-
-    #[test]
-    fn test_local_mediator() {
-        let mut local_pool = LocalPool::new();
-
-        let mediator = Rc::new(EventMap::<i32>::default());
-
-        let shared = Rc::new(WaitableRefCell::new(1));
-
-        for i in 0..100000 {
-            let shared_cloned = shared.clone();
-
-            let mediator_cloned = mediator.clone();
-
-            local_pool
-                .spawner()
-                .spawn_local(async move {
-                    let mut shared = shared_cloned.async_lock().await;
-
-                    *shared = i + 1;
-
-                    mediator_cloned.notify_one(&i, Reason::On);
-                })
-                .unwrap();
-
-            let shared_cloned = shared.clone();
-            let mediator_cloned = mediator.clone();
-
-            local_pool.run_until(async move {
-                let mut shared = shared_cloned.async_lock().await;
-
-                if *shared != i + 1 {
-                    shared = mediator_cloned.wait_with(i, shared).await.unwrap();
-                }
-
-                assert_eq!(*shared, i + 1);
-            });
-        }
-    }
+    use futures::{executor::ThreadPool, task::SpawnExt};
+    use locks::{WaitableLocker, WaitableSpinMutex};
 
     #[futures_test::test]
     async fn test_multi_thread_notify() {

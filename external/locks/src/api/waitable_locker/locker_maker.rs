@@ -50,6 +50,7 @@ where
 impl<L, W> WaitableLocker for WaitableLockerMaker<L, W>
 where
     L: Locker,
+    for<'a> L::Guard<'a>: Send + 'a,
     W: Locker<Value = VecDeque<Waker>> + Default,
 {
     type WaitableGuard<'a> = WaitableLockerGuardMaker<'a,Self,L::Guard<'a>>

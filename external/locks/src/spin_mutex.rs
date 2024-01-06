@@ -56,9 +56,9 @@ pub struct SpinMutexGuard<'a, T> {
     guard: Option<parking_lot::MutexGuard<'a, T>>,
 }
 
-unsafe impl<'a, T> Send for SpinMutexGuard<'a, T> {}
+unsafe impl<'a, T: Send> Send for SpinMutexGuard<'a, T> {}
 
-unsafe impl<'a, T: Send> Sync for SpinMutexGuard<'a, T> {}
+unsafe impl<'a, T: Sync> Sync for SpinMutexGuard<'a, T> {}
 
 impl<'a, T> Drop for SpinMutexGuard<'a, T> {
     fn drop(&mut self) {
