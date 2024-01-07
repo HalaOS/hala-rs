@@ -5,14 +5,16 @@ use std::{
     time::{Duration, Instant},
 };
 
-use batching::BatcherWithContext;
+use batching::Batcher;
+use bytes::BytesMut;
 use dashmap::DashMap;
 use event_map::{
     locks::{AsyncLockable, AsyncSpinMutex},
     EventMap,
 };
 use futures::io;
-use quiche::{ConnectionId, RecvInfo, SendInfo};
+use hala_io_util::ReadBuf;
+use quiche::{RecvInfo, SendInfo};
 use ring::{hmac::Key, rand::SystemRandom};
 
 use crate::{errors::into_io_error, Config};
@@ -274,6 +276,17 @@ enum QuicListenerStateEvent {
     Incoming,
 }
 
+/// Result returns by [`QuicListenerState::recv`](QuicListenerState::recv)
+pub enum QuicListenerStateRecv {
+    WriteSize(usize),
+    Handshake(usize, QuicAcceptorHandshake),
+}
+
+enum QuicListnerConnRead {
+    Err(QuicConnState, io::Error),
+    Ok(QuicConnState, BytesMut, SendInfo),
+}
+
 /// The state machine for quic server listener.
 pub struct QuicListenerState {
     /// the acceptor for incoming connections.
@@ -284,14 +297,8 @@ pub struct QuicListenerState {
     incoming: Arc<AsyncSpinMutex<Option<VecDeque<QuicConnState>>>>,
     /// event notify center.
     mediator: Arc<EventMap<QuicListenerStateEvent>>,
-    /// Batcher of poll connections read.
-    batch_reader: Arc<BatcherWithContext<ConnectionId<'static>>>,
-}
-
-/// Result returns by [`QuicListenerState::recv`](QuicListenerState::recv)
-pub enum QuicListenerStateRecv {
-    WriteSize(usize),
-    Handshake(usize, QuicAcceptorHandshake),
+    /// the batch processor for reading data from connections .
+    conns_read: Arc<Batcher<QuicListnerConnRead>>,
 }
 
 impl QuicListenerState {
@@ -302,7 +309,7 @@ impl QuicListenerState {
             conns: Default::default(),
             incoming: Arc::new(AsyncSpinMutex::new(Some(Default::default()))),
             mediator: Default::default(),
-            batch_reader: Default::default(),
+            conns_read: Default::default(),
         })
     }
 
@@ -359,12 +366,12 @@ impl QuicListenerState {
                         io::ErrorKind::BrokenPipe,
                         "quic listener state closed.",
                     ))?
-                    .push_back(conn);
-
-                // self.batch_reader.push(scid, async move { Ok(()) });
+                    .push_back(conn.clone());
 
                 self.mediator
                     .notify_one(QuicListenerStateEvent::Incoming, event_map::Reason::On);
+
+                self.batch_read(conn);
 
                 return Ok(QuicListenerStateRecv::WriteSize(write_size));
             }
@@ -372,6 +379,20 @@ impl QuicListenerState {
                 return Ok(QuicListenerStateRecv::Handshake(buf.len(), handshake));
             }
         }
+    }
+
+    fn batch_read(&self, conn: QuicConnState) {
+        // push new task into batch poller.
+        self.conns_read.push(async move {
+            let mut buf = ReadBuf::with_capacity(65535);
+
+            match conn.read(buf.as_mut()).await {
+                Ok((read_size, send_info)) => {
+                    QuicListnerConnRead::Ok(conn, buf.into_bytes_mut(Some(read_size)), send_info)
+                }
+                Err(err) => QuicListnerConnRead::Err(conn, err),
+            }
+        });
     }
 
     /// Close this listener and drop the incoming queue.
@@ -402,6 +423,30 @@ impl QuicListenerState {
                 .wait(QuicListenerStateEvent::Incoming, incoming)
                 .await
                 .expect("Please always use `event_map::Reason::On` to notify me!!");
+        }
+    }
+
+    pub async fn read(&self) -> io::Result<(BytesMut, SendInfo)> {
+        match self.conns_read.wait().await {
+            QuicListnerConnRead::Err(conn, err) => {
+                log::trace!(
+                    "QuicListener, read data from conn error. scid={:?}, dcid={:?}, err={}",
+                    conn.scid,
+                    conn.dcid,
+                    err
+                );
+
+                // remove broken conn
+                self.conns.remove(&conn.scid);
+
+                return Err(err);
+            }
+            QuicListnerConnRead::Ok(conn, buf, send_info) => {
+                // push conn into batch poller again.
+                self.batch_read(conn);
+
+                return Ok((buf, send_info));
+            }
         }
     }
 }

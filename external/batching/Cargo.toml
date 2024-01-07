@@ -10,7 +10,6 @@ version.workspace = true
 
 [dependencies]
 boxcar = {workspace = true}
-cooked-waker = {workspace = true}
 dashmap = {workspace = true}
 futures = {workspace = true}
 futures-test = {workspace = true}

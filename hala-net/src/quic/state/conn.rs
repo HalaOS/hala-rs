@@ -75,9 +75,9 @@ pub struct QuicConnState {
     /// The [`EventMap`] instance.
     mediator: Arc<EventMap<QuicConnStateEvent>>,
     /// The source id of this connection.
-    scid: ConnectionId<'static>,
+    pub scid: ConnectionId<'static>,
     /// The destination id of this connection.
-    dcid: ConnectionId<'static>,
+    pub dcid: ConnectionId<'static>,
 }
 
 impl Debug for QuicConnState {

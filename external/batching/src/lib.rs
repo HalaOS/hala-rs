@@ -1,5 +1,5 @@
 use std::{
-    io, ops,
+    ops,
     pin::Pin,
     ptr::null_mut,
     sync::{
@@ -14,21 +14,21 @@ use futures::{future::BoxFuture, Future, FutureExt};
 use lockfree_rs::queue::Queue;
 
 /// A set to handle the reigstration/deregistration of pending future.
-struct PendingFutures {
-    futures: DashMap<usize, BoxFuture<'static, io::Result<()>>>,
+struct PendingFutures<R> {
+    futures: DashMap<usize, BoxFuture<'static, R>>,
 }
 
-impl PendingFutures {
-    fn insert(&self, id: usize, fut: BoxFuture<'static, io::Result<()>>) {
+impl<R> PendingFutures<R> {
+    fn insert(&self, id: usize, fut: BoxFuture<'static, R>) {
         self.futures.insert(id, fut);
     }
 
-    fn remove(&self, id: usize) -> Option<BoxFuture<'static, io::Result<()>>> {
+    fn remove(&self, id: usize) -> Option<BoxFuture<'static, R>> {
         self.futures.remove(&id).map(|(_, fut)| fut)
     }
 }
 
-impl Default for PendingFutures {
+impl<R> Default for PendingFutures<R> {
     fn default() -> Self {
         Self {
             futures: DashMap::new(),
@@ -37,11 +37,11 @@ impl Default for PendingFutures {
 }
 
 #[derive(Default)]
-struct RawBatchFutureWaker {
+struct WakerHost {
     waker: AtomicPtr<Waker>,
 }
 
-impl RawBatchFutureWaker {
+impl WakerHost {
     fn wake(&self) {
         if let Some(waker) = self.remove_waker() {
             waker.wake();
@@ -76,22 +76,17 @@ impl RawBatchFutureWaker {
 }
 
 #[derive(Clone)]
-struct BatchFutureWaker {
+struct BatcherWaker {
     future_id: usize,
-    batch_future: Batcher,
+    /// Current set of ready futures
+    ready_futures: Arc<Queue<usize>>,
+    /// Raw batch future waker
+    raw_waker: Arc<WakerHost>,
 }
 
-impl BatchFutureWaker {
-    fn new(future_id: usize, batch_future: Batcher) -> Self {
-        Self {
-            future_id,
-            batch_future,
-        }
-    }
-}
-
+#[inline(always)]
 unsafe fn batch_future_waker_clone(data: *const ()) -> RawWaker {
-    let waker = Box::from_raw(data as *mut BatchFutureWaker);
+    let waker = Box::from_raw(data as *mut BatcherWaker);
 
     let waker_cloned = waker.clone();
 
@@ -100,26 +95,29 @@ unsafe fn batch_future_waker_clone(data: *const ()) -> RawWaker {
     RawWaker::new(Box::into_raw(waker_cloned) as *const (), &WAKER_VTABLE)
 }
 
+#[inline(always)]
 unsafe fn batch_future_waker_wake(data: *const ()) {
-    let waker = Box::from_raw(data as *mut BatchFutureWaker);
+    let waker = Box::from_raw(data as *mut BatcherWaker);
 
-    waker.batch_future.ready_futures.push(waker.future_id);
+    waker.ready_futures.push(waker.future_id);
 
-    waker.batch_future.raw_waker.wake();
+    waker.raw_waker.wake();
 }
 
+#[inline(always)]
 unsafe fn batch_future_waker_wake_by_ref(data: *const ()) {
-    let waker = Box::from_raw(data as *mut BatchFutureWaker);
+    let waker = Box::from_raw(data as *mut BatcherWaker);
 
-    waker.batch_future.ready_futures.push(waker.future_id);
+    waker.ready_futures.push(waker.future_id);
 
-    waker.batch_future.raw_waker.wake();
+    waker.raw_waker.wake();
 
     _ = Box::into_raw(waker);
 }
 
+#[inline(always)]
 unsafe fn batch_future_waker_drop(data: *const ()) {
-    _ = Box::from_raw(data as *mut BatchFutureWaker);
+    _ = Box::from_raw(data as *mut BatcherWaker);
 }
 
 const WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(
@@ -129,8 +127,12 @@ const WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(
     batch_future_waker_drop,
 );
 
-fn new_batch_futre_waker(future_id: usize, batch_future: Batcher) -> Waker {
-    let boxed = Box::new(BatchFutureWaker::new(future_id, batch_future));
+fn new_batcher_waker<Fut>(future_id: usize, batch_future: Batcher<Fut>) -> Waker {
+    let boxed = Box::new(BatcherWaker {
+        future_id,
+        ready_futures: batch_future.ready_futures,
+        raw_waker: batch_future.raw_waker,
+    });
 
     unsafe {
         Waker::from_raw(RawWaker::new(
@@ -141,21 +143,21 @@ fn new_batch_futre_waker(future_id: usize, batch_future: Batcher) -> Waker {
 }
 
 /// A lockfree processor to batch poll the same type of futures.
-pub struct Batcher {
+pub struct Batcher<R> {
     /// The generator for the wrapped future id.
     idgen: Arc<AtomicUsize>,
     /// Current set of pending futures
-    pending_futures: Arc<PendingFutures>,
+    pending_futures: Arc<PendingFutures<R>>,
     /// Current set of ready futures
     ready_futures: Arc<Queue<usize>>,
     /// Raw batch future waker
-    raw_waker: Arc<RawBatchFutureWaker>,
+    raw_waker: Arc<WakerHost>,
 }
 
-unsafe impl Send for Batcher {}
-unsafe impl Sync for Batcher {}
+unsafe impl<R> Send for Batcher<R> {}
+unsafe impl<R> Sync for Batcher<R> {}
 
-impl Clone for Batcher {
+impl<R> Clone for Batcher<R> {
     fn clone(&self) -> Self {
         Self {
             idgen: self.idgen.clone(),
@@ -166,13 +168,13 @@ impl Clone for Batcher {
     }
 }
 
-impl Default for Batcher {
+impl<R> Default for Batcher<R> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Batcher {
+impl<R> Batcher<R> {
     pub fn new() -> Self {
         Self {
             idgen: Default::default(),
@@ -183,7 +185,7 @@ impl Batcher {
     }
     pub fn push<Fut>(&self, fut: Fut) -> usize
     where
-        Fut: Future<Output = io::Result<()>> + Send + 'static,
+        Fut: Future<Output = R> + Send + 'static,
     {
         let id = self.idgen.fetch_add(1, Ordering::AcqRel);
 
@@ -196,40 +198,44 @@ impl Batcher {
     }
 
     /// Create a future task to batch poll
-    pub fn wait(&self) -> Wait {
+    pub fn wait(&self) -> Wait<R> {
         Wait {
             batch: self.clone(),
         }
     }
 }
 
-pub struct Wait {
-    batch: Batcher,
+pub struct Wait<R> {
+    batch: Batcher<R>,
 }
 
-impl ops::Deref for Wait {
-    type Target = Batcher;
+impl<R> ops::Deref for Wait<R> {
+    type Target = Batcher<R>;
     fn deref(&self) -> &Self::Target {
         &self.batch
     }
 }
 
-impl Future for Wait {
-    type Output = (usize, io::Result<()>);
+impl<R> Future for Wait<R> {
+    type Output = R;
     fn poll(
         self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
+        // save system waker to prepare wakeup self again.
         self.raw_waker.add_waker(cx.waker().clone());
 
         while let Some(ready) = self.ready_futures.pop() {
+            // remove future from pending mapping.
             let mut future = self
                 .pending_futures
                 .remove(ready)
                 .expect("Calling BatchFuture.await in multi-threads is not allowed");
 
-            let waker = new_batch_futre_waker(ready, self.clone());
+            // Create a new wrapped waker.
+            let waker = new_batcher_waker(ready, self.clone());
 
+            // poll if
             match future.poll_unpin(&mut Context::from_waker(&waker)) {
                 std::task::Poll::Pending => {
                     self.pending_futures.insert(ready, future);
@@ -238,8 +244,7 @@ impl Future for Wait {
                 }
                 std::task::Poll::Ready(r) => {
                     self.raw_waker.remove_waker();
-
-                    return std::task::Poll::Ready((ready, r));
+                    return std::task::Poll::Ready(r);
                 }
             }
         }
@@ -251,7 +256,7 @@ impl Future for Wait {
 #[cfg(test)]
 mod tests {
 
-    use std::sync::mpsc;
+    use std::{io, sync::mpsc};
 
     use futures::{executor::ThreadPool, future::poll_fn, task::SpawnExt};
 
@@ -259,7 +264,7 @@ mod tests {
 
     #[futures_test::test]
     async fn test_basic_case() {
-        let batch_future = Batcher::new();
+        let batch_future = Batcher::<io::Result<()>>::new();
 
         let loops = 100000;
 
@@ -267,9 +272,9 @@ mod tests {
             batch_future.push(async { Ok(()) });
             batch_future.push(async move { Ok(()) });
 
-            batch_future.wait().await.1.unwrap();
+            batch_future.wait().await.unwrap();
 
-            batch_future.wait().await.1.unwrap();
+            batch_future.wait().await.unwrap();
         }
     }
 
@@ -277,7 +282,7 @@ mod tests {
     async fn test_push_wakeup() {
         let pool = ThreadPool::builder().pool_size(10).create().unwrap();
 
-        let batch_future = Batcher::new();
+        let batch_future = Batcher::<io::Result<()>>::new();
 
         let loops = 100000;
 
@@ -286,7 +291,7 @@ mod tests {
 
             let handle = pool
                 .spawn_with_handle(async move {
-                    batch_future_cloned.wait().await.1.unwrap();
+                    batch_future_cloned.wait().await.unwrap();
                 })
                 .unwrap();
 
@@ -300,7 +305,7 @@ mod tests {
     async fn test_future_wakeup() {
         let pool = ThreadPool::builder().pool_size(10).create().unwrap();
 
-        let batch_future = Batcher::new();
+        let batch_future = Batcher::<io::Result<()>>::new();
 
         for _ in 0..10000 {
             let (sender, receiver) = mpsc::channel();
@@ -323,7 +328,7 @@ mod tests {
 
             let handle = pool
                 .spawn_with_handle(async move {
-                    batch_futre_cloned.wait().await.1.unwrap();
+                    batch_futre_cloned.wait().await.unwrap();
                 })
                 .unwrap();
 
