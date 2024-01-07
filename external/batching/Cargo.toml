@@ -10,6 +10,7 @@ version.workspace = true
 
 [dependencies]
 boxcar = {workspace = true}
+cooked-waker = {workspace = true}
 dashmap = {workspace = true}
 futures = {workspace = true}
 futures-test = {workspace = true}
@@ -18,7 +19,3 @@ log = {workspace = true}
 
 [dev-dependencies]
 pretty_env_logger = {workspace = true}
-
-[[bin]]
-name = "daemon"
-path = "src/daemon/main.rs"

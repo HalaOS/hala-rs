@@ -16,6 +16,7 @@ bitmask-enum = "2.2.3"
 boxcar = "^0.2.4"
 bytes = "^1.5"
 clap = {version = "^4.4", features = ["derive"]}
+cooked-waker = "5.0.0"
 core2 = "^0.4.0"
 dashmap = "5.5.3"
 divan = "^0.1"

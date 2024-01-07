@@ -248,52 +248,6 @@ impl Future for Wait {
     }
 }
 
-pub struct BatcherWithContext<C> {
-    batcher: Batcher,
-    contexts: DashMap<usize, C>,
-}
-
-impl<C> Default for BatcherWithContext<C> {
-    fn default() -> Self {
-        Self {
-            batcher: Batcher::default(),
-            contexts: DashMap::new(),
-        }
-    }
-}
-
-impl<C> BatcherWithContext<C> {
-    pub fn new() -> Self {
-        Default::default()
-    }
-    pub fn push<Fut>(&self, context: C, fut: Fut)
-    where
-        Fut: Future<Output = io::Result<()>> + Send + 'static,
-    {
-        let id = self.batcher.push(fut);
-
-        self.contexts.insert(id, context);
-    }
-
-    /// Create a future task to batch poll
-    pub async fn wait(&self) -> (C, io::Result<()>) {
-        let (id, result) = self.batcher.wait().await;
-
-        loop {
-            if let Some((_, c)) = self.contexts.remove(&id) {
-                return (c, result);
-            }
-
-            self.loop_check_context(id);
-        }
-    }
-
-    #[cold]
-    fn loop_check_context(&self, id: usize) {
-        while !self.contexts.contains_key(&id) {}
-    }
-}
-
 #[cfg(test)]
 mod tests {
 
