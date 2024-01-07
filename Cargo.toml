@@ -35,8 +35,10 @@ thiserror = "^1.0.50"
 thiserror-no-std = "^2.0"
 
 # external crates
+batch-poll = {path = "./external/batch-poll", version = "^0.1"}
 event-map = {path = "./external/event-map", default = false, version = "^0.1"}
 hashed-timer = {path = "./external/hashed-timer", version = "^0.1"}
+lockfree-rs = {path = "./external/lockfree-rs", version = "^0.1"}
 locks = {path = "./external/locks", version = "^0.1"}
 
 # hala-io subcrates
