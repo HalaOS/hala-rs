@@ -5,13 +5,14 @@ use std::{
     time::{Duration, Instant},
 };
 
+use batching::BatcherWithContext;
 use dashmap::DashMap;
 use event_map::{
     locks::{AsyncLockable, AsyncSpinMutex},
     EventMap,
 };
 use futures::io;
-use quiche::{RecvInfo, SendInfo};
+use quiche::{ConnectionId, RecvInfo, SendInfo};
 use ring::{hmac::Key, rand::SystemRandom};
 
 use crate::{errors::into_io_error, Config};
@@ -283,6 +284,8 @@ pub struct QuicListenerState {
     incoming: Arc<AsyncSpinMutex<Option<VecDeque<QuicConnState>>>>,
     /// event notify center.
     mediator: Arc<EventMap<QuicListenerStateEvent>>,
+    /// Batcher of poll connections read.
+    batch_reader: Arc<BatcherWithContext<ConnectionId<'static>>>,
 }
 
 /// Result returns by [`QuicListenerState::recv`](QuicListenerState::recv)
@@ -299,6 +302,7 @@ impl QuicListenerState {
             conns: Default::default(),
             incoming: Arc::new(AsyncSpinMutex::new(Some(Default::default()))),
             mediator: Default::default(),
+            batch_reader: Default::default(),
         })
     }
 
@@ -345,7 +349,7 @@ impl QuicListenerState {
 
                 let conn = QuicConnState::new(conn, ping_timeout, 5);
 
-                self.conns.insert(scid, conn.clone());
+                self.conns.insert(scid.clone(), conn.clone());
 
                 self.incoming
                     .lock()
@@ -356,6 +360,8 @@ impl QuicListenerState {
                         "quic listener state closed.",
                     ))?
                     .push_back(conn);
+
+                // self.batch_reader.push(scid, async move { Ok(()) });
 
                 self.mediator
                     .notify_one(QuicListenerStateEvent::Incoming, event_map::Reason::On);

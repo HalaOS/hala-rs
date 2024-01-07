@@ -1,9 +1,9 @@
 [package]
 description = "A type to batch poll same type of futures"
-documentation = "https://docs.rs/batcher"
+documentation = "https://docs.rs/batching"
 edition.workspace = true
 license = "MIT"
-name = "batcher"
+name = "batching"
 repository.workspace = true
 version.workspace = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -18,3 +18,7 @@ log = {workspace = true}
 
 [dev-dependencies]
 pretty_env_logger = {workspace = true}
+
+[[bin]]
+name = "daemon"
+path = "src/daemon/main.rs"
