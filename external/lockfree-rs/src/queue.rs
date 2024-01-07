@@ -9,6 +9,9 @@ pub struct Queue<T> {
     slots: DashMap<usize, T>,
 }
 
+unsafe impl<T: Send> Send for Queue<T> {}
+unsafe impl<T: Send> Sync for Queue<T> {}
+
 impl<T> Default for Queue<T> {
     fn default() -> Self {
         Self {
