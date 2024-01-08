@@ -8,7 +8,7 @@ use std::{
 
 use dashmap::DashMap;
 use hala_future::{
-    batching::Batcher,
+    batching::FutureBatcher,
     event_map::{self, EventMap},
 };
 use hala_io::{bytes::BytesMut, *};
@@ -297,7 +297,7 @@ pub struct QuicListenerState {
     /// event notify center.
     mediator: Arc<EventMap<QuicListenerStateEvent>>,
     /// the batch processor for reading data from connections .
-    conns_read: Arc<Batcher<QuicListnerConnRead>>,
+    conns_read: Arc<FutureBatcher<QuicListnerConnRead>>,
 }
 
 impl QuicListenerState {

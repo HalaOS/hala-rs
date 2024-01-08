@@ -38,5 +38,8 @@ thiserror-no-std = "^2.0"
 hala-future = {path = "crates/future", version = "^0.1"}
 hala-io = {path = "crates/io", version = "^0.1"}
 hala-lockfree = {path = "crates/lockfree", version = "^0.1"}
+hala-quic = {path = "crates/net/quic", version = "^0.1"}
 hala-sync = {path = "crates/sync", version = "^0.1"}
+hala-tcp = {path = "crates/net/tcp", version = "^0.1"}
 hala-test = {path = "crates/test", version = "^0.1"}
+hala-udp = {path = "crates/net/udp", version = "^0.1"}
