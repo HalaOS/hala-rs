@@ -1,0 +1,23 @@
+[package]
+description = "hala asynchronous programming primitive types"
+documentation = "https://docs.rs/hala-future"
+edition.workspace = true
+license = "MIT"
+name = "hala-future"
+repository.workspace = true
+version.workspace = true
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+boxcar = {workspace = true}
+dashmap = {workspace = true}
+futures = {workspace = true}
+log = {workspace = true}
+thiserror = {workspace = true}
+
+hala-lockfree = {workspace = true}
+hala-sync = {workspace = true}
+
+[dev-dependencies]
+futures-test = {workspace = true}
+pretty_env_logger = {workspace = true}

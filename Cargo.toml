@@ -1,8 +1,8 @@
 [workspace]
-members = ["hala-io-driver", "hala-net", "hala-test", "hala-io-util", "external/*"]
+members = ["hala", "crates/lockfree", "crates/sync", "crates/test", "crates/future", "crates/io", "crates/net/*"]
 resolver = "2"
 
-#,
+# "hala-io-driver", "hala-net", "hala-test", "hala-io-util", "external/*"
 
 [workspace.package]
 edition = "2021"
@@ -35,16 +35,8 @@ serde_json = {version = "^1.0"}
 thiserror = "^1.0.50"
 thiserror-no-std = "^2.0"
 
-# external crates
-batching = {path = "./external/batching", version = "^0.1"}
-event-map = {path = "./external/event-map", default = false, version = "^0.1"}
-hashed-timer = {path = "./external/hashed-timer", version = "^0.1"}
-lockfree-rs = {path = "./external/lockfree-rs", version = "^0.1"}
-locks = {path = "./external/locks", version = "^0.1"}
-
-# hala-io subcrates
-hala-io-driver = {path = "./hala-io-driver", default = false, version = "^0.1"}
-hala-io-util = {path = "./hala-io-util", version = "^0.1"}
-hala-net = {path = "./hala-net", default = false, version = "^0.1"}
-hala-rproxy = {path = "./hala-rproxy", version = "^0.1"}
-hala-test = {path = "./hala-test", default = false, version = "^0.1"}
+hala-future = {path = "crates/future", version = "^0.1"}
+hala-io = {path = "crates/io", version = "^0.1"}
+hala-lockfree = {path = "crates/lockfree", version = "^0.1"}
+hala-sync = {path = "crates/sync", version = "^0.1"}
+hala-test = {path = "crates/test", version = "^0.1"}

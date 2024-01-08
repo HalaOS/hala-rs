@@ -1,0 +1,35 @@
+[package]
+description = "Hala synchronous primitive"
+documentation = "https://docs.rs/hala-sync"
+edition.workspace = true
+license = "MIT"
+name = "hala-sync"
+repository.workspace = true
+rust-version = "1.75"
+version.workspace = true
+
+[dependencies]
+dashmap = {workspace = true}
+log = {workspace = true}
+parking_lot = {workspace = true}
+parking_lot_core = "0.9.9"
+
+[dev-dependencies]
+divan = {workspace = true}
+futures = {workspace = true}
+futures-test = {workspace = true}
+pretty_env_logger = {workspace = true}
+
+[features]
+
+# [[bench]]
+# harness = false
+# name = "spin_lock"
+
+# [[bench]]
+# harness = false
+# name = "mutex_lock"
+
+# [[bench]]
+# harness = false
+# name = "refcell_lock"
