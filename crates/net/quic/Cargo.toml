@@ -13,9 +13,9 @@ version.workspace = true
 dashmap = {workspace = true}
 futures = {workspace = true}
 log = {workspace = true}
-quiche = {workspace = true, optional = true}
-rand = {workspace = true, optional = true}
-ring = {workspace = true, optional = true, features = ["std"]}
+quiche = {workspace = true}
+rand = {workspace = true}
+ring = {workspace = true, features = ["std"]}
 thiserror = {workspace = true}
 
 hala-future = {workspace = true}

@@ -13,7 +13,7 @@ use std::{io, sync::OnceLock};
 
 static DRIVER: OnceLock<Driver> = OnceLock::new();
 
-/// Get the currently registered io driver, or return a NotFound error if it is not registered.
+/// Get the global context registered io driver, or return a NotFound error if it is not registered.
 pub fn get_driver() -> io::Result<Driver> {
     return DRIVER
         .get()
@@ -24,7 +24,7 @@ pub fn get_driver() -> io::Result<Driver> {
         ));
 }
 
-/// Register new io driver
+/// Register a new [`Driver`] implementation to global context.
 pub fn register_driver<D: Into<Driver>>(driver: D) -> io::Result<()> {
     DRIVER.set(driver.into()).map_err(|_| {
         io::Error::new(
@@ -34,8 +34,6 @@ pub fn register_driver<D: Into<Driver>>(driver: D) -> io::Result<()> {
     })
 }
 
-static POLLER: OnceLock<Poller> = OnceLock::new();
-
 struct Poller(Handle);
 
 impl Drop for Poller {
@@ -44,8 +42,12 @@ impl Drop for Poller {
     }
 }
 
-/// Get poller instance from global context.
+/// Get poller [`Handle`] from global context.
+///
+/// Based on lazy optimizations, the Poller instance is not created until the first call to the function.
 pub fn get_poller() -> io::Result<Handle> {
+    static POLLER: OnceLock<Poller> = OnceLock::new();
+
     let poller = POLLER.get_or_init(|| {
         let driver = get_driver().expect("call register_driver first");
 
@@ -59,54 +61,47 @@ pub fn get_poller() -> io::Result<Handle> {
     Ok(poller.0)
 }
 
-/// The `IoSpawner` trait allows for pushing an io futures onto an executor that will
-/// run them to completion.
-pub trait IoSpawner {
-    type Fut: Future<Output = io::Result<()>>;
-    /// Spawns a io task that polls the given future with output `io::Result<()>` to completion.
-    fn spawn(&self, fut: Self::Fut) -> io::Result<()>;
-}
-
-static SPAWNER: OnceLock<
-    Box<dyn IoSpawner<Fut = BoxFuture<'static, io::Result<()>>> + Send + Sync>,
-> = OnceLock::new();
-
-/// Register [`IoSpawner`] for all thread. the `IoSpawner` instance must implement [`Send`] + [`Sync`] traits.
-pub fn register_spawner<
-    S: IoSpawner<Fut = BoxFuture<'static, io::Result<()>>> + Send + Sync + 'static,
->(
-    spawner: S,
-) -> io::Result<()> {
-    if let Err(_) = SPAWNER.set(Box::new(spawner)) {
-        return Err(io::Error::new(
-            io::ErrorKind::Other,
-            "Call register_spawner more than once",
-        ));
-    }
-
-    Ok(())
-}
-
-/// Spawn an io task that polls the given future with output `io::Result<()>` to completion.
-pub fn io_spawn<Fut>(fut: Fut) -> io::Result<()>
-where
-    Fut: Future<Output = io::Result<()>> + Send + 'static,
-{
-    if let Some(spawner) = SPAWNER.get() {
-        return spawner.spawn(Box::pin(fut));
-    }
-
-    return Err(io::Error::new(
-        io::ErrorKind::NotFound,
-        "Call register_local_spawner / register_spawner first",
-    ));
-}
-
 pub mod executor {
 
     use super::*;
 
     use futures::{executor::ThreadPool, task::SpawnExt};
+
+    /// The `IoSpawner` trait allows for pushing an io futures onto an executor that will
+    /// run them to completion.
+    pub trait IoSpawner {
+        /// Spawns a io task that polls the given future with output `io::Result<()>` to completion.
+        fn spawn(&self, fut: BoxFuture<'static, io::Result<()>>) -> io::Result<()>;
+    }
+
+    static SPAWNER: OnceLock<Box<dyn IoSpawner + Send + Sync + 'static>> = OnceLock::new();
+
+    /// Register [`IoSpawner`] for all thread. the `IoSpawner` instance must implement [`Send`] + [`Sync`] traits.
+    pub fn register_spawner<S: IoSpawner + Send + Sync + 'static>(spawner: S) -> io::Result<()> {
+        if let Err(_) = SPAWNER.set(Box::new(spawner)) {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "Call register_spawner more than once",
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Spawn an io task that polls the given future with output `io::Result<()>` to completion.
+    pub fn io_spawn<Fut>(fut: Fut) -> io::Result<()>
+    where
+        Fut: Future<Output = io::Result<()>> + Send + 'static,
+    {
+        if let Some(spawner) = SPAWNER.get() {
+            return spawner.spawn(Box::pin(fut));
+        }
+
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "Call register_local_spawner / register_spawner first",
+        ));
+    }
 
     /// Start a io future task and block current thread until this future ready.
     pub fn block_on<Fut, R>(fut: Fut, pool_size: usize) -> R
@@ -154,8 +149,7 @@ pub mod executor {
     pub struct BlockOnIoSpawner(pub ThreadPool);
 
     impl IoSpawner for BlockOnIoSpawner {
-        type Fut = BoxFuture<'static, std::io::Result<()>>;
-        fn spawn(&self, fut: Self::Fut) -> std::io::Result<()> {
+        fn spawn(&self, fut: BoxFuture<'static, io::Result<()>>) -> std::io::Result<()> {
             self.0
                 .spawn(async move {
                     match fut.await {

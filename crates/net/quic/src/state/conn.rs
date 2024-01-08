@@ -10,7 +10,7 @@ use std::{
 };
 
 use hala_future::event_map::{self, EventMap};
-use hala_io::{current::io_spawn, timeout};
+use hala_io::{current::executor::io_spawn, timeout};
 use hala_sync::*;
 use quiche::{ConnectionId, RecvInfo, SendInfo};
 
