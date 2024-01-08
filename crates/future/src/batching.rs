@@ -1,4 +1,5 @@
 use std::{
+    future::Future,
     ops,
     pin::Pin,
     ptr::null_mut,
@@ -9,9 +10,11 @@ use std::{
     task::{Context, RawWaker, RawWakerVTable, Waker},
 };
 
-use super::{future::BoxFuture, Future, FutureExt};
 use dashmap::DashMap;
-use futures::future::poll_fn;
+use futures::{
+    future::{poll_fn, BoxFuture},
+    FutureExt,
+};
 use hala_lockfree::queue::Queue;
 
 /// A set to handle the reigstration/deregistration of pending future.

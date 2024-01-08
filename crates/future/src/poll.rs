@@ -1,6 +1,6 @@
-use std::pin::Pin;
+use std::{future::IntoFuture, pin::Pin};
 
-use super::*;
+use futures::FutureExt;
 
 /// A future will polling a wrapped future once within the current async context.
 pub struct PollOnce<Fut> {

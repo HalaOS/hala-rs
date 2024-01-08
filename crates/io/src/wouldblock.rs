@@ -1,6 +1,5 @@
-use std::{io, task::Context};
+use std::{future::Future, io, task::Context};
 
-use hala_future::*;
 use std::task::Poll;
 
 /// A future object which will suspend current task when `F` returns error [`WouldBlock`](io::ErrorKind::WouldBlock)

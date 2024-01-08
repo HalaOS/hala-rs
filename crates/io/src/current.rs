@@ -1,8 +1,13 @@
 use std::future::Future;
 
-use hala_future::BoxFuture;
+use futures::future::BoxFuture;
 
 use super::*;
+
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 use std::{io, sync::OnceLock};
 
@@ -95,4 +100,72 @@ where
         io::ErrorKind::NotFound,
         "Call register_local_spawner / register_spawner first",
     ));
+}
+
+pub mod executor {
+
+    use super::*;
+
+    use futures::{executor::ThreadPool, task::SpawnExt};
+
+    /// Start a io future task and block current thread until this future ready.
+    pub fn block_on<Fut, R>(fut: Fut, pool_size: usize) -> R
+    where
+        Fut: Future<Output = R> + Send + 'static,
+        R: Send + 'static,
+    {
+        static POOL: OnceLock<ThreadPool> = OnceLock::new();
+
+        let pool = POOL.get_or_init(|| {
+            let pool = ThreadPool::builder()
+                .pool_size(pool_size)
+                .create()
+                .map_err(|err| io::Error::new(io::ErrorKind::Other, err))
+                .unwrap();
+
+            register_spawner(BlockOnIoSpawner(pool.clone())).unwrap();
+
+            pool
+        });
+
+        let dropping = Arc::new(AtomicBool::new(false));
+
+        let dropping_cloned = dropping.clone();
+
+        let handle = pool
+            .spawn_with_handle(fut)
+            .map_err(|err| {
+                io::Error::new(io::ErrorKind::Other, format!("Spawn local error: {}", err))
+            })
+            .unwrap();
+
+        let driver = get_driver().unwrap();
+        let poller = get_poller().unwrap();
+
+        std::thread::spawn(move || {
+            while !dropping_cloned.load(Ordering::SeqCst) {
+                driver.fd_cntl(poller, Cmd::PollOnce(None)).unwrap();
+            }
+        });
+
+        futures::executor::block_on(handle)
+    }
+
+    pub struct BlockOnIoSpawner(pub ThreadPool);
+
+    impl IoSpawner for BlockOnIoSpawner {
+        type Fut = BoxFuture<'static, std::io::Result<()>>;
+        fn spawn(&self, fut: Self::Fut) -> std::io::Result<()> {
+            self.0
+                .spawn(async move {
+                    match fut.await {
+                        Ok(_) => {}
+                        Err(err) => {
+                            log::error!("{}", err);
+                        }
+                    }
+                })
+                .map_err(|err| io::Error::new(io::ErrorKind::Other, err))
+        }
+    }
 }

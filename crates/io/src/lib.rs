@@ -31,9 +31,4 @@ pub use bytes;
 pub mod mio;
 
 #[cfg(all(feature = "mio-driver", feature = "current"))]
-pub mod executor;
-
-#[cfg(all(feature = "mio-driver", feature = "current"))]
 pub mod test;
-
-pub mod io_group;
