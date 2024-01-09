@@ -53,14 +53,25 @@ impl RawQuicConnState {
         ping_timeout: Duration,
         first_outgoing_stream_id: u64,
     ) -> Self {
-        Self {
+        let mut this = Self {
             quiche_conn,
             ping_timeout,
             send_ack_eliciting_instant: Instant::now(),
             lastest_incoming_stream_id: 0,
             lastest_outgoing_stream_id: first_outgoing_stream_id,
             incoming: Default::default(),
+        };
+
+        // process initial incoming stream.
+        for id in this.quiche_conn.readable() {
+            if id > this.lastest_incoming_stream_id {
+                this.lastest_incoming_stream_id = id;
+            }
+
+            this.incoming.push_back(id);
         }
+
+        this
     }
 }
 
@@ -204,7 +215,12 @@ impl QuicConnState {
 
                     let send_timeout = state.quiche_conn.timeout();
 
-                    log::trace!("{:?} read data pending, timeout={:?}", self, send_timeout);
+                    log::trace!(
+                        "{:?} read data pending, timeout={:?}, is_established={}",
+                        self,
+                        send_timeout,
+                        state.quiche_conn.is_established()
+                    );
 
                     let wait_fut = async {
                         self.mediator

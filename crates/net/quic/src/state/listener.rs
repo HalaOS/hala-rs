@@ -1,5 +1,5 @@
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     io,
     net::SocketAddr,
     sync::Arc,
@@ -13,7 +13,7 @@ use hala_future::{
 };
 use hala_io::{bytes::BytesMut, *};
 use hala_sync::{AsyncLockable, AsyncSpinMutex};
-use quiche::{RecvInfo, SendInfo};
+use quiche::{ConnectionId, RecvInfo, SendInfo};
 use ring::{hmac::Key, rand::SystemRandom};
 
 use crate::{errors::into_io_error, Config};
@@ -27,59 +27,15 @@ pub enum QuicAcceptorHandshake {
         conn: quiche::Connection,
         ping_timeout: Duration,
         write_size: usize,
-    },
-
-    Retry {
-        scid: quiche::ConnectionId<'static>,
-        dcid: quiche::ConnectionId<'static>,
-        new_scid: quiche::ConnectionId<'static>,
-        token: Vec<u8>,
-        version: u32,
+        read_size: usize,
         send_info: SendInfo,
     },
 
-    NegotiationVersion {
-        scid: quiche::ConnectionId<'static>,
-        dcid: quiche::ConnectionId<'static>,
+    Internal {
+        write_size: usize,
+        read_size: usize,
         send_info: SendInfo,
     },
-}
-
-impl QuicAcceptorHandshake {
-    /// Try writes handshake result to be sent to the peer.
-    pub fn send(&self, buf: &mut [u8]) -> io::Result<Option<(usize, SendInfo)>> {
-        match self {
-            QuicAcceptorHandshake::Unhandled(_) => Ok(None),
-            QuicAcceptorHandshake::Incoming {
-                conn: _,
-                write_size: _,
-                ping_timeout: _,
-            } => Ok(None),
-            QuicAcceptorHandshake::Retry {
-                scid,
-                dcid,
-                new_scid,
-                token,
-                version,
-                send_info,
-            } => {
-                let send_size = quiche::retry(scid, dcid, new_scid, token, *version, buf)
-                    .map_err(into_io_error)?;
-
-                return Ok(Some((send_size, *send_info)));
-            }
-            QuicAcceptorHandshake::NegotiationVersion {
-                scid,
-                dcid,
-                send_info,
-            } => {
-                let send_size =
-                    quiche::negotiate_version(scid, dcid, buf).map_err(into_io_error)?;
-
-                return Ok(Some((send_size, *send_info)));
-            }
-        }
-    }
 }
 
 /// Raw incoming connection acceptor for quic server.
@@ -88,6 +44,8 @@ pub struct QuicAcceptor {
     config: Config,
     /// connection id seed.
     conn_id_seed: Key,
+    /// connections before establishing connection.
+    pre_established_conns: HashMap<ConnectionId<'static>, quiche::Connection>,
 }
 
 impl QuicAcceptor {
@@ -101,6 +59,7 @@ impl QuicAcceptor {
         Ok(Self {
             config,
             conn_id_seed,
+            pre_established_conns: Default::default(),
         })
     }
 
@@ -108,13 +67,55 @@ impl QuicAcceptor {
     pub fn handshake<'a>(
         &mut self,
         buf: &'a mut [u8],
+        write_size: usize,
         recv_info: RecvInfo,
     ) -> io::Result<QuicAcceptorHandshake> {
-        let header =
-            quiche::Header::from_slice(buf, quiche::MAX_CONN_ID_LEN).map_err(into_io_error)?;
+        let header = quiche::Header::from_slice(&mut buf[..write_size], quiche::MAX_CONN_ID_LEN)
+            .map_err(into_io_error)?;
+
+        // this is pre-establishing conn packet
+        if let Some(mut conn) = self.pre_established_conns.remove(&header.dcid) {
+            let write_size = conn
+                .recv(&mut buf[..write_size], recv_info)
+                .map_err(into_io_error)?;
+
+            let (read_size, send_info) = match conn.send(buf) {
+                Ok(r) => r,
+                Err(quiche::Error::Done) => (
+                    0,
+                    SendInfo {
+                        from: recv_info.to,
+                        to: recv_info.from,
+                        at: Instant::now(),
+                    },
+                ),
+                Err(err) => {
+                    return Err(into_io_error(err));
+                }
+            };
+
+            if conn.is_established() {
+                return Ok(QuicAcceptorHandshake::Incoming {
+                    conn,
+                    ping_timeout: self.config.ping_timeout,
+                    write_size,
+                    read_size,
+                    send_info,
+                });
+            } else {
+                self.pre_established_conns
+                    .insert(header.dcid.clone().into_owned(), conn);
+
+                return Ok(QuicAcceptorHandshake::Internal {
+                    write_size,
+                    read_size,
+                    send_info,
+                });
+            }
+        }
 
         if header.ty == quiche::Type::Initial {
-            return self.client_hello(&header, buf, recv_info);
+            return self.client_hello(&header, buf, write_size, recv_info);
         } else {
             return Ok(QuicAcceptorHandshake::Unhandled(
                 header.dcid.clone().into_owned(),
@@ -126,17 +127,18 @@ impl QuicAcceptor {
         &mut self,
         header: &quiche::Header<'a>,
         buf: &'a mut [u8],
+        write_size: usize,
         recv_info: RecvInfo,
     ) -> io::Result<QuicAcceptorHandshake> {
         if !quiche::version_is_supported(header.version) {
-            return self.negotiation_version(header, recv_info);
+            return self.negotiation_version(header, recv_info, buf, write_size);
         }
 
         let token = header.token.as_ref().unwrap();
 
         // generate new token and retry
         if token.is_empty() {
-            return self.retry(header, recv_info);
+            return self.retry(header, recv_info, buf, write_size);
         }
 
         // check token .
@@ -160,20 +162,50 @@ impl QuicAcceptor {
         )
         .map_err(into_io_error)?;
 
-        let read_size = conn.recv(buf, recv_info).map_err(into_io_error)?;
+        let write_size = conn
+            .recv(&mut buf[..write_size], recv_info)
+            .map_err(into_io_error)?;
 
         log::trace!(
-            "Create new incoming conn, scid={:?}, dcid={:?}, read_size={}",
+            "Create new incoming conn, scid={:?}, dcid={:?}, write_size={}",
             conn.source_id(),
             conn.destination_id(),
-            read_size,
+            write_size,
         );
 
-        return Ok(QuicAcceptorHandshake::Incoming {
-            conn,
-            write_size: read_size,
-            ping_timeout: self.config.ping_timeout,
-        });
+        let (read_size, send_info) = match conn.send(buf) {
+            Ok(r) => r,
+            Err(quiche::Error::Done) => (
+                0,
+                SendInfo {
+                    from: recv_info.to,
+                    to: recv_info.from,
+                    at: Instant::now(),
+                },
+            ),
+            Err(err) => {
+                return Err(into_io_error(err));
+            }
+        };
+
+        if conn.is_established() {
+            return Ok(QuicAcceptorHandshake::Incoming {
+                conn,
+                write_size,
+                read_size,
+                ping_timeout: self.config.ping_timeout,
+                send_info,
+            });
+        } else {
+            self.pre_established_conns
+                .insert(scid.clone().into_owned(), conn);
+
+            return Ok(QuicAcceptorHandshake::Internal {
+                write_size,
+                read_size,
+                send_info,
+            });
+        }
     }
 
     /// Generate retry package
@@ -181,6 +213,8 @@ impl QuicAcceptor {
         &mut self,
         header: &quiche::Header<'a>,
         recv_info: RecvInfo,
+        buf: &mut [u8],
+        write_size: usize,
     ) -> io::Result<QuicAcceptorHandshake> {
         let token = self.mint_token(&header, &recv_info.from);
 
@@ -188,12 +222,16 @@ impl QuicAcceptor {
         let new_scid = &new_scid.as_ref()[..quiche::MAX_CONN_ID_LEN];
         let new_scid = quiche::ConnectionId::from_vec(new_scid.to_vec());
 
-        Ok(QuicAcceptorHandshake::Retry {
-            scid: header.scid.clone().into_owned(),
-            dcid: header.dcid.clone().into_owned(),
-            new_scid,
-            token,
-            version: header.version,
+        let scid = header.scid.clone().into_owned();
+        let dcid: ConnectionId<'_> = header.dcid.clone().into_owned();
+        let version = header.version;
+
+        let read_size =
+            quiche::retry(&scid, &dcid, &new_scid, &token, version, buf).map_err(into_io_error)?;
+
+        Ok(QuicAcceptorHandshake::Internal {
+            write_size,
+            read_size,
             send_info: SendInfo {
                 from: recv_info.to,
                 to: recv_info.from,
@@ -257,10 +295,17 @@ impl QuicAcceptor {
         &mut self,
         header: &quiche::Header<'a>,
         recv_info: RecvInfo,
+        buf: &mut [u8],
+        write_size: usize,
     ) -> io::Result<QuicAcceptorHandshake> {
-        Ok(QuicAcceptorHandshake::NegotiationVersion {
-            scid: header.scid.clone().into_owned(),
-            dcid: header.dcid.clone().into_owned(),
+        let scid = header.scid.clone().into_owned();
+        let dcid = header.dcid.clone().into_owned();
+
+        let read_size = quiche::negotiate_version(&scid, &dcid, buf).map_err(into_io_error)?;
+
+        Ok(QuicAcceptorHandshake::Internal {
+            write_size,
+            read_size,
             send_info: SendInfo {
                 from: recv_info.to,
                 to: recv_info.from,
@@ -275,10 +320,20 @@ enum QuicListenerStateEvent {
     Incoming,
 }
 
-/// Result returns by [`QuicListenerState::recv`](QuicListenerState::recv)
-pub enum QuicListenerStateRecv {
+/// Result returns by [`write`](QuicListenerState::write) function.
+pub enum QuicListenerWriteResult {
     WriteSize(usize),
-    Handshake(usize, QuicAcceptorHandshake),
+    Internal {
+        write_size: usize,
+        read_size: usize,
+        send_info: SendInfo,
+    },
+    Incoming {
+        conn: QuicConnState,
+        write_size: usize,
+        read_size: usize,
+        send_info: SendInfo,
+    },
 }
 
 enum QuicListnerConnRead {
@@ -316,12 +371,13 @@ impl QuicListenerState {
     pub async fn write(
         &self,
         buf: &mut [u8],
+        write_size: usize,
         recv_info: RecvInfo,
-    ) -> io::Result<QuicListenerStateRecv> {
+    ) -> io::Result<QuicListenerWriteResult> {
         let handshake = {
             let mut acceptor = self.acceptor.lock().await;
 
-            acceptor.handshake(buf, recv_info)?
+            acceptor.handshake(buf, write_size, recv_info)?
         };
 
         match handshake {
@@ -329,10 +385,11 @@ impl QuicListenerState {
                 let conn = self.conns.get_mut(&dcid).map(|conn| conn.clone());
 
                 if let Some(conn) = conn {
+                    // TODO: "handle conn closed"
                     return conn
-                        .write(buf, recv_info)
+                        .write(&mut buf[..write_size], recv_info)
                         .await
-                        .map(|write_size| QuicListenerStateRecv::WriteSize(write_size));
+                        .map(|write_size| QuicListenerWriteResult::WriteSize(write_size));
                 } else {
                     return Err(io::Error::new(
                         io::ErrorKind::NotFound,
@@ -344,6 +401,8 @@ impl QuicListenerState {
                 conn,
                 ping_timeout,
                 write_size,
+                read_size,
+                send_info,
             } => {
                 log::info!(
                     "accept incoming conn, scid={:?}, dcid={:?}",
@@ -370,12 +429,25 @@ impl QuicListenerState {
                 self.mediator
                     .notify_one(QuicListenerStateEvent::Incoming, event_map::Reason::On);
 
-                self.batch_read(conn);
+                self.batch_read(conn.clone());
 
-                return Ok(QuicListenerStateRecv::WriteSize(write_size));
+                return Ok(QuicListenerWriteResult::Incoming {
+                    conn,
+                    write_size,
+                    read_size,
+                    send_info,
+                });
             }
-            handshake => {
-                return Ok(QuicListenerStateRecv::Handshake(buf.len(), handshake));
+            QuicAcceptorHandshake::Internal {
+                write_size,
+                read_size,
+                send_info,
+            } => {
+                return Ok(QuicListenerWriteResult::Internal {
+                    write_size,
+                    read_size,
+                    send_info,
+                });
             }
         }
     }
@@ -385,6 +457,7 @@ impl QuicListenerState {
         self.conns_read.push(async move {
             let mut buf = ReadBuf::with_capacity(65535);
 
+            // TODO: "handle conn closed"
             match conn.read(buf.as_mut()).await {
                 Ok((read_size, send_info)) => {
                     QuicListnerConnRead::Ok(conn, buf.into_bytes_mut(Some(read_size)), send_info)
