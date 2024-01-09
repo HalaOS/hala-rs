@@ -100,6 +100,11 @@ impl QuicConnectorState {
         self.quiche_conn.is_established()
     }
 
+    /// Check if underly connection is closed.
+    pub fn is_closed(&self) -> bool {
+        self.quiche_conn.is_closed()
+    }
+
     /// Returns the amount of time until the next timeout event.
     ///
     /// Once the given duration has elapsed, the [`on_timeout()`] method should

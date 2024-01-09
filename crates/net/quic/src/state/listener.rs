@@ -321,6 +321,7 @@ enum QuicListenerStateEvent {
 }
 
 /// Result returns by [`write`](QuicListenerState::write) function.
+#[must_use = "Must handle internal data forward"]
 pub enum QuicListenerWriteResult {
     WriteSize(usize),
     Internal {
@@ -464,12 +465,14 @@ impl QuicListenerState {
             let mut buf = ReadBuf::with_capacity(max_datagram_size);
 
             // TODO: "handle conn closed"
-            match conn.read(buf.as_mut()).await {
+            let read = match conn.read(buf.as_mut()).await {
                 Ok((read_size, send_info)) => {
                     QuicListnerConnRead::Ok(conn, buf.into_bytes_mut(Some(read_size)), send_info)
                 }
                 Err(err) => QuicListnerConnRead::Err(conn, err),
-            }
+            };
+
+            read
         });
     }
 

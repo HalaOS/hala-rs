@@ -1,4 +1,7 @@
-use std::{io, net::ToSocketAddrs};
+use std::{
+    io,
+    net::{SocketAddr, ToSocketAddrs},
+};
 
 use hala_udp::UdpSocket;
 
@@ -6,6 +9,7 @@ use crate::{state::QuicListenerState, Config, QuicConn};
 
 pub struct QuicListener {
     state: QuicListenerState,
+    laddr: SocketAddr,
 }
 
 impl QuicListener {
@@ -13,13 +17,15 @@ impl QuicListener {
     pub fn bind<L: ToSocketAddrs>(laddrs: L, config: Config) -> io::Result<Self> {
         let udp_socket = UdpSocket::bind(laddrs)?;
 
+        let laddr = udp_socket.local_addr()?;
+
         let max_datagram_size = config.max_datagram_size;
 
         let state = QuicListenerState::new(config)?;
 
         event_loop::run_event_loop(udp_socket, state.clone(), max_datagram_size);
 
-        Ok(QuicListener { state })
+        Ok(QuicListener { state, laddr })
     }
 
     /// Accept one incoming quic [`connection`](QuicConn).
@@ -31,6 +37,11 @@ impl QuicListener {
         } else {
             None
         }
+    }
+
+    /// Get the [`SocketAddr`] to which this listener is bound.
+    pub fn local_addr(&self) -> SocketAddr {
+        self.laddr
     }
 }
 
@@ -85,10 +96,14 @@ mod event_loop {
 
         let laddr = udp_socket.local_addr()?;
 
+        log::trace!("Quic server listen on {:?}, start recv data.", laddr);
+
         loop {
             let (recv_size, raddr) = udp_socket.recv_from(&mut buf).await?;
 
-            state
+            log::trace!("Quic server recv data, len={}, raddr={}", recv_size, raddr);
+
+            let write_result = state
                 .write(
                     buf.as_mut_slice(),
                     recv_size,
@@ -98,6 +113,27 @@ mod event_loop {
                     },
                 )
                 .await?;
+
+            match write_result {
+                crate::state::QuicListenerWriteResult::Internal {
+                    write_size: _,
+                    read_size,
+                    send_info,
+                } => {
+                    if read_size > 0 {
+                        log::trace!(
+                            "Quic server forward internal packet data, len={}, raddr={}",
+                            recv_size,
+                            send_info.to
+                        );
+
+                        udp_socket
+                            .send_to(&mut buf[..read_size], send_info.to)
+                            .await?;
+                    }
+                }
+                _ => {}
+            }
         }
     }
 

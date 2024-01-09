@@ -15,6 +15,7 @@ use crate::{
 };
 
 /// Socket connection type for quic protocol.
+#[must_use = "If return variable is not bound, the created stream will be dropped immediately"]
 #[derive(Debug, Clone)]
 pub struct QuicConn {
     state: QuicConnState,
@@ -83,8 +84,7 @@ impl QuicConn {
         return Err(lastest_error.unwrap());
     }
 
-    /// Connect to remote quic server with [`QuicConnectorState`] and [`raddr`](SocketAddr)
-    pub async fn connect_with(
+    async fn connect_with(
         udp_socket: &UdpSocket,
         raddr: SocketAddr,
         config: &mut Config,
@@ -100,9 +100,26 @@ impl QuicConn {
                 udp_socket.send_to(&buf[..send_size], send_info.to).await?;
             }
 
+            if connector_state.is_closed() {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    format!("Connect to remove server timeout, raddr={:?}", raddr),
+                ));
+            }
+
             let send_timeout = connector_state.timeout();
 
-            let (recv_size, raddr) = timeout(udp_socket.recv_from(&mut buf), send_timeout).await?;
+            log::trace!("Connect send timeout={:?}", send_timeout);
+
+            let (recv_size, raddr) =
+                match timeout(udp_socket.recv_from(&mut buf), send_timeout).await {
+                    Ok(r) => r,
+                    Err(err) if err.kind() == io::ErrorKind::TimedOut => {
+                        connector_state.on_timeout();
+                        continue;
+                    }
+                    Err(err) => return Err(err),
+                };
 
             connector_state.recv(
                 &mut buf[..recv_size],
@@ -136,6 +153,7 @@ impl QuicConn {
 }
 
 /// Stream socket type for quic protocol.
+#[must_use = "If return variable is not bound, the created stream will be dropped immediately"]
 #[derive(Debug, Clone)]
 pub struct QuicStream {
     conn: QuicConn,
