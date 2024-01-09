@@ -1,5 +1,5 @@
 [workspace]
-members = ["hala", "crates/lockfree", "crates/sync", "crates/test", "crates/future", "crates/io", "crates/net/*"]
+members = ["hala", "crates/lockfree", "crates/sync", "crates/test", "crates/future", "crates/io", "crates/net/*", "crates/ops"]
 resolver = "2"
 
 # "hala-io-driver", "hala-net", "hala-test", "hala-io-util", "external/*"
@@ -38,6 +38,7 @@ thiserror-no-std = "^2.0"
 hala-future = {path = "crates/future", version = "^0.1"}
 hala-io = {path = "crates/io", version = "^0.1"}
 hala-lockfree = {path = "crates/lockfree", version = "^0.1"}
+hala-ops = {path = "crates/ops", version = "^0.1"}
 hala-quic = {path = "crates/net/quic", version = "^0.1"}
 hala-sync = {path = "crates/sync", version = "^0.1"}
 hala-tcp = {path = "crates/net/tcp", version = "^0.1"}

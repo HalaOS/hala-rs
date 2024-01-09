@@ -4,13 +4,14 @@ use std::{
     collections::{HashSet, VecDeque},
     fmt::Debug,
     io,
-    ops::DerefMut,
+    ops::{self, DerefMut},
     sync::Arc,
     time::{Duration, Instant},
 };
 
 use hala_future::event_map::{self, EventMap};
 use hala_io::{current::executor::io_spawn, timeout};
+use hala_ops::deref::DerefExt;
 use hala_sync::*;
 use quiche::{ConnectionId, RecvInfo, SendInfo};
 
@@ -552,6 +553,14 @@ impl QuicConnState {
     /// Returns the number of source Connection IDs that should be provided to the peer without exceeding the limit it advertised.
     pub async fn scids_left(&self) -> usize {
         self.state.lock().await.quiche_conn.scids_left()
+    }
+
+    /// Convert [`QuicConnState`] to [`quiche::Connection`]
+    pub async fn to_quiche_conn(&self) -> impl ops::Deref<Target = quiche::Connection> + '_ {
+        self.state
+            .lock()
+            .await
+            .deref_map(|state| &state.quiche_conn)
     }
 }
 
