@@ -31,3 +31,7 @@ hala-io = {workspace = true, features = ["mio-driver"]}
 hala-test = {workspace = true}
 pretty_env_logger = {workspace = true}
 rand = {workspace = true}
+
+[features]
+default = ["futures_async_api_support"]
+futures_async_api_support = []

@@ -9,6 +9,7 @@ pub struct QuicListener {
 }
 
 impl QuicListener {
+    /// Create new quic server listener and bind to `laddrs`.
     pub fn bind<L: ToSocketAddrs>(laddrs: L, config: Config) -> io::Result<Self> {
         let udp_socket = UdpSocket::bind(laddrs)?;
 
