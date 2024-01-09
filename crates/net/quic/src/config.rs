@@ -6,26 +6,38 @@ use std::{
 
 /// Hala quic peer config, Adds hala quic specific configuration options to [`quiche::Config`](quiche::Config)
 pub struct Config {
-    #[allow(unused)]
-    pub(crate) udp_data_channel_len: usize,
-    #[allow(unused)]
-    pub(crate) stream_buffer: usize,
-
+    /// Quic ping frame send interval.
     pub ping_timeout: Duration,
 
+    /// Quic mtu.
+    pub max_datagram_size: usize,
+
+    /// mixin quiche configs.
     quiche_config: quiche::Config,
 }
 
 impl Config {
     /// Creates a config object with default `PROTOCOL_VERSION`(quiche::PROTOCOL_VERSION).
     pub fn new() -> io::Result<Self> {
+        let max_datagram_size = 1350;
+
+        let mut quiche_config = quiche::Config::new(quiche::PROTOCOL_VERSION)
+            .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
+
+        quiche_config.set_max_recv_udp_payload_size(max_datagram_size);
+        quiche_config.set_max_send_udp_payload_size(max_datagram_size);
+
         Ok(Self {
-            udp_data_channel_len: 1024,
-            stream_buffer: 1024,
             ping_timeout: Duration::from_secs(1),
-            quiche_config: quiche::Config::new(quiche::PROTOCOL_VERSION)
-                .map_err(|err| io::Error::new(io::ErrorKind::Other, err))?,
+            quiche_config,
+            max_datagram_size: 1350,
         })
+    }
+
+    pub fn set_max_datagram_size(&mut self, v: usize) {
+        self.max_datagram_size = v;
+        self.set_max_recv_udp_payload_size(v);
+        self.set_max_send_udp_payload_size(v);
     }
 }
 

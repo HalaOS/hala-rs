@@ -354,12 +354,15 @@ pub struct QuicListenerState {
     mediator: Arc<EventMap<QuicListenerStateEvent>>,
     /// the batch processor for reading data from connections .
     conns_read: Arc<FutureBatcher<QuicListnerConnRead>>,
+    /// quic mtu size.
+    max_datagram_size: usize,
 }
 
 impl QuicListenerState {
     /// Use [`config`](Config) to create new [`QuicListenerState`]
     pub fn new(config: Config) -> io::Result<Self> {
         Ok(Self {
+            max_datagram_size: config.max_datagram_size,
             acceptor: Arc::new(AsyncSpinMutex::new(QuicAcceptor::new(config)?)),
             conns: Default::default(),
             incoming: Arc::new(AsyncSpinMutex::new(Some(Default::default()))),
@@ -454,9 +457,11 @@ impl QuicListenerState {
     }
 
     fn batch_read(&self, conn: QuicConnState) {
+        let max_datagram_size = self.max_datagram_size;
+
         // push new task into batch poller.
         self.conns_read.push(async move {
-            let mut buf = ReadBuf::with_capacity(65535);
+            let mut buf = ReadBuf::with_capacity(max_datagram_size);
 
             // TODO: "handle conn closed"
             match conn.read(buf.as_mut()).await {

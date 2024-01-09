@@ -17,7 +17,7 @@ pub struct UdpSocket {
 
 impl UdpSocket {
     /// This function will create a new UDP socket and attempt to bind it to the addr provided.
-    pub fn bind_with<S: ToSocketAddrs>(laddrs: S) -> io::Result<Self> {
+    pub fn bind<S: ToSocketAddrs>(laddrs: S) -> io::Result<Self> {
         let io_context = io_context();
 
         let driver = io_context.driver().clone();
