@@ -509,6 +509,10 @@ async fn test_multi_path() {
 
 #[hala_test::test(io_test)]
 async fn test_scids_left() {
+    // pretty_env_logger::init_timed();
+
+    // use config.set_active_connection_id_limit to change active_connection_id_limit parameter.
+
     let mock = MockQuic::new().await;
 
     assert_eq!(mock.client.scids_left().await, 1);

@@ -50,21 +50,35 @@ pub(super) fn mock_config(is_server: bool, max_datagram_size: usize) -> Config {
 
     let mut config = Config::new().unwrap();
 
-    config.verify_peer(false);
+    config.verify_peer(true);
+
+    // if is_server {
+    let root_path = Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    log::debug!("test run dir {:?}", root_path);
 
     if is_server {
-        let root_path = Path::new(env!("CARGO_MANIFEST_DIR"));
-
-        log::debug!("test run dir {:?}", root_path);
-
         config
-            .load_cert_chain_from_pem_file(root_path.join("cert/cert.crt").to_str().unwrap())
+            .load_cert_chain_from_pem_file(root_path.join("cert/server.crt").to_str().unwrap())
             .unwrap();
 
         config
-            .load_priv_key_from_pem_file(root_path.join("cert/cert.key").to_str().unwrap())
+            .load_priv_key_from_pem_file(root_path.join("cert/server.key").to_str().unwrap())
+            .unwrap();
+    } else {
+        config
+            .load_cert_chain_from_pem_file(root_path.join("cert/client.crt").to_str().unwrap())
+            .unwrap();
+
+        config
+            .load_priv_key_from_pem_file(root_path.join("cert/client.key").to_str().unwrap())
             .unwrap();
     }
+
+    config
+        .load_verify_locations_from_file(root_path.join("cert/hala_ca.pem").to_str().unwrap())
+        .unwrap();
+    // }
 
     config
         .set_application_protos(&[b"hq-interop", b"hq-29", b"hq-28", b"hq-27", b"http/0.9"])
