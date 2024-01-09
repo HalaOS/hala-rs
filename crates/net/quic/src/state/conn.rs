@@ -543,6 +543,16 @@ impl QuicConnState {
     pub async fn is_established(&self) -> bool {
         self.state.lock().await.quiche_conn.is_established()
     }
+
+    /// Returns the statistics about the connection.
+    pub async fn states(&self) -> quiche::Stats {
+        self.state.lock().await.quiche_conn.stats()
+    }
+
+    /// Returns the number of source Connection IDs that should be provided to the peer without exceeding the limit it advertised.
+    pub async fn scids_left(&self) -> usize {
+        self.state.lock().await.quiche_conn.scids_left()
+    }
 }
 
 impl Drop for QuicConnState {

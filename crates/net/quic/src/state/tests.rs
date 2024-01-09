@@ -3,7 +3,7 @@ use futures_test::task::noop_context;
 use hala_future::poll_once;
 use hala_io::test::io_test;
 use quiche::RecvInfo;
-use std::{io, task::Poll};
+use std::{io, net::SocketAddr, task::Poll};
 
 use crate::mock_config;
 
@@ -448,4 +448,68 @@ async fn test_server_max_open_streams() {
         .stream_send(stream_id, b"hello", true)
         .await
         .expect_err("Stream limits");
+}
+
+#[hala_test::test(io_test)]
+async fn test_multi_path() {
+    let mut mock = MockQuic::new().await;
+
+    let stream_id = mock.client.open_stream().await.unwrap();
+
+    mock.client
+        .stream_send(stream_id, b"hello", false)
+        .await
+        .unwrap();
+
+    mock.send_to_server().await.unwrap();
+
+    let client_conn = mock.client.clone();
+
+    let server_conn = mock
+        .server_conn
+        .clone()
+        .expect("Server connection established");
+
+    client_conn
+        .stream_send(stream_id, b" world", false)
+        .await
+        .unwrap();
+
+    let mut read_buf = vec![0; 2000];
+
+    let (read_size, send_info) = client_conn.read(&mut read_buf).await.unwrap();
+
+    let new_from = "127.0.0.1:1024".parse::<SocketAddr>().unwrap();
+    let new_to = "127.0.0.1:1023".parse::<SocketAddr>().unwrap();
+
+    assert_ne!(new_from, send_info.from);
+    assert_ne!(new_to, send_info.to);
+
+    let recv_info = RecvInfo {
+        from: new_from,
+        to: new_to,
+    };
+
+    let _ = server_conn
+        .write(&mut read_buf[..read_size], recv_info)
+        .await
+        .unwrap();
+
+    let stream_id = server_conn.accept().await.unwrap();
+
+    let (recv_size, fin) = server_conn
+        .stream_recv(stream_id, &mut read_buf)
+        .await
+        .unwrap();
+
+    assert!(!fin);
+
+    assert_eq!(&read_buf[..recv_size], b"hello world");
+}
+
+#[hala_test::test(io_test)]
+async fn test_scids_left() {
+    let mock = MockQuic::new().await;
+
+    assert_eq!(mock.client.scids_left().await, 1);
 }
