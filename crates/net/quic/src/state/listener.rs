@@ -342,6 +342,7 @@ enum QuicListnerConnRead {
 }
 
 /// The state machine for quic server listener.
+#[derive(Clone)]
 pub struct QuicListenerState {
     /// the acceptor for incoming connections.
     acceptor: Arc<AsyncSpinMutex<QuicAcceptor>>,

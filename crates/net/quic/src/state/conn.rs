@@ -1,7 +1,7 @@
 //! The quic connection state matchine implementation.
 
 use std::{
-    collections::VecDeque,
+    collections::{HashSet, VecDeque},
     fmt::Debug,
     io,
     ops::DerefMut,
@@ -39,8 +39,9 @@ struct RawQuicConnState {
     send_ack_eliciting_instant: Instant,
     /// The interval between two ping packets.
     ping_timeout: Duration,
-    /// The latest stream id on record.
-    lastest_incoming_stream_id: u64,
+    /// When a connection sees a stream ID for the first time,
+    /// it is placed into this stream ID set.
+    register_incoming_stream_ids: HashSet<u64>,
     /// The latest outgoing stream id on record.
     lastest_outgoing_stream_id: u64,
     /// Incoming stream id buffer.
@@ -57,15 +58,15 @@ impl RawQuicConnState {
             quiche_conn,
             ping_timeout,
             send_ack_eliciting_instant: Instant::now(),
-            lastest_incoming_stream_id: 0,
+            register_incoming_stream_ids: Default::default(),
             lastest_outgoing_stream_id: first_outgoing_stream_id,
             incoming: Default::default(),
         };
 
         // process initial incoming stream.
         for id in this.quiche_conn.readable() {
-            if id > this.lastest_incoming_stream_id {
-                this.lastest_incoming_stream_id = id;
+            if id % 2 != first_outgoing_stream_id % 2 {
+                this.register_incoming_stream_ids.insert(id);
             }
 
             this.incoming.push_back(id);
@@ -137,8 +138,11 @@ impl QuicConnState {
     where
         Guard: DerefMut<Target = RawQuicConnState>,
     {
-        if state.lastest_outgoing_stream_id % 2 == id % 2 && id > state.lastest_incoming_stream_id {
-            state.lastest_incoming_stream_id = id;
+        // Check the incoming stream id parity and search in register set.
+        if state.lastest_outgoing_stream_id % 2 != id % 2
+            && !state.register_incoming_stream_ids.contains(&id)
+        {
+            state.register_incoming_stream_ids.insert(id);
             state.incoming.push_back(id);
             self.mediator.notify_one(
                 QuicConnStateEvent::Accept(self.scid.clone()),
@@ -496,9 +500,21 @@ impl QuicConnState {
         self.stream_send(id, b"", true).await.map(|_| ())
     }
 
+    /// Shuts down reading or writing from/to the specified stream.
+    ///
+    /// see quiche [`doc`](https://docs.rs/quiche/latest/quiche/struct.Connection.html#method.stream_shutdown) for more information.
+    pub async fn stream_shutdown(&self, stream_id: u64, err: u64) -> io::Result<()> {
+        self.state
+            .lock()
+            .await
+            .quiche_conn
+            .stream_shutdown(stream_id, quiche::Shutdown::Read, err)
+            .map_err(into_io_error)
+    }
+
     /// Closes the connection with the given error and reason.
     ///
-    /// see quiche [`doc`](https://docs.rs/quiche/latest/quiche/struct.Connection.html#method.close) for more details.
+    /// see quiche [`doc`](https://docs.rs/quiche/latest/quiche/struct.Connection.html#method.close) for more information.
     pub async fn close(&self, app: bool, err: u64, reason: &[u8]) -> io::Result<()> {
         match self.state.lock().await.quiche_conn.close(app, err, reason) {
             Ok(_) => Ok(()),

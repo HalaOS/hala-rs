@@ -264,7 +264,6 @@ async fn test_max_stream_data() {
 
 #[hala_test::test(io_test)]
 async fn test_server_stream_accept() {
-    _ = pretty_env_logger::try_init_timed();
     let send_data = b"hello";
 
     let mut mock = MockQuic::new().await;
@@ -312,4 +311,141 @@ async fn test_server_stream_accept() {
         .unwrap();
 
     assert_eq!(&buf[..read_size], send_data);
+}
+
+#[hala_test::test(io_test)]
+async fn test_client_stream_accept() {
+    let mut mock = MockQuic::new().await;
+
+    let _ = mock.client.open_stream().await.unwrap();
+
+    mock.send_to_server().await.unwrap();
+
+    let server_conn = mock
+        .server_conn
+        .as_ref()
+        .expect("Server connection established");
+
+    let server_open_stream_id = server_conn.open_stream().await.unwrap();
+
+    let server_send_data = b"hello world ............";
+
+    let send_size = server_conn
+        .stream_send(server_open_stream_id, server_send_data, false)
+        .await
+        .unwrap();
+
+    assert_eq!(send_size, server_send_data.len());
+
+    mock.send_to_client().await.unwrap();
+
+    let client_accept_stream_id = mock
+        .client
+        .accept()
+        .await
+        .expect("Client connection dropped");
+
+    assert_eq!(client_accept_stream_id, server_open_stream_id);
+
+    let mut buf = vec![0; 1024];
+
+    let (read_size, fin) = mock
+        .client
+        .stream_recv(client_accept_stream_id, &mut buf)
+        .await
+        .unwrap();
+
+    assert!(!fin);
+
+    assert_eq!(&buf[..read_size], server_send_data);
+}
+
+#[hala_test::test(io_test)]
+async fn test_stream_stopped() {
+    let mut mock = MockQuic::new().await;
+
+    let stream_id = mock.client.open_stream().await.unwrap();
+
+    mock.client
+        .stream_send(stream_id, b"hello", true)
+        .await
+        .unwrap();
+
+    mock.send_to_server().await.unwrap();
+
+    let server_conn = mock
+        .server_conn
+        .as_ref()
+        .expect("Server connection established");
+
+    assert_eq!(
+        server_conn.accept().await.expect("New incoming stream"),
+        stream_id
+    );
+
+    server_conn.stream_shutdown(stream_id, 1).await.unwrap();
+
+    mock.send_to_client().await.unwrap();
+
+    mock.client
+        .stream_send(stream_id, b"hello", true)
+        .await
+        .expect_err("Server shutdown stream");
+}
+
+#[hala_test::test(io_test)]
+async fn test_client_max_open_streams() {
+    let mut mock = MockQuic::new().await;
+
+    // stream 1 reserved for crypto handshake.
+    for _ in 0..8 {
+        let stream_id = mock.client.open_stream().await.unwrap();
+
+        mock.client
+            .stream_send(stream_id, b"hello", true)
+            .await
+            .unwrap();
+
+        mock.send_to_server().await.unwrap();
+    }
+
+    let stream_id = mock.client.open_stream().await.unwrap();
+
+    mock.client
+        .stream_send(stream_id, b"hello", true)
+        .await
+        .expect_err("Stream limits");
+}
+
+#[hala_test::test(io_test)]
+async fn test_server_max_open_streams() {
+    let mut mock = MockQuic::new().await;
+
+    _ = mock.client.open_stream().await.unwrap();
+
+    mock.send_to_server().await.unwrap();
+
+    let server_conn = mock
+        .server_conn
+        .as_ref()
+        .expect("Server connection established");
+
+    // stream 1 reserved for crypto handshake.
+    for _ in 0..8 {
+        let stream_id = server_conn.open_stream().await.unwrap();
+
+        server_conn
+            .stream_send(stream_id, b"hello", true)
+            .await
+            .unwrap();
+
+        mock.send_to_client().await.unwrap();
+    }
+
+    let stream_id = server_conn.open_stream().await.unwrap();
+
+    server_conn
+        .stream_send(stream_id, b"hello", true)
+        .await
+        .expect_err("Stream limits");
 }
