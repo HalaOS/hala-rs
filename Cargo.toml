@@ -6,7 +6,7 @@ resolver = "2"
 
 [workspace.package]
 edition = "2021"
-repository = "https://github.com/HalaOS/quictun.git"
+repository = "https://github.com/HalaOS/hala-rs.git"
 version = "0.1.2"
 
 [workspace.dependencies]

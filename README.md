@@ -1,3 +1,3 @@
-# hala-network
+# hala-rs
 
-Cross-platform network system for the lightweight operating system HalaOS
+hala std library for rust programming.
