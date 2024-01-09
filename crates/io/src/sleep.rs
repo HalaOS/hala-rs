@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use crate::current::{get_driver, get_poller};
+use crate::context::{io_context, RawIoContext};
 
 use super::{Cmd, Description, Driver, Handle, Interest, OpenFlags};
 
@@ -96,9 +96,7 @@ impl Drop for Sleep {
 
 /// Sleep for a while
 pub async fn sleep(duration: Duration) -> io::Result<()> {
-    Sleep::new_with(get_driver()?, get_poller()?, duration)?.await
-}
+    let context = io_context();
 
-pub async fn sleep_with(driver: Driver, poller: Handle, duration: Duration) -> io::Result<()> {
-    Sleep::new_with(driver, poller, duration)?.await
+    Sleep::new_with(context.driver().clone(), context.poller(), duration)?.await
 }

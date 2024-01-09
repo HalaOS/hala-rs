@@ -22,13 +22,12 @@ pub use sleep::*;
 mod timeout;
 pub use timeout::*;
 
-#[cfg(feature = "current")]
-pub mod current;
-
 pub use bytes;
 
 #[cfg(feature = "mio-driver")]
 pub mod mio;
 
-#[cfg(all(feature = "mio-driver", feature = "current"))]
+#[cfg(all(feature = "mio-driver"))]
 pub mod test;
+
+pub mod context;

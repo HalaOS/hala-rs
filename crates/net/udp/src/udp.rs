@@ -3,10 +3,10 @@ use std::{
     net::{SocketAddr, ToSocketAddrs},
 };
 
-#[cfg(feature = "current")]
-use hala_io::current::*;
-
-use hala_io::*;
+use hala_io::{
+    context::{io_context, RawIoContext},
+    *,
+};
 
 /// A Udp socket.
 pub struct UdpSocket {
@@ -17,17 +17,12 @@ pub struct UdpSocket {
 
 impl UdpSocket {
     /// This function will create a new UDP socket and attempt to bind it to the addr provided.
-    #[cfg(feature = "current")]
-    pub fn bind<S: ToSocketAddrs>(laddrs: S) -> io::Result<Self> {
-        Self::bind_with(laddrs, get_driver()?, get_poller()?)
-    }
+    pub fn bind_with<S: ToSocketAddrs>(laddrs: S) -> io::Result<Self> {
+        let io_context = io_context();
 
-    /// This function will create a new UDP socket and attempt to bind it to the addr provided.
-    pub fn bind_with<S: ToSocketAddrs>(
-        laddrs: S,
-        driver: Driver,
-        poller: Handle,
-    ) -> io::Result<Self> {
+        let driver = io_context.driver().clone();
+        let poller = io_context.poller();
+
         let laddrs = laddrs.to_socket_addrs()?.into_iter().collect::<Vec<_>>();
 
         let fd = driver.fd_open(Description::UdpSocket, OpenFlags::Bind(&laddrs))?;

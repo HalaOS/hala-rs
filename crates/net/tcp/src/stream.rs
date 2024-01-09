@@ -5,9 +5,10 @@ use std::{
     task::Poll,
 };
 
-#[cfg(feature = "current")]
-use hala_io::current::*;
-use hala_io::*;
+use hala_io::{
+    context::{io_context, RawIoContext},
+    *,
+};
 
 use futures::{AsyncRead, AsyncWrite};
 
@@ -43,14 +44,13 @@ impl TcpStream {
         Ok(Self { fd, driver, poller })
     }
 
-    /// Opens a TCP connection to a remote host with global context `poller`
+    /// Opens a TCP connection to a remote host.
     pub fn connect<S: ToSocketAddrs>(raddrs: S) -> io::Result<Self> {
-        Self::connect_with(raddrs, get_poller()?)
-    }
+        let io_context = io_context();
 
-    /// Opens a TCP connection to a remote host with customer `poller` handle.
-    pub fn connect_with<S: ToSocketAddrs>(raddrs: S, poller: Handle) -> io::Result<Self> {
-        let driver = get_driver()?;
+        let driver = io_context.driver().clone();
+
+        let poller = io_context.poller();
 
         let raddrs = raddrs.to_socket_addrs()?.into_iter().collect::<Vec<_>>();
 

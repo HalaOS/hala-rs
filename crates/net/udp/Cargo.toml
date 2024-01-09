@@ -22,7 +22,3 @@ futures-test = {workspace = true}
 hala-test = {workspace = true}
 pretty_env_logger = {workspace = true}
 rand = {workspace = true}
-
-[features]
-current = ["hala-io/current"]
-default = ["current"]

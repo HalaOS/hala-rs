@@ -4,10 +4,10 @@ use std::{
     net::{SocketAddr, ToSocketAddrs},
 };
 
-use hala_io::*;
-
-#[cfg(feature = "current")]
-use hala_io::current::*;
+use hala_io::{
+    context::{io_context, RawIoContext},
+    *,
+};
 
 use super::TcpStream;
 
@@ -26,16 +26,12 @@ impl Debug for TcpListener {
 
 impl TcpListener {
     /// Create new tcp listener with calling underly bind method.
-    #[cfg(feature = "current")]
     pub fn bind<S: ToSocketAddrs>(laddrs: S) -> io::Result<Self> {
-        Self::bind_with(laddrs, get_driver()?, get_poller()?)
-    }
+        let io_context = io_context();
 
-    pub fn bind_with<S: ToSocketAddrs>(
-        laddrs: S,
-        driver: Driver,
-        poller: Handle,
-    ) -> io::Result<Self> {
+        let driver = io_context.driver().clone();
+        let poller = io_context.poller();
+
         let laddrs = laddrs.to_socket_addrs()?.into_iter().collect::<Vec<_>>();
 
         let fd = driver.fd_open(Description::TcpListener, OpenFlags::Bind(&laddrs))?;
@@ -59,7 +55,7 @@ impl TcpListener {
 
     /// Accepts a new incoming connection from this listener.
     pub async fn accept(&self) -> io::Result<(TcpStream, SocketAddr)> {
-        self.accept_with(get_poller()?).await
+        self.accept_with(io_context().poller()).await
     }
 
     /// Accepts a new incoming connection with providing `poller`

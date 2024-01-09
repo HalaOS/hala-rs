@@ -19,7 +19,7 @@ ring = {workspace = true, features = ["std"]}
 thiserror = {workspace = true}
 
 hala-future = {workspace = true}
-hala-io = {workspace = true, features = ["current"]}
+hala-io = {workspace = true}
 hala-ops = {workspace = true}
 hala-sync = {workspace = true}
 

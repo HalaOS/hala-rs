@@ -9,8 +9,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-use hala_future::event_map::{self, EventMap};
-use hala_io::{current::executor::io_spawn, timeout};
+use hala_future::{
+    event_map::{self, EventMap},
+    executor::spawn,
+};
+use hala_io::timeout;
 use hala_ops::deref::DerefExt;
 use hala_sync::*;
 use quiche::{ConnectionId, RecvInfo, SendInfo};
@@ -569,12 +572,9 @@ impl Drop for QuicConnState {
         // The last one instance is dropping.
         if Arc::strong_count(&self.state) == 1 {
             let this = self.clone();
-            io_spawn(async move {
+            spawn(async move {
                 this.close(false, 0, b"raii drop").await.unwrap();
-
-                Ok(())
-            })
-            .unwrap();
+            });
         }
     }
 }
