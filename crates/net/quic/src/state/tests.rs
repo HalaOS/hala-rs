@@ -517,3 +517,24 @@ async fn test_scids_left() {
 
     assert_eq!(mock.client.scids_left().await, 1);
 }
+
+#[hala_test::test(io_test)]
+async fn verify_client_cert() {
+    let mut mock = MockQuic::new().await;
+
+    let stream_id = mock.client.open_stream().await.unwrap();
+
+    mock.client
+        .stream_send(stream_id, b"hello", false)
+        .await
+        .unwrap();
+
+    mock.send_to_server().await.unwrap();
+
+    let server_conn = mock
+        .server_conn
+        .clone()
+        .expect("Server connection established");
+
+    assert!(server_conn.to_quiche_conn().await.peer_cert().is_some());
+}

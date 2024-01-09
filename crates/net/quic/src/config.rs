@@ -78,7 +78,6 @@ pub(super) fn mock_config(is_server: bool, max_datagram_size: usize) -> Config {
     config
         .load_verify_locations_from_file(root_path.join("cert/hala_ca.pem").to_str().unwrap())
         .unwrap();
-    // }
 
     config
         .set_application_protos(&[b"hq-interop", b"hq-29", b"hq-28", b"hq-27", b"http/0.9"])
