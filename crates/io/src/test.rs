@@ -1,4 +1,5 @@
 pub use std::future::Future;
+use std::{io, time::Instant};
 
 use hala_future::executor::block_on;
 
@@ -6,11 +7,21 @@ use hala_future::executor::block_on;
 pub fn io_test<T, Fut>(label: &'static str, test: T)
 where
     T: FnOnce() -> Fut + 'static,
-    Fut: Future<Output = ()> + Send + 'static,
+    Fut: Future<Output = io::Result<()>> + Send + 'static,
 {
     let fut = test();
 
-    println!("Start io_test: {}", label);
+    println!("io_test {}", label);
 
-    block_on(fut, 10);
+    let start = Instant::now();
+
+    match block_on(fut, 10) {
+        Ok(_) => {
+            println!("io_test {} ... finished in {:?}", label, start.elapsed());
+        }
+        Err(err) => {
+            println!("io_test {} catch error:", label);
+            println!("{}", err);
+        }
+    }
 }

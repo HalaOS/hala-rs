@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{io, time::Duration};
 
 use futures::{AsyncReadExt, AsyncWriteExt};
 use hala_future::executor::future_spawn;
@@ -55,7 +55,7 @@ fn mock_config(is_server: bool, max_datagram_size: usize) -> Config {
 }
 
 #[hala_test::test(io_test)]
-async fn test_establish() {
+async fn test_establish() -> io::Result<()> {
     let listener = QuicListener::bind("127.0.0.1:0", mock_config(true, 1350)).unwrap();
 
     let raddr = listener.local_addr();
@@ -67,10 +67,12 @@ async fn test_establish() {
     let _ = QuicConn::connect("127.0.0.1:0", raddr, &mut mock_config(false, 1350))
         .await
         .unwrap();
+
+    Ok(())
 }
 
 #[hala_test::test(io_test)]
-async fn test_open_client_stream() {
+async fn test_open_client_stream() -> io::Result<()> {
     let listener = QuicListener::bind("127.0.0.1:0", mock_config(true, 1350)).unwrap();
 
     let raddr = listener.local_addr();
@@ -107,4 +109,6 @@ async fn test_open_client_stream() {
     let read_size = stream.read(&mut buf).await.unwrap();
 
     assert_eq!(&buf[..read_size], send_data);
+
+    Ok(())
 }

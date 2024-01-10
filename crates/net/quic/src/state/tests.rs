@@ -177,7 +177,7 @@ impl MockQuic {
 }
 
 #[hala_test::test(io_test)]
-async fn test_connect() {
+async fn test_connect() -> io::Result<()> {
     let mut mock = MockQuic::new().await;
 
     assert!(mock.server_conn.is_none());
@@ -187,10 +187,12 @@ async fn test_connect() {
     mock.send_to_server().await.unwrap();
 
     assert!(mock.server_conn.is_some());
+
+    Ok(())
 }
 
 #[hala_test::test(io_test)]
-async fn test_open_stream() {
+async fn test_open_stream() -> io::Result<()> {
     let mut mock = MockQuic::new().await;
 
     let stream_id = mock.client.open_stream().await.unwrap();
@@ -222,10 +224,12 @@ async fn test_open_stream() {
         .unwrap();
 
     assert_eq!(stream_id, 9);
+
+    Ok(())
 }
 
 #[hala_test::test(io_test)]
-async fn test_stream_write() {
+async fn test_stream_write() -> io::Result<()> {
     let mock = MockQuic::new().await;
 
     let stream_id = mock.client.open_stream().await.unwrap();
@@ -239,10 +243,12 @@ async fn test_stream_write() {
         .map(|len| len.expect("stream_write"));
 
     assert_eq!(result, Poll::Ready(send_buf.len()));
+
+    Ok(())
 }
 
 #[hala_test::test(io_test)]
-async fn test_max_stream_data() {
+async fn test_max_stream_data() -> io::Result<()> {
     let mock = MockQuic::new().await;
 
     let stream_id = mock.client.open_stream().await.unwrap();
@@ -260,10 +266,12 @@ async fn test_max_stream_data() {
         poll_once!(mock.client.stream_send(stream_id, send_buf, false)).map(|len| len.expect(""));
 
     assert_eq!(result, Poll::Pending);
+
+    Ok(())
 }
 
 #[hala_test::test(io_test)]
-async fn test_server_stream_accept() {
+async fn test_server_stream_accept() -> io::Result<()> {
     let send_data = b"hello";
 
     let mut mock = MockQuic::new().await;
@@ -311,10 +319,12 @@ async fn test_server_stream_accept() {
         .unwrap();
 
     assert_eq!(&buf[..read_size], send_data);
+
+    Ok(())
 }
 
 #[hala_test::test(io_test)]
-async fn test_client_stream_accept() {
+async fn test_client_stream_accept() -> io::Result<()> {
     let mut mock = MockQuic::new().await;
 
     let _ = mock.client.open_stream().await.unwrap();
@@ -358,10 +368,12 @@ async fn test_client_stream_accept() {
     assert!(!fin);
 
     assert_eq!(&buf[..read_size], server_send_data);
+
+    Ok(())
 }
 
 #[hala_test::test(io_test)]
-async fn test_stream_stopped() {
+async fn test_stream_stopped() -> io::Result<()> {
     let mut mock = MockQuic::new().await;
 
     let stream_id = mock.client.open_stream().await.unwrap();
@@ -391,10 +403,12 @@ async fn test_stream_stopped() {
         .stream_send(stream_id, b"hello", true)
         .await
         .expect_err("Server shutdown stream");
+
+    Ok(())
 }
 
 #[hala_test::test(io_test)]
-async fn test_client_max_open_streams() {
+async fn test_client_max_open_streams() -> io::Result<()> {
     let mut mock = MockQuic::new().await;
 
     // stream 1 reserved for crypto handshake.
@@ -415,10 +429,12 @@ async fn test_client_max_open_streams() {
         .stream_send(stream_id, b"hello", true)
         .await
         .expect_err("Stream limits");
+
+    Ok(())
 }
 
 #[hala_test::test(io_test)]
-async fn test_server_max_open_streams() {
+async fn test_server_max_open_streams() -> io::Result<()> {
     let mut mock = MockQuic::new().await;
 
     _ = mock.client.open_stream().await.unwrap();
@@ -448,10 +464,12 @@ async fn test_server_max_open_streams() {
         .stream_send(stream_id, b"hello", true)
         .await
         .expect_err("Stream limits");
+
+    Ok(())
 }
 
 #[hala_test::test(io_test)]
-async fn test_multi_path() {
+async fn test_multi_path() -> io::Result<()> {
     let mut mock = MockQuic::new().await;
 
     let stream_id = mock.client.open_stream().await.unwrap();
@@ -505,10 +523,12 @@ async fn test_multi_path() {
     assert!(!fin);
 
     assert_eq!(&read_buf[..recv_size], b"hello world");
+
+    Ok(())
 }
 
 #[hala_test::test(io_test)]
-async fn test_scids_left() {
+async fn test_scids_left() -> io::Result<()> {
     // pretty_env_logger::init_timed();
 
     // use config.set_active_connection_id_limit to change active_connection_id_limit parameter.
@@ -516,10 +536,12 @@ async fn test_scids_left() {
     let mock = MockQuic::new().await;
 
     assert_eq!(mock.client.scids_left().await, 1);
+
+    Ok(())
 }
 
 #[hala_test::test(io_test)]
-async fn verify_client_cert() {
+async fn verify_client_cert() -> io::Result<()> {
     let mut mock = MockQuic::new().await;
 
     let stream_id = mock.client.open_stream().await.unwrap();
@@ -537,4 +559,6 @@ async fn verify_client_cert() {
         .expect("Server connection established");
 
     assert!(server_conn.to_quiche_conn().await.peer_cert().is_some());
+
+    Ok(())
 }
