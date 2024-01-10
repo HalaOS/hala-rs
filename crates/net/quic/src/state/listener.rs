@@ -457,25 +457,6 @@ impl QuicListenerState {
         }
     }
 
-    fn batch_read(&self, conn: QuicConnState) {
-        let max_datagram_size = self.max_datagram_size;
-
-        // push new task into batch poller.
-        self.conns_read.push(async move {
-            let mut buf = ReadBuf::with_capacity(max_datagram_size);
-
-            // TODO: "handle conn closed"
-            let read = match conn.read(buf.as_mut()).await {
-                Ok((read_size, send_info)) => {
-                    QuicListnerConnRead::Ok(conn, buf.into_bytes_mut(Some(read_size)), send_info)
-                }
-                Err(err) => QuicListnerConnRead::Err(conn, err),
-            };
-
-            read
-        });
-    }
-
     /// Close this listener and drop the incoming queue.
     pub async fn close(&self) {
         let mut incoming = self.incoming.lock().await;
@@ -505,6 +486,24 @@ impl QuicListenerState {
                 .await
                 .expect("Please always use `event_map::Reason::On` to notify me!!");
         }
+    }
+
+    fn batch_read(&self, conn: QuicConnState) {
+        let max_datagram_size = self.max_datagram_size;
+
+        // push new task into batch poller.
+        self.conns_read.push(async move {
+            let mut buf = ReadBuf::with_capacity(max_datagram_size);
+
+            let read = match conn.read(buf.as_mut()).await {
+                Ok((read_size, send_info)) => {
+                    QuicListnerConnRead::Ok(conn, buf.into_bytes_mut(Some(read_size)), send_info)
+                }
+                Err(err) => QuicListnerConnRead::Err(conn, err),
+            };
+
+            read
+        });
     }
 
     pub async fn read(&self) -> io::Result<(BytesMut, SendInfo)> {

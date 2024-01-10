@@ -127,3 +127,37 @@ async fn test_open_client_stream() -> io::Result<()> {
 
     Ok(())
 }
+
+#[hala_test::test(io_test)]
+async fn test_open_server_stream() -> io::Result<()> {
+    let listener = QuicListener::bind("127.0.0.1:0", mock_config(true, 1350)).unwrap();
+
+    let raddr = listener.local_addr();
+
+    let send_data = b"hello hala os";
+
+    future_spawn(async move {
+        let conn = listener.accept().await.unwrap();
+
+        let mut stream = conn.open_stream().await.unwrap();
+
+        stream.write(send_data).await.unwrap();
+
+        // wait client stream recv data.
+        sleep(Duration::from_secs(1)).await.unwrap();
+    });
+
+    let conn = QuicConn::connect("127.0.0.1:0", raddr, &mut mock_config(false, 1350))
+        .await
+        .unwrap();
+
+    let mut stream = conn.accept_stream().await.unwrap();
+
+    let mut buf = vec![0; 1024];
+
+    let read_size = stream.read(&mut buf).await.unwrap();
+
+    assert_eq!(send_data, &buf[..read_size]);
+
+    Ok(())
+}

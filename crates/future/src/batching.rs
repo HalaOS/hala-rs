@@ -48,34 +48,40 @@ struct WakerHost {
 impl WakerHost {
     fn wake(&self) {
         if let Some(waker) = self.remove_waker() {
+            let waker = unsafe { Box::from_raw(waker) };
             waker.wake();
         }
     }
 
-    fn remove_waker(&self) -> Option<Box<Waker>> {
-        let waker_ptr = self.waker.load(Ordering::Acquire);
+    fn remove_waker(&self) -> Option<*mut Waker> {
+        loop {
+            let waker_ptr = self.waker.load(Ordering::Acquire);
 
-        if waker_ptr == null_mut() {
-            return None;
+            if waker_ptr == null_mut() {
+                return None;
+            }
+
+            if self
+                .waker
+                .compare_exchange_weak(waker_ptr, null_mut(), Ordering::AcqRel, Ordering::Relaxed)
+                .is_err()
+            {
+                continue;
+            }
+
+            return Some(waker_ptr);
         }
-
-        if self
-            .waker
-            .compare_exchange(waker_ptr, null_mut(), Ordering::AcqRel, Ordering::Relaxed)
-            .is_ok()
-        {
-            return Some(unsafe { Box::from_raw(waker_ptr) });
-        }
-
-        return None;
     }
 
     fn add_waker(&self, waker: Waker) {
         let waker_ptr = Box::into_raw(Box::new(waker));
 
-        self.waker
-            .compare_exchange(null_mut(), waker_ptr, Ordering::AcqRel, Ordering::Relaxed)
-            .expect("Add waker ordering check failed");
+        let old = self.waker.swap(waker_ptr, Ordering::AcqRel);
+
+        if old != null_mut() {
+            // TODO: check the data race!!!
+            log::warn!("Batching is awakened unintentionally !!!.");
+        }
     }
 }
 
@@ -156,6 +162,8 @@ pub struct FutureBatcher<R> {
     ready_futures: Arc<Queue<usize>>,
     /// Raw batch future waker
     raw_waker: Arc<WakerHost>,
+
+    await_counter: Arc<AtomicUsize>,
 }
 
 unsafe impl<R> Send for FutureBatcher<R> {}
@@ -168,6 +176,7 @@ impl<R> Clone for FutureBatcher<R> {
             pending_futures: self.pending_futures.clone(),
             ready_futures: self.ready_futures.clone(),
             raw_waker: self.raw_waker.clone(),
+            await_counter: self.await_counter.clone(),
         }
     }
 }
@@ -185,6 +194,7 @@ impl<R> FutureBatcher<R> {
             pending_futures: Default::default(),
             ready_futures: Default::default(),
             raw_waker: Default::default(),
+            await_counter: Default::default(),
         }
     }
 
@@ -236,6 +246,12 @@ impl<R> Future for Wait<R> {
         self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
+        assert_eq!(
+            self.await_counter.fetch_add(1, Ordering::SeqCst),
+            0,
+            "Only one thread can call this batch poll"
+        );
+
         // save system waker to prepare wakeup self again.
         self.raw_waker.add_waker(cx.waker().clone());
 
@@ -258,10 +274,21 @@ impl<R> Future for Wait<R> {
                 }
                 std::task::Poll::Ready(r) => {
                     self.raw_waker.remove_waker();
+                    assert_eq!(
+                        self.await_counter.fetch_sub(1, Ordering::SeqCst),
+                        1,
+                        "Only one thread can call this batch poll"
+                    );
                     return std::task::Poll::Ready(r);
                 }
             }
         }
+
+        assert_eq!(
+            self.await_counter.fetch_sub(1, Ordering::SeqCst),
+            1,
+            "Only one thread can call this batch poll"
+        );
 
         return std::task::Poll::Pending;
     }
