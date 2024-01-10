@@ -1,6 +1,7 @@
 use std::{
     io,
     net::{SocketAddr, ToSocketAddrs},
+    ops,
     sync::Arc,
 };
 
@@ -149,6 +150,10 @@ impl QuicConn {
         } else {
             None
         }
+    }
+
+    pub async fn to_quiche_conn(&self) -> impl ops::Deref<Target = quiche::Connection> + '_ {
+        self.state.to_quiche_conn().await
     }
 }
 

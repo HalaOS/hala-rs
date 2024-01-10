@@ -161,3 +161,89 @@ async fn test_open_server_stream() -> io::Result<()> {
 
     Ok(())
 }
+
+#[hala_test::test(io_test)]
+async fn test_server_max_streams_stream() -> io::Result<()> {
+    let mut config = mock_config(true, 1350);
+
+    config.set_initial_max_streams_bidi(3);
+
+    let listener = QuicListener::bind("127.0.0.1:0", config).unwrap();
+
+    let raddr = listener.local_addr();
+
+    let send_data = b"hello hala os";
+
+    future_spawn(async move {
+        let conn = listener.accept().await.unwrap();
+
+        while let Some(_) = conn.accept_stream().await {}
+    });
+
+    let mut config = mock_config(false, 1350);
+
+    let conn = QuicConn::connect("127.0.0.1:0", raddr, &mut config)
+        .await
+        .unwrap();
+
+    {
+        let quiche_conn = conn.to_quiche_conn().await;
+
+        assert_eq!(quiche_conn.peer_streams_left_bidi(), 3);
+    }
+
+    let mut stream = conn.open_stream().await.unwrap();
+
+    stream.write(send_data).await.unwrap();
+
+    let mut stream = conn.open_stream().await.unwrap();
+
+    stream.write(send_data).await.unwrap();
+
+    let mut stream = conn.open_stream().await.unwrap();
+
+    stream.write(send_data).await.expect_err("StreamLimit");
+
+    Ok(())
+}
+
+#[hala_test::test(io_test)]
+async fn test_client_max_streams_stream() -> io::Result<()> {
+    let config = mock_config(true, 1350);
+
+    let listener = QuicListener::bind("127.0.0.1:0", config).unwrap();
+
+    let raddr = listener.local_addr();
+
+    let send_data = b"hello hala os";
+
+    future_spawn(async move {
+        let mut config = mock_config(false, 1350);
+
+        config.set_initial_max_streams_bidi(2);
+
+        let conn = QuicConn::connect("127.0.0.1:0", raddr, &mut config)
+            .await
+            .unwrap();
+
+        while let Some(_) = conn.accept_stream().await {}
+    });
+
+    let conn = listener.accept().await.unwrap();
+
+    {
+        let quiche_conn = conn.to_quiche_conn().await;
+
+        assert_eq!(quiche_conn.peer_streams_left_bidi(), 2);
+    }
+
+    let mut stream = conn.open_stream().await.unwrap();
+
+    stream.write(send_data).await.unwrap();
+
+    let mut stream = conn.open_stream().await.unwrap();
+
+    stream.write(send_data).await.expect_err("StreamLimit");
+
+    Ok(())
+}
