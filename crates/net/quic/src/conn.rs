@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use hala_future::executor::spawn;
+use hala_future::executor::future_spawn;
 use hala_io::timeout;
 use hala_udp::UdpSocket;
 use quiche::RecvInfo;
@@ -37,7 +37,7 @@ impl Drop for QuicConn {
         if Arc::strong_count(&self.conn_counter) == 1 {
             let state = self.state.clone();
 
-            spawn(async move {
+            future_spawn(async move {
                 match state.close(false, 0, b"").await {
                     Ok(_) => {
                         log::info!(
@@ -178,7 +178,7 @@ impl Drop for QuicStream {
             let conn = self.conn.clone();
             let stream_id = self.stream_id;
 
-            spawn(async move {
+            future_spawn(async move {
                 match conn.state.close(false, 0, b"").await {
                     Ok(_) => {
                         log::info!(
@@ -271,7 +271,7 @@ mod event_loop {
 
         let conn_cloned = conn.clone();
 
-        spawn(async move {
+        future_spawn(async move {
             let conn_scid = conn_cloned.state.scid.clone().into_owned();
 
             let conn_dcid = conn_cloned.state.dcid.clone().into_owned();
@@ -295,7 +295,7 @@ mod event_loop {
             }
         });
 
-        spawn(async move {
+        future_spawn(async move {
             let conn_scid = conn.state.scid.clone().into_owned();
 
             let conn_dcid = conn.state.dcid.clone().into_owned();

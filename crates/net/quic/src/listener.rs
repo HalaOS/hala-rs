@@ -48,7 +48,7 @@ impl QuicListener {
 mod event_loop {
     use std::sync::Arc;
 
-    use hala_future::executor::spawn;
+    use hala_future::executor::future_spawn;
     use quiche::RecvInfo;
 
     use super::*;
@@ -64,7 +64,7 @@ mod event_loop {
 
         let state_cloned: QuicListenerState = state.clone();
 
-        spawn(async move {
+        future_spawn(async move {
             match run_recv_event_loop(udp_socket_cloned, state_cloned, max_datagram_size).await {
                 Ok(_) => {
                     log::trace!("quic listener recv loop stop.",);
@@ -75,7 +75,7 @@ mod event_loop {
             }
         });
 
-        spawn(async move {
+        future_spawn(async move {
             match run_send_event_loop(udp_socket, state).await {
                 Ok(_) => {
                     log::trace!("quic listener send loop stop.",);

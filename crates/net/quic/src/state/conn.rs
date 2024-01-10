@@ -11,7 +11,7 @@ use std::{
 
 use hala_future::{
     event_map::{self, EventMap},
-    executor::spawn,
+    executor::future_spawn,
 };
 use hala_io::timeout;
 use hala_ops::deref::DerefExt;
@@ -572,7 +572,7 @@ impl Drop for QuicConnState {
         // The last one instance is dropping.
         if Arc::strong_count(&self.state) == 1 {
             let this = self.clone();
-            spawn(async move {
+            future_spawn(async move {
                 this.close(false, 0, b"raii drop").await.unwrap();
             });
         }

@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use futures::{AsyncReadExt, AsyncWriteExt};
-use hala_future::executor::spawn;
+use hala_future::executor::future_spawn;
 use hala_io::{sleep, test::io_test};
 use hala_quic::{Config, QuicConn, QuicListener};
 
@@ -60,7 +60,7 @@ async fn test_establish() {
 
     let raddr = listener.local_addr();
 
-    spawn(async move {
+    future_spawn(async move {
         let _ = listener.accept().await.unwrap();
     });
 
@@ -77,7 +77,7 @@ async fn test_open_client_stream() {
 
     let send_data = b"test test a";
 
-    spawn(async move {
+    future_spawn(async move {
         let conn = listener.accept().await.unwrap();
 
         let mut stream = conn.accept_stream().await.unwrap();
