@@ -72,6 +72,21 @@ async fn test_establish() -> io::Result<()> {
 }
 
 #[hala_test::test(io_test)]
+async fn test_connect_timeout() -> io::Result<()> {
+    let mut config = mock_config(false, 1350);
+
+    config.set_max_idle_timeout(1000);
+
+    let error = QuicConn::connect("127.0.0.1:0", "127.0.0.1:1812", &mut config)
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+
+    Ok(())
+}
+
+#[hala_test::test(io_test)]
 async fn test_open_client_stream() -> io::Result<()> {
     let listener = QuicListener::bind("127.0.0.1:0", mock_config(true, 1350)).unwrap();
 
