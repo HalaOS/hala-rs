@@ -8,7 +8,7 @@ use std::{
 use hala_future::executor::future_spawn;
 use hala_io::timeout;
 use hala_udp::UdpSocket;
-use quiche::RecvInfo;
+use quiche::{ConnectionId, RecvInfo};
 
 use crate::{
     state::{QuicConnState, QuicConnectorState},
@@ -154,6 +154,15 @@ impl QuicConn {
 
     pub async fn to_quiche_conn(&self) -> impl ops::Deref<Target = quiche::Connection> + '_ {
         self.state.to_quiche_conn().await
+    }
+
+    /// The source id of this connection.
+    pub fn source_id(&self) -> &ConnectionId<'static> {
+        &self.state.scid
+    }
+    /// The destination id of this connection.
+    pub fn destination_id(&self) -> &ConnectionId<'static> {
+        &self.state.dcid
     }
 }
 

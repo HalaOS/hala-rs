@@ -390,7 +390,12 @@ impl QuicListenerState {
                 let conn = self.conns.get_mut(&dcid).map(|conn| conn.clone());
 
                 if let Some(conn) = conn {
-                    // TODO: "handle conn closed"
+                    log::trace!(
+                        "Listener write data to conn, scid={:?}, dcid={:?}",
+                        conn.scid,
+                        conn.scid
+                    );
+
                     return conn
                         .write(&mut buf[..write_size], recv_info)
                         .await

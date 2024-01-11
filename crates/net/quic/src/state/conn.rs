@@ -50,6 +50,8 @@ struct RawQuicConnState {
     lastest_outgoing_stream_id: u64,
     /// Incoming stream id buffer.
     incoming: VecDeque<u64>,
+    /// Collection of send fin pin.
+    fin_streams: HashSet<u64>,
 }
 
 impl RawQuicConnState {
@@ -65,6 +67,7 @@ impl RawQuicConnState {
             register_incoming_stream_ids: Default::default(),
             lastest_outgoing_stream_id: first_outgoing_stream_id,
             incoming: Default::default(),
+            fin_streams: Default::default(),
         };
 
         // process initial incoming stream.
@@ -171,13 +174,52 @@ impl QuicConnState {
         Ok(())
     }
 
+    fn handle_fin_stream<Guard>(&self, state: &mut Guard, id: u64) -> bool
+    where
+        Guard: DerefMut<Target = RawQuicConnState>,
+    {
+        if state.fin_streams.contains(&id) {
+            log::trace!(
+                "Read data from fin stream, scid={:?}, dcid={:?}, stream_id={}",
+                self.scid,
+                self.dcid,
+                id
+            );
+
+            let mut buf = vec![0; 1370];
+
+            loop {
+                match state.quiche_conn.stream_recv(id, &mut buf) {
+                    Ok((_, _)) => {}
+                    Err(err) => {
+                        log::trace!(
+                            "Read data from fin stream finished, scid={:?}, dcid={:?}, stream_id={}, err={:?}",
+                            self.scid, self.dcid, id, err,
+                        );
+                        break;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
     fn handle_quic_read_write_successful<'a, Guard>(&self, state: &mut Guard) -> io::Result<()>
     where
         Guard: DerefMut<Target = RawQuicConnState>,
     {
+        self.handle_quic_conn_status(state)?;
+
         let mut events = vec![];
 
         for id in state.quiche_conn.readable() {
+            if self.handle_fin_stream(state, id) {
+                continue;
+            }
+
             events.push(QuicConnStateEvent::StreamReadable(self.scid.clone(), id));
             self.handle_quic_incoming_stream(state, id)?;
         }
@@ -349,6 +391,8 @@ impl QuicConnState {
 
                 self.handle_quic_read_write_successful(&mut state)?;
 
+                self.notify_readable(&mut state)?;
+
                 return Ok(write_size);
             }
             Err(err) => {
@@ -371,8 +415,16 @@ impl QuicConnState {
 
             self.handle_quic_conn_status(&mut state)?;
 
+            if fin && state.fin_streams.contains(&id) {
+                return Err(io::Error::new(io::ErrorKind::BrokenPipe, "Send fin twice"));
+            }
+
             match state.quiche_conn.stream_send(id, buf, fin) {
                 Ok(write_size) => {
+                    if fin {
+                        state.fin_streams.insert(id);
+                    }
+
                     log::trace!(
                         "{:?} stream write, stream_id={}, len={}",
                         self,
@@ -549,6 +601,15 @@ impl QuicConnState {
     ///
     /// This function closes stream by sending len(0) data and fin flag.
     pub async fn close_stream(&self, id: u64) -> io::Result<()> {
+        {
+            let state = self.state.lock().await;
+
+            if state.fin_streams.contains(&id) {
+                log::trace!("Skip send fin packet to close stream, already sent.");
+                return Ok(());
+            }
+        }
+
         self.stream_send(id, b"", true).await.map(|_| ())
     }
 

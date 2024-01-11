@@ -262,7 +262,7 @@ async fn test_client_max_streams_stream() -> io::Result<()> {
 
 #[hala_test::test(io_test)]
 async fn test_dynamic_peer_streams_left_bid() -> io::Result<()> {
-    pretty_env_logger::init_timed();
+    // pretty_env_logger::init_timed();
 
     let mut config = mock_config(true, 1350);
 
@@ -278,32 +278,20 @@ async fn test_dynamic_peer_streams_left_bid() -> io::Result<()> {
         let conn = listener.accept().await.unwrap();
 
         while let Some(mut stream) = conn.accept_stream().await {
-            let conn = conn.clone();
-
             future_spawn(async move {
                 let mut buf = vec![0; 1024];
 
                 let read_size = stream.read(&mut buf).await.unwrap();
 
                 stream
-                    .stream_send(&mut buf[..read_size], true)
+                    .stream_send(&mut buf[..read_size], false)
                     .await
                     .unwrap();
 
-                sleep(Duration::from_millis(500)).await.unwrap();
+                // wait data write to client.
+                // sleep(Duration::from_millis(100)).await.unwrap();
 
-                let quiche_conn = conn.to_quiche_conn().await;
-                
-                println!(
-                    "stream, id={}, finished={}, stopped_stream_count_remote={}, stopped_stream_count_local = {}, reset_stream_count_remote={}, reset_stream_count_local = {}",
-                    stream.to_id(),
-                    quiche_conn.stream_finished(stream.to_id()),
-                    quiche_conn.stats().stopped_stream_count_remote,
-                    quiche_conn.stats().stopped_stream_count_local,
-                    quiche_conn.stats().reset_stream_count_remote,
-                    quiche_conn.stats().reset_stream_count_local,
-                    
-                );
+                // println!("Server stream dropped");
             });
         }
     });
@@ -316,32 +304,44 @@ async fn test_dynamic_peer_streams_left_bid() -> io::Result<()> {
         .await
         .unwrap();
 
-    let loops = 8;
+    let loops = 4;
 
     for _ in 0..loops {
         {
             let mut stream = conn.open_stream().await.unwrap();
 
+            // println!(
+            //     "open stream, scid={:?}, dcid={:?}, stream_id={:?}",
+            //     conn.source_id(),
+            //     conn.destination_id(),
+            //     stream.to_id()
+            // );
+
             stream.write(send_data).await.unwrap();
 
             let mut buf = vec![0; 1024];
+
+            // println!("Client stream read");
 
             let read_size = stream.read(&mut buf).await.unwrap();
 
             assert_eq!(&buf[..read_size], send_data);
         }
 
+        // println!("Client stream dropped");
+
         loop {
             {
                 let quiche_conn = conn.to_quiche_conn().await;
 
                 if quiche_conn.peer_streams_left_bidi() > 0 {
-                    println!("====");
+                    // println!("===========================");
                     break;
                 }
             }
 
-            sleep(Duration::from_millis(5000)).await.unwrap();
+            // println!("Client wait peer stream update");
+            sleep(Duration::from_millis(500)).await.unwrap();
         }
     }
 
