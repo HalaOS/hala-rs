@@ -196,6 +196,12 @@ async fn test_server_max_streams_stream() -> io::Result<()> {
 
     stream.write(send_data).await.unwrap();
 
+    {
+        let quiche_conn = conn.to_quiche_conn().await;
+
+        assert_eq!(quiche_conn.peer_streams_left_bidi(), 1);
+    }
+
     let mut stream = conn.open_stream().await.unwrap();
 
     stream.write(send_data).await.unwrap();
@@ -241,9 +247,103 @@ async fn test_client_max_streams_stream() -> io::Result<()> {
 
     stream.write(send_data).await.unwrap();
 
+    {
+        let quiche_conn = conn.to_quiche_conn().await;
+
+        assert_eq!(quiche_conn.peer_streams_left_bidi(), 0);
+    }
+
     let mut stream = conn.open_stream().await.unwrap();
 
     stream.write(send_data).await.expect_err("StreamLimit");
+
+    Ok(())
+}
+
+#[hala_test::test(io_test)]
+async fn test_dynamic_peer_streams_left_bid() -> io::Result<()> {
+    pretty_env_logger::init_timed();
+
+    let mut config = mock_config(true, 1350);
+
+    config.set_initial_max_streams_bidi(2);
+
+    let listener = QuicListener::bind("127.0.0.1:0", config).unwrap();
+
+    let raddr = listener.local_addr();
+
+    let send_data = b"hello hala os";
+
+    future_spawn(async move {
+        let conn = listener.accept().await.unwrap();
+
+        while let Some(mut stream) = conn.accept_stream().await {
+            let conn = conn.clone();
+
+            future_spawn(async move {
+                let mut buf = vec![0; 1024];
+
+                let read_size = stream.read(&mut buf).await.unwrap();
+
+                stream
+                    .stream_send(&mut buf[..read_size], true)
+                    .await
+                    .unwrap();
+
+                sleep(Duration::from_millis(500)).await.unwrap();
+
+                let quiche_conn = conn.to_quiche_conn().await;
+                
+                println!(
+                    "stream, id={}, finished={}, stopped_stream_count_remote={}, stopped_stream_count_local = {}, reset_stream_count_remote={}, reset_stream_count_local = {}",
+                    stream.to_id(),
+                    quiche_conn.stream_finished(stream.to_id()),
+                    quiche_conn.stats().stopped_stream_count_remote,
+                    quiche_conn.stats().stopped_stream_count_local,
+                    quiche_conn.stats().reset_stream_count_remote,
+                    quiche_conn.stats().reset_stream_count_local,
+                    
+                );
+            });
+        }
+    });
+
+    let mut config = mock_config(false, 1350);
+
+    config.set_initial_max_streams_bidi(2);
+
+    let conn = QuicConn::connect("127.0.0.1:0", raddr, &mut config)
+        .await
+        .unwrap();
+
+    let loops = 8;
+
+    for _ in 0..loops {
+        {
+            let mut stream = conn.open_stream().await.unwrap();
+
+            stream.write(send_data).await.unwrap();
+
+            let mut buf = vec![0; 1024];
+
+            let read_size = stream.read(&mut buf).await.unwrap();
+
+            assert_eq!(&buf[..read_size], send_data);
+        }
+
+        loop {
+            {
+                let quiche_conn = conn.to_quiche_conn().await;
+
+                if quiche_conn.peer_streams_left_bidi() > 0 {
+                    println!("====");
+                    break;
+                }
+            }
+
+            sleep(Duration::from_millis(5000)).await.unwrap();
+        }
+    }
 
     Ok(())
 }

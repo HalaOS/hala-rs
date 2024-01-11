@@ -3,7 +3,7 @@
 use std::{
     collections::{HashSet, VecDeque},
     fmt::Debug,
-    io,
+    io, mem,
     ops::{self, DerefMut},
     sync::Arc,
     time::{Duration, Instant},
@@ -127,7 +127,7 @@ impl QuicConnState {
         Guard: DerefMut<Target = RawQuicConnState>,
     {
         if state.quiche_conn.is_closed() {
-            self.mediator.notify_any(event_map::Reason::Destroy);
+            self.mediator.notify_any(event_map::Reason::Cancel);
 
             return Err(io::Error::new(
                 io::ErrorKind::BrokenPipe,
@@ -192,6 +192,28 @@ impl QuicConnState {
         Ok(())
     }
 
+    fn handle_ping_timout<Guard>(&self, state: &mut Guard) -> io::Result<Option<Duration>>
+    where
+        Guard: DerefMut<Target = RawQuicConnState>,
+    {
+        let elapsed = state.send_ack_eliciting_instant.elapsed();
+        if elapsed > state.ping_timeout {
+            state
+                .quiche_conn
+                .send_ack_eliciting()
+                .map_err(into_io_error)?;
+
+            log::trace!("{:?} ping packet, timout={:?}", self, state.ping_timeout,);
+
+            // reset ping timeout
+            state.send_ack_eliciting_instant = Instant::now();
+
+            return Ok(None);
+        } else {
+            Ok(Some(state.ping_timeout - elapsed))
+        }
+    }
+
     /// ASynchronously read a single QUIC packet to be sent to the peer.
     ///
     /// if there is nothing to read, this function will `pending` until the state changes to
@@ -222,6 +244,29 @@ impl QuicConnState {
                     self.handle_quic_conn_status(&mut state)?;
 
                     let send_timeout = state.quiche_conn.timeout();
+
+                    let ping_timout = self.handle_ping_timout(&mut state)?;
+
+                    if ping_timout.is_none() {
+                        // immediately send ping packet.
+                        continue;
+                    }
+
+                    let send_timeout = if let Some(send_timout) = send_timeout {
+                        let ping_timeout = ping_timout.unwrap();
+                        if send_timeout > ping_timout {
+                            Some(ping_timeout)
+                        } else {
+                            Some(send_timout)
+                        }
+                    } else {
+                        ping_timout
+                    };
+
+                    assert!(
+                        !ping_timout.as_ref().unwrap().is_zero(),
+                        "send_timeout can't be zero"
+                    );
 
                     log::trace!(
                         "{:?} read data pending, timeout={:?}, is_established={}",
@@ -260,6 +305,9 @@ impl QuicConnState {
                                     self,
                                     state.ping_timeout,
                                 );
+
+                                // reset ping timeout
+                                state.send_ack_eliciting_instant = Instant::now();
 
                                 continue;
                             }
@@ -574,6 +622,8 @@ impl Drop for QuicConnState {
             let this = self.clone();
             future_spawn(async move {
                 this.close(false, 0, b"raii drop").await.unwrap();
+                // broke recursively drop
+                mem::forget(this);
             });
         }
     }

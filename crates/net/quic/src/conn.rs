@@ -184,7 +184,7 @@ impl Drop for QuicStream {
             let stream_id = self.stream_id;
 
             future_spawn(async move {
-                match conn.state.close(false, 0, b"").await {
+                match conn.state.close_stream(stream_id).await {
                     Ok(_) => {
                         log::info!(
                             "quic conn, scid={:?}, dcide={:?}, stream_id={}, closed successfully",
@@ -217,6 +217,10 @@ impl QuicStream {
     /// Recv data from peer over this stream. if successful, returns read data length and fin flag
     pub async fn stream_recv(&self, buf: &mut [u8]) -> io::Result<(usize, bool)> {
         self.conn.state.stream_recv(self.stream_id, buf).await
+    }
+
+    pub fn to_id(&self) -> u64 {
+        self.stream_id
     }
 }
 

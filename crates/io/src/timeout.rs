@@ -19,10 +19,7 @@ where
                 }
             }
         } else {
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "Timeout with input zero",
-            ));
+            fut.await
         }
     } else {
         fut.await

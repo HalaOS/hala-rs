@@ -507,25 +507,27 @@ impl QuicListenerState {
     }
 
     pub async fn read(&self) -> io::Result<(BytesMut, SendInfo)> {
-        match self.conns_read.wait().await {
-            QuicListnerConnRead::Err(conn, err) => {
-                log::trace!(
-                    "QuicListener, read data from conn error. scid={:?}, dcid={:?}, err={}",
-                    conn.scid,
-                    conn.dcid,
-                    err
-                );
+        loop {
+            match self.conns_read.wait().await {
+                QuicListnerConnRead::Err(conn, err) => {
+                    log::trace!(
+                        "QuicListener, read data from conn error. scid={:?}, dcid={:?}, err={}",
+                        conn.scid,
+                        conn.dcid,
+                        err
+                    );
 
-                // remove broken conn
-                self.conns.remove(&conn.scid);
+                    // remove broken conn
+                    self.conns.remove(&conn.scid);
 
-                return Err(err);
-            }
-            QuicListnerConnRead::Ok(conn, buf, send_info) => {
-                // push conn into batch poller again.
-                self.batch_read(conn);
+                    continue;
+                }
+                QuicListnerConnRead::Ok(conn, buf, send_info) => {
+                    // push conn into batch poller again.
+                    self.batch_read(conn);
 
-                return Ok((buf, send_info));
+                    return Ok((buf, send_info));
+                }
             }
         }
     }
