@@ -562,3 +562,52 @@ async fn verify_client_cert() -> io::Result<()> {
 
     Ok(())
 }
+
+#[hala_test::test(io_test)]
+async fn stream_normal_closed() -> io::Result<()> {
+    let mut mock = MockQuic::new().await;
+
+    let client_conn = mock.client.clone();
+
+    let client_stream_id = client_conn.open_stream().await.unwrap();
+
+    client_conn
+        .stream_send(client_stream_id, b"hello", false)
+        .await
+        .unwrap();
+
+    mock.send_to_server().await.unwrap();
+
+    let server_conn = mock
+        .server_conn
+        .clone()
+        .expect("Server connection established");
+
+    let server_stream_id = server_conn.accept().await.unwrap();
+
+    server_conn
+        .stream_send(server_stream_id, b"", true)
+        .await
+        .unwrap();
+
+    mock.send_to_client().await.unwrap();
+
+    client_conn
+        .stream_send(client_stream_id, b"", true)
+        .await
+        .unwrap();
+
+    assert!(client_conn
+        .to_quiche_conn()
+        .await
+        .stream_finished(client_stream_id));
+
+    mock.send_to_server().await.unwrap();
+
+    assert!(!server_conn
+        .to_quiche_conn()
+        .await
+        .stream_finished(server_stream_id));
+
+    Ok(())
+}
