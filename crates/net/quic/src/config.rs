@@ -28,7 +28,7 @@ impl Config {
         quiche_config.set_max_send_udp_payload_size(max_datagram_size);
 
         Ok(Self {
-            ping_timeout: Duration::from_secs(5),
+            ping_timeout: Duration::from_secs(2),
             quiche_config,
             max_datagram_size: 1350,
         })

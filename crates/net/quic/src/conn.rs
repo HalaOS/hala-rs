@@ -219,7 +219,7 @@ impl Drop for QuicStream {
 
 impl QuicStream {
     /// Send data to peer over this stream.
-    pub async fn stream_send(&self, buf: &mut [u8], fin: bool) -> io::Result<usize> {
+    pub async fn stream_send(&self, buf: &[u8], fin: bool) -> io::Result<usize> {
         self.conn.state.stream_send(self.stream_id, buf, fin).await
     }
 

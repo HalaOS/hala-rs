@@ -262,7 +262,23 @@ async fn test_client_max_streams_stream() -> io::Result<()> {
 
 #[hala_test::test(io_test)]
 async fn test_dynamic_peer_streams_left_bid() -> io::Result<()> {
-    // pretty_env_logger::init_timed();
+    pretty_env_logger::formatted_timed_builder()
+        .filter_level(log::LevelFilter::Trace)
+        .format(|buf, record| {
+            use std::io::Write;
+
+            let ts = buf.timestamp_micros();
+            writeln!(
+                buf,
+                "{}: {:?}: {}: {}",
+                ts,
+                std::thread::current().id(),
+                buf.default_level_style(record.level())
+                    .value(record.level()),
+                record.args()
+            )
+        })
+        .init();
 
     let mut config = mock_config(true, 1350);
 
@@ -291,7 +307,7 @@ async fn test_dynamic_peer_streams_left_bid() -> io::Result<()> {
                 // wait data write to client.
                 // sleep(Duration::from_millis(100)).await.unwrap();
 
-                // println!("Server stream dropped");
+                log::info!("Server stream dropped");
             });
         }
     });
@@ -304,43 +320,45 @@ async fn test_dynamic_peer_streams_left_bid() -> io::Result<()> {
         .await
         .unwrap();
 
-    let loops = 4;
+    let loops = 10;
 
     for _ in 0..loops {
         {
             let mut stream = conn.open_stream().await.unwrap();
 
-            // println!(
-            //     "open stream, scid={:?}, dcid={:?}, stream_id={:?}",
-            //     conn.source_id(),
-            //     conn.destination_id(),
-            //     stream.to_id()
-            // );
+            log::info!(
+                "open stream, scid={:?}, dcid={:?}, stream_id={:?}",
+                conn.source_id(),
+                conn.destination_id(),
+                stream.to_id()
+            );
 
-            stream.write(send_data).await.unwrap();
+            stream.stream_send(send_data, false).await.unwrap();
 
             let mut buf = vec![0; 1024];
 
-            // println!("Client stream read");
+            log::info!("Client stream read");
 
             let read_size = stream.read(&mut buf).await.unwrap();
 
             assert_eq!(&buf[..read_size], send_data);
         }
 
-        // println!("Client stream dropped");
+        log::info!("Client stream dropped");
 
         loop {
             {
                 let quiche_conn = conn.to_quiche_conn().await;
 
+                assert!(!quiche_conn.is_closed());
+
                 if quiche_conn.peer_streams_left_bidi() > 0 {
-                    // println!("===========================");
+                    log::info!("===========================");
                     break;
                 }
             }
 
-            // println!("Client wait peer stream update");
+            log::info!("Client wait peer stream update");
             sleep(Duration::from_millis(500)).await.unwrap();
         }
     }

@@ -393,7 +393,7 @@ impl QuicListenerState {
                     log::trace!(
                         "Listener write data to conn, scid={:?}, dcid={:?}",
                         conn.scid,
-                        conn.scid
+                        conn.dcid
                     );
 
                     return conn
