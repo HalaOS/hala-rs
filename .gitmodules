@@ -1,0 +1,3 @@
+[submodule "external/quiche"]
+	path = external/quiche
+	url = https://github.com/HalaOS/quiche.git
