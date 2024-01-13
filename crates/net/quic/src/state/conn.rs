@@ -242,6 +242,8 @@ impl QuicConnState {
 
             self.handle_quic_conn_status(&mut state)?;
 
+            log::trace!("{:?} read data", self,);
+
             match state.quiche_conn.send(buf) {
                 Ok((send_size, send_info)) => {
                     log::trace!(
@@ -357,6 +359,8 @@ impl QuicConnState {
     /// Asynchronous write new data to state machine.
     pub async fn write(&self, buf: &mut [u8], recv_info: RecvInfo) -> io::Result<usize> {
         let mut state = self.state.lock().await;
+
+        log::trace!("{:?} write data", self,);
 
         match state.quiche_conn.recv(buf, recv_info) {
             Ok(write_size) => {
@@ -601,7 +605,7 @@ impl QuicConnState {
             {
                 if self.to_quiche_conn().await.stream_finished(id) && fin {
                     log::trace!("{:?} , stream_id={}, fin={} ,stream closed", self, id, fin,);
-                    break;
+                    return Ok(());
                 }
             }
 
@@ -616,8 +620,6 @@ impl QuicConnState {
 
             (_, fin) = self.stream_recv(id, &mut buf).await?;
         }
-
-        Ok(())
     }
 
     /// Shuts down reading or writing from/to the specified stream.

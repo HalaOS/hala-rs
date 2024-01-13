@@ -270,11 +270,12 @@ async fn test_dynamic_peer_streams_left_bid() -> io::Result<()> {
             let ts = buf.timestamp_micros();
             writeln!(
                 buf,
-                "{}: {:?}: {}: {}",
+                "{}: {:?}: {} {}: {}",
                 ts,
                 std::thread::current().id(),
                 buf.default_level_style(record.level())
                     .value(record.level()),
+                record.target(),
                 record.args()
             )
         })
@@ -320,7 +321,7 @@ async fn test_dynamic_peer_streams_left_bid() -> io::Result<()> {
         .await
         .unwrap();
 
-    let loops = 10;
+    let loops = 100;
 
     for _ in 0..loops {
         {
