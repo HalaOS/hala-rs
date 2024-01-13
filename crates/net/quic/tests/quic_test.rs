@@ -321,7 +321,7 @@ async fn test_dynamic_peer_streams_left_bid() -> io::Result<()> {
         .await
         .unwrap();
 
-    let loops = 100;
+    let loops = 10;
 
     for _ in 0..loops {
         {

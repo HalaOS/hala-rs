@@ -10,7 +10,7 @@ use std::{
 };
 
 use hala_future::{
-    event_map::{self, EventMap},
+    event_map::{self, EventMap, Reason},
     executor::future_spawn,
 };
 use hala_io::timeout;
@@ -25,6 +25,9 @@ use crate::errors::into_io_error;
 pub enum QuicConnStateEvent {
     /// This event notify listener that this state machine is now readable.
     Readable(ConnectionId<'static>),
+
+    /// This event notify listener that this state machine is now writable.
+    Writable(ConnectionId<'static>),
 
     /// This event notify listener that one stream of this state machine is now readable.
     StreamReadable(ConnectionId<'static>, u64),
@@ -52,8 +55,6 @@ struct RawQuicConnState {
     incoming: VecDeque<u64>,
     /// A collection of stream ids for streams that have been sent fin MSG.
     streams_sent_fin: HashSet<u64>,
-    /// A collection of stream ids for streams that have been recv fin MSG.
-    streams_recv_fin: HashSet<u64>,
 }
 
 impl RawQuicConnState {
@@ -70,7 +71,6 @@ impl RawQuicConnState {
             lastest_outgoing_stream_id: first_outgoing_stream_id,
             incoming: Default::default(),
             streams_sent_fin: Default::default(),
-            streams_recv_fin: Default::default(),
         };
 
         // process initial incoming stream.
@@ -253,6 +253,12 @@ impl QuicConnState {
                         send_info
                     );
 
+                    // clear sent fin flag.
+                    state.streams_sent_fin.clear();
+
+                    self.mediator
+                        .notify_one(QuicConnStateEvent::Readable(self.scid.clone()), Reason::On);
+
                     self.handle_quic_read_write_successful(&mut state)?;
 
                     return Ok((send_size, send_info));
@@ -358,26 +364,51 @@ impl QuicConnState {
 
     /// Asynchronous write new data to state machine.
     pub async fn write(&self, buf: &mut [u8], recv_info: RecvInfo) -> io::Result<usize> {
-        let mut state = self.state.lock().await;
+        let event = QuicConnStateEvent::Readable(self.scid.clone());
 
-        log::trace!("{:?} write data", self,);
+        loop {
+            let mut state = self.state.lock().await;
 
-        match state.quiche_conn.recv(buf, recv_info) {
-            Ok(write_size) => {
-                log::trace!("{:?} write data success, len={}", self, write_size);
+            log::trace!("{:?} write data", self,);
 
-                self.handle_quic_read_write_successful(&mut state)?;
+            if !state.streams_sent_fin.is_empty() {
+                log::trace!(
+                    "{:?} write data is wait for streams sending pin packets.",
+                    self,
+                );
 
-                self.notify_readable(&mut state)?;
+                match self.mediator.wait(event.clone(), state).await {
+                    Ok(_) => {
+                        log::trace!("{:?} wakeup to write data", self);
 
-                return Ok(write_size);
+                        // try again.
+                        continue;
+                    }
+                    Err(err) => {
+                        log::error!("{:?} wakeup to write data failed, err={}", self, err);
+
+                        return Err(into_io_error(err));
+                    }
+                }
             }
-            Err(err) => {
-                log::trace!("{:?} write data failed, err={}", self, err);
 
-                self.handle_quic_conn_status(&mut state)?;
+            match state.quiche_conn.recv(buf, recv_info) {
+                Ok(write_size) => {
+                    log::trace!("{:?} write data success, len={}", self, write_size);
 
-                return Err(into_io_error(err));
+                    self.handle_quic_read_write_successful(&mut state)?;
+
+                    self.notify_readable(&mut state)?;
+
+                    return Ok(write_size);
+                }
+                Err(err) => {
+                    log::trace!("{:?} write data failed, err={}", self, err);
+
+                    self.handle_quic_conn_status(&mut state)?;
+
+                    return Err(into_io_error(err));
+                }
             }
         }
     }
@@ -392,16 +423,8 @@ impl QuicConnState {
 
             self.handle_quic_conn_status(&mut state)?;
 
-            // if fin && state.streams_sent_fin.contains(&id) {
-            //     return Err(io::Error::new(io::ErrorKind::BrokenPipe, "Send fin twice"));
-            // }
-
             match state.quiche_conn.stream_send(id, buf, fin) {
                 Ok(write_size) => {
-                    if fin {
-                        state.streams_sent_fin.insert(id);
-                    }
-
                     log::trace!(
                         "{:?} stream write, stream_id={}, len={}, fin={}",
                         self,
@@ -411,6 +434,12 @@ impl QuicConnState {
                     );
 
                     self.notify_readable(&mut state)?;
+
+                    // skip quiche crate sent pin bug.
+                    if fin && buf.is_empty() {
+                        state.streams_sent_fin.insert(id);
+                        return Ok(0);
+                    }
 
                     return Ok(write_size);
                 }
@@ -480,10 +509,6 @@ impl QuicConnState {
                         read_size,
                         fin,
                     );
-
-                    if fin {
-                        state.streams_recv_fin.insert(id);
-                    }
 
                     self.notify_readable(&mut state)?;
 

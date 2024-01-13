@@ -115,6 +115,7 @@ where
             waker.wake(reason);
             true
         } else {
+            log::trace!("{:?} wakeup -- not found", event.borrow());
             false
         }
     }
@@ -184,8 +185,6 @@ where
             );
 
             G::Locker::unlock(guard);
-
-            return Poll::Pending;
         }
 
         // Check reason to avoid unexpected `poll` calling.
