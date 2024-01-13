@@ -20,7 +20,7 @@ pub trait TokenGenerator {
 impl TokenGenerator for Token {}
 
 /// File description variants are used by the `fd_open` function to open file [`Handle`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Description {
     /// File description for generating filesystem `File`
     File,
@@ -39,7 +39,7 @@ pub enum Description {
 }
 
 /// File description handle. created by implementator.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Handle {
     /// `Token` associated with this handle object
     pub token: Token,
