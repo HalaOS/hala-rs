@@ -55,8 +55,44 @@ struct RawQuicConnState {
     incoming: VecDeque<u64>,
     /// The queue of stream ids for dropping stream.
     dropping_stream_queue: VecDeque<u64>,
-    /// The collection of stream ids of waiting peer send fin.
-    half_closed_streams: VecDeque<u64>,
+    /// The collection of half closed stream.
+    half_closed_streams: VecDeque<HalfClosedStream>,
+}
+
+#[derive(Clone, Copy)]
+struct HalfClosedStream {
+    stream_id: u64,
+    start_instant: Instant,
+}
+
+impl From<u64> for HalfClosedStream {
+    fn from(value: u64) -> Self {
+        Self::new(value)
+    }
+}
+
+impl Debug for HalfClosedStream {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "half_close_stream={:}, elapsed={:?}",
+            self.stream_id,
+            self.start_instant.elapsed()
+        )
+    }
+}
+
+impl HalfClosedStream {
+    fn new(stream_id: u64) -> Self {
+        Self {
+            stream_id,
+            start_instant: Instant::now(),
+        }
+    }
+
+    fn is_timeout(&self, timeout: Duration) -> bool {
+        self.start_instant.elapsed() >= timeout
+    }
 }
 
 impl RawQuicConnState {
@@ -256,7 +292,7 @@ impl QuicConnState {
             // The quiche may remove closed stream when invoke stream_recv,
             // this will cause the fin frame to fail to send.
 
-            state.half_closed_streams.push_back(stream_id);
+            state.half_closed_streams.push_back(stream_id.into());
 
             log::trace!("{:?}, stream_id={}, half closed", self, stream_id);
         }
@@ -264,49 +300,51 @@ impl QuicConnState {
         Ok(())
     }
 
-    fn handle_half_close_stream_recv<Guard>(
+    fn handle_half_closed_stream_resp<Guard>(
         &self,
         state: &mut Guard,
-        stream_id: u64,
+        stream: HalfClosedStream,
         buf: &mut [u8],
     ) -> bool
     where
         Guard: DerefMut<Target = RawQuicConnState>,
     {
-        match state.quiche_conn.stream_recv(stream_id, buf) {
+        // using ping timeout as stream half close timeout.
+        if stream.is_timeout(state.ping_timeout) {
+            _ = state
+                .quiche_conn
+                .stream_shutdown(stream.stream_id, quiche::Shutdown::Read, 0);
+
+            log::trace!("{:?} {:?}, timeout and force closed", self, stream);
+
+            return true;
+        }
+
+        match state.quiche_conn.stream_recv(stream.stream_id, buf) {
             Ok((read_size, fin)) => {
                 if !fin {
-                    log::trace!(
-                        "{:?}, stream_id={}, recv_len={}, half closed",
-                        self,
-                        stream_id,
-                        read_size
-                    );
+                    log::trace!("{:?} {:?}, recv_len={}, pending", self, stream, read_size);
 
                     return false;
                 } else {
-                    log::trace!("{:?}, stream_id={} closed ", self, stream_id);
+                    log::trace!("{:?} {:?}, recv_len={}, closed", self, stream, read_size);
 
                     return true;
                 }
             }
             Err(quiche::Error::Done) => {
-                log::trace!("{:?}, stream_id={}, half closed", self, stream_id,);
+                log::trace!("{:?} {:?}, pending", self, stream);
 
                 return false;
             }
             Err(err) => {
-                log::trace!(
-                    "{:?}, stream_id={} closed with error, err={}",
-                    self,
-                    stream_id,
-                    err
-                );
+                log::trace!("{:?} {:?}, closed with error, err={}", self, stream, err);
 
                 return true;
             }
         }
     }
+
     fn handle_half_closed_streams<Guard>(&self, state: &mut Guard) -> io::Result<()>
     where
         Guard: DerefMut<Target = RawQuicConnState>,
@@ -316,7 +354,7 @@ impl QuicConnState {
         let mut remaining = vec![];
 
         while let Some(stream_id) = state.half_closed_streams.pop_front() {
-            if !self.handle_half_close_stream_recv(state, stream_id, &mut buf) {
+            if !self.handle_half_closed_stream_resp(state, stream_id, &mut buf) {
                 remaining.push(stream_id);
             }
         }
@@ -667,7 +705,7 @@ impl QuicConnState {
         }
     }
 
-    /// Open new stream to communicate with remote peer.
+    /// Open new stream to communicate with peer.
     pub async fn open_stream(&self) -> io::Result<u64> {
         let mut state = self.state.lock().await;
 

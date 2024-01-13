@@ -140,7 +140,7 @@ const WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(
 fn new_batcher_waker<Fut>(future_id: usize, batch_future: FutureBatcher<Fut>) -> Waker {
     let boxed = Box::new(BatcherWaker {
         future_id,
-        ready_futures: batch_future.ready_futures,
+        ready_futures: batch_future.wakeup_futures,
         raw_waker: batch_future.raw_waker,
     });
 
@@ -159,7 +159,7 @@ pub struct FutureBatcher<R> {
     /// Current set of pending futures
     pending_futures: Arc<PendingFutures<R>>,
     /// Current set of ready futures
-    ready_futures: Arc<Queue<usize>>,
+    wakeup_futures: Arc<Queue<usize>>,
     /// Raw batch future waker
     raw_waker: Arc<WakerHost>,
 
@@ -174,7 +174,7 @@ impl<R> Clone for FutureBatcher<R> {
         Self {
             idgen: self.idgen.clone(),
             pending_futures: self.pending_futures.clone(),
-            ready_futures: self.ready_futures.clone(),
+            wakeup_futures: self.wakeup_futures.clone(),
             raw_waker: self.raw_waker.clone(),
             await_counter: self.await_counter.clone(),
         }
@@ -192,7 +192,7 @@ impl<R> FutureBatcher<R> {
         Self {
             idgen: Default::default(),
             pending_futures: Default::default(),
-            ready_futures: Default::default(),
+            wakeup_futures: Default::default(),
             raw_waker: Default::default(),
             await_counter: Default::default(),
         }
@@ -206,7 +206,7 @@ impl<R> FutureBatcher<R> {
         let id = self.idgen.fetch_add(1, Ordering::AcqRel);
 
         self.pending_futures.insert(id, Box::pin(fut));
-        self.ready_futures.push(id);
+        self.wakeup_futures.push(id);
 
         self.raw_waker.wake();
 
@@ -255,20 +255,26 @@ impl<R> Future for Wait<R> {
         // save system waker to prepare wakeup self again.
         self.raw_waker.add_waker(cx.waker().clone());
 
-        while let Some(ready) = self.ready_futures.pop() {
+        while let Some(future_id) = self.wakeup_futures.pop() {
             // remove future from pending mapping.
-            let mut future = self
-                .pending_futures
-                .remove(ready)
-                .expect("Calling BatchFuture.await in multi-threads is not allowed");
+            let future = self.pending_futures.remove(future_id);
+
+            // The batcher waker may be register more than once.
+            // thus it is possible that a future has been awakened more than once,
+            // and that previous awakening processing has deleted that future.
+            if future.is_none() {
+                continue;
+            }
+
+            let mut future = future.unwrap();
 
             // Create a new wrapped waker.
-            let waker = new_batcher_waker(ready, self.clone());
+            let waker = new_batcher_waker(future_id, self.clone());
 
             // poll if
             match future.poll_unpin(&mut Context::from_waker(&waker)) {
                 std::task::Poll::Pending => {
-                    self.pending_futures.insert(ready, future);
+                    self.pending_futures.insert(future_id, future);
 
                     continue;
                 }

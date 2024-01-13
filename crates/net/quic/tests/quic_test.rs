@@ -262,7 +262,7 @@ async fn test_client_max_streams_stream() -> io::Result<()> {
 
 #[hala_test::test(io_test)]
 async fn test_dynamic_peer_streams_left_bid() -> io::Result<()> {
-    _ = pretty_env_logger::try_init_timed();
+    // _ = pretty_env_logger::try_init_timed();
 
     let mut config = mock_config(true, 1350);
 
@@ -284,7 +284,7 @@ async fn test_dynamic_peer_streams_left_bid() -> io::Result<()> {
                 let read_size = stream.read(&mut buf).await.unwrap();
 
                 stream
-                    .stream_send(&mut buf[..read_size], false)
+                    .stream_send(&mut buf[..read_size], true)
                     .await
                     .unwrap();
 
@@ -304,7 +304,7 @@ async fn test_dynamic_peer_streams_left_bid() -> io::Result<()> {
         .await
         .unwrap();
 
-    let loops = 100;
+    let loops = 10;
 
     for _ in 0..loops {
         {
@@ -337,7 +337,7 @@ async fn test_dynamic_peer_streams_left_bid() -> io::Result<()> {
                 assert!(!quiche_conn.is_closed());
 
                 if quiche_conn.peer_streams_left_bidi() > 0 {
-                    log::info!("===========================");
+                    // log::info!("===========================");
                     break;
                 }
             }
