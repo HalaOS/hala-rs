@@ -10,7 +10,7 @@ use std::{
 };
 
 use hala_future::{
-    event_map::{self, EventMap, Reason},
+    event_map::{self, EventMap},
     executor::future_spawn,
 };
 use hala_io::timeout;
@@ -53,8 +53,10 @@ struct RawQuicConnState {
     lastest_outgoing_stream_id: u64,
     /// Incoming stream id buffer.
     incoming: VecDeque<u64>,
-    /// A collection of stream ids for streams that have been sent fin MSG.
-    streams_sent_fin: HashSet<u64>,
+    /// The queue of stream ids for dropping stream.
+    dropping_stream_queue: VecDeque<u64>,
+    /// The collection of stream ids of waiting peer send fin.
+    half_closed_streams: VecDeque<u64>,
 }
 
 impl RawQuicConnState {
@@ -70,7 +72,8 @@ impl RawQuicConnState {
             register_incoming_stream_ids: Default::default(),
             lastest_outgoing_stream_id: first_outgoing_stream_id,
             incoming: Default::default(),
-            streams_sent_fin: Default::default(),
+            dropping_stream_queue: Default::default(),
+            half_closed_streams: Default::default(),
         };
 
         // process initial incoming stream.
@@ -186,6 +189,8 @@ impl QuicConnState {
     {
         self.handle_quic_conn_status(state)?;
 
+        self.handle_half_closed_streams(state)?;
+
         let mut events = vec![];
 
         for id in state.quiche_conn.readable() {
@@ -194,10 +199,6 @@ impl QuicConnState {
         }
 
         for id in state.quiche_conn.writable() {
-            // if self.handle_fin_stream_send(state, id) {
-            //     continue;
-            // }
-
             events.push(QuicConnStateEvent::StreamWritable(self.scid.clone(), id));
             self.handle_quic_incoming_stream(state, id)?;
         }
@@ -229,6 +230,104 @@ impl QuicConnState {
         }
     }
 
+    fn handle_dropping_streams<Guard>(&self, state: &mut Guard) -> io::Result<()>
+    where
+        Guard: DerefMut<Target = RawQuicConnState>,
+    {
+        while let Some(stream_id) = state.dropping_stream_queue.pop_front() {
+            log::trace!("{:?} handle dropping stream, stream_id={}", self, stream_id);
+
+            match state.quiche_conn.stream_send(stream_id, b"", true) {
+                Ok(_) => {
+                    log::trace!("{:?} send fin successfully, stream_id={}", self, stream_id);
+                }
+                Err(err) => {
+                    log::trace!(
+                        "{:?} send fin failed, stream_id={}, err={}",
+                        self,
+                        stream_id,
+                        err
+                    );
+                }
+            }
+
+            // Warning!!: Stream data reading is prohibited here:
+            //
+            // The quiche may remove closed stream when invoke stream_recv,
+            // this will cause the fin frame to fail to send.
+
+            state.half_closed_streams.push_back(stream_id);
+
+            log::trace!("{:?}, stream_id={}, half closed", self, stream_id);
+        }
+
+        Ok(())
+    }
+
+    fn handle_half_close_stream_recv<Guard>(
+        &self,
+        state: &mut Guard,
+        stream_id: u64,
+        buf: &mut [u8],
+    ) -> bool
+    where
+        Guard: DerefMut<Target = RawQuicConnState>,
+    {
+        match state.quiche_conn.stream_recv(stream_id, buf) {
+            Ok((read_size, fin)) => {
+                if !fin {
+                    log::trace!(
+                        "{:?}, stream_id={}, recv_len={}, half closed",
+                        self,
+                        stream_id,
+                        read_size
+                    );
+
+                    return false;
+                } else {
+                    log::trace!("{:?}, stream_id={} closed ", self, stream_id);
+
+                    return true;
+                }
+            }
+            Err(quiche::Error::Done) => {
+                log::trace!("{:?}, stream_id={}, half closed", self, stream_id,);
+
+                return false;
+            }
+            Err(err) => {
+                log::trace!(
+                    "{:?}, stream_id={} closed with error, err={}",
+                    self,
+                    stream_id,
+                    err
+                );
+
+                return true;
+            }
+        }
+    }
+    fn handle_half_closed_streams<Guard>(&self, state: &mut Guard) -> io::Result<()>
+    where
+        Guard: DerefMut<Target = RawQuicConnState>,
+    {
+        let mut buf = vec![0; state.quiche_conn.send_quantum()];
+
+        let mut remaining = vec![];
+
+        while let Some(stream_id) = state.half_closed_streams.pop_front() {
+            if !self.handle_half_close_stream_recv(state, stream_id, &mut buf) {
+                remaining.push(stream_id);
+            }
+        }
+
+        for stream_id in remaining {
+            state.half_closed_streams.push_back(stream_id);
+        }
+
+        Ok(())
+    }
+
     /// ASynchronously read a single QUIC packet to be sent to the peer.
     ///
     /// if there is nothing to read, this function will `pending` until the state changes to
@@ -240,7 +339,7 @@ impl QuicConnState {
             // Asynchronously lock the [`QuicConnState`]
             let mut state = self.state.lock().await;
 
-            self.handle_quic_conn_status(&mut state)?;
+            self.handle_dropping_streams(&mut state)?;
 
             log::trace!("{:?} read data", self,);
 
@@ -252,12 +351,6 @@ impl QuicConnState {
                         send_size,
                         send_info
                     );
-
-                    // clear sent fin flag.
-                    state.streams_sent_fin.clear();
-
-                    self.mediator
-                        .notify_one(QuicConnStateEvent::Readable(self.scid.clone()), Reason::On);
 
                     self.handle_quic_read_write_successful(&mut state)?;
 
@@ -364,53 +457,29 @@ impl QuicConnState {
 
     /// Asynchronous write new data to state machine.
     pub async fn write(&self, buf: &mut [u8], recv_info: RecvInfo) -> io::Result<usize> {
-        let event = QuicConnStateEvent::Readable(self.scid.clone());
+        // let event = QuicConnStateEvent::Readable(self.scid.clone());
 
-        loop {
-            let mut state = self.state.lock().await;
+        let mut state = self.state.lock().await;
 
-            log::trace!("{:?} write data", self,);
+        match state.quiche_conn.recv(buf, recv_info) {
+            Ok(write_size) => {
+                log::trace!("{:?} write data success, len={}", self, write_size);
 
-            if !state.streams_sent_fin.is_empty() {
-                log::trace!(
-                    "{:?} write data is wait for streams sending pin packets.",
-                    self,
-                );
+                self.handle_quic_read_write_successful(&mut state)?;
 
-                match self.mediator.wait(event.clone(), state).await {
-                    Ok(_) => {
-                        log::trace!("{:?} wakeup to write data", self);
+                self.notify_readable(&mut state)?;
 
-                        // try again.
-                        continue;
-                    }
-                    Err(err) => {
-                        log::error!("{:?} wakeup to write data failed, err={}", self, err);
-
-                        return Err(into_io_error(err));
-                    }
-                }
+                return Ok(write_size);
             }
+            Err(err) => {
+                log::trace!("{:?} write data failed, err={}", self, err);
 
-            match state.quiche_conn.recv(buf, recv_info) {
-                Ok(write_size) => {
-                    log::trace!("{:?} write data success, len={}", self, write_size);
+                self.handle_quic_conn_status(&mut state)?;
 
-                    self.handle_quic_read_write_successful(&mut state)?;
-
-                    self.notify_readable(&mut state)?;
-
-                    return Ok(write_size);
-                }
-                Err(err) => {
-                    log::trace!("{:?} write data failed, err={}", self, err);
-
-                    self.handle_quic_conn_status(&mut state)?;
-
-                    return Err(into_io_error(err));
-                }
+                return Err(into_io_error(err));
             }
         }
+        // }
     }
 
     /// Writes data to stream.
@@ -434,12 +503,6 @@ impl QuicConnState {
                     );
 
                     self.notify_readable(&mut state)?;
-
-                    // skip quiche crate sent pin bug.
-                    if fin && buf.is_empty() {
-                        state.streams_sent_fin.insert(id);
-                        return Ok(0);
-                    }
 
                     return Ok(write_size);
                 }
@@ -620,31 +683,13 @@ impl QuicConnState {
     ///
     /// This function closes stream by sending len(0) data and fin flag.
     pub async fn close_stream(&self, id: u64) -> io::Result<()> {
-        log::trace!("{:?}, stream_id={}, try send fin to close stream", self, id);
+        let mut state = self.state.lock().await;
 
-        assert_eq!(self.stream_send(id, b"", true).await?, 0);
+        state.dropping_stream_queue.push_back(id);
 
-        let mut fin = false;
+        self.notify_readable(&mut state)?;
 
-        loop {
-            {
-                if self.to_quiche_conn().await.stream_finished(id) && fin {
-                    log::trace!("{:?} , stream_id={}, fin={} ,stream closed", self, id, fin,);
-                    return Ok(());
-                }
-            }
-
-            log::trace!(
-                "{:?},  stream_id={}, fin={}, stream half closed(send_closed)",
-                self,
-                id,
-                fin
-            );
-
-            let mut buf = vec![0; 1370];
-
-            (_, fin) = self.stream_recv(id, &mut buf).await?;
-        }
+        Ok(())
     }
 
     /// Shuts down reading or writing from/to the specified stream.

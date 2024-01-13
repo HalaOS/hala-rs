@@ -262,24 +262,7 @@ async fn test_client_max_streams_stream() -> io::Result<()> {
 
 #[hala_test::test(io_test)]
 async fn test_dynamic_peer_streams_left_bid() -> io::Result<()> {
-    pretty_env_logger::formatted_timed_builder()
-        .filter_level(log::LevelFilter::Trace)
-        .format(|buf, record| {
-            use std::io::Write;
-
-            let ts = buf.timestamp_micros();
-            writeln!(
-                buf,
-                "{}: {:?}: {} {}: {}",
-                ts,
-                std::thread::current().id(),
-                buf.default_level_style(record.level())
-                    .value(record.level()),
-                record.target(),
-                record.args()
-            )
-        })
-        .init();
+    _ = pretty_env_logger::try_init_timed();
 
     let mut config = mock_config(true, 1350);
 
@@ -321,7 +304,7 @@ async fn test_dynamic_peer_streams_left_bid() -> io::Result<()> {
         .await
         .unwrap();
 
-    let loops = 10;
+    let loops = 100;
 
     for _ in 0..loops {
         {

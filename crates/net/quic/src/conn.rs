@@ -193,25 +193,7 @@ impl Drop for QuicStream {
             let stream_id = self.stream_id;
 
             future_spawn(async move {
-                match conn.state.close_stream(stream_id).await {
-                    Ok(_) => {
-                        log::info!(
-                            "quic conn, scid={:?}, dcide={:?}, stream_id={}, closed successfully",
-                            conn.state.scid,
-                            conn.state.dcid,
-                            stream_id
-                        );
-                    }
-                    Err(err) => {
-                        log::info!(
-                            "quic conn, scid={:?}, dcide={:?}, stream_id={} closed with error, {}",
-                            conn.state.scid,
-                            conn.state.dcid,
-                            stream_id,
-                            err
-                        );
-                    }
-                }
+                conn.state.close_stream(stream_id).await.unwrap();
             });
         }
     }
