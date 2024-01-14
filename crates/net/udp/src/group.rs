@@ -34,7 +34,7 @@ struct BatchWrite {
 }
 
 /// The oatg information for transfered udp data.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct PathInfo {
     /// The packet from udp endpoint.
     pub from: SocketAddr,
@@ -199,6 +199,10 @@ impl UdpGroup {
 
             let (read_size, raddr) = cmd_resp.try_into_recv_from().unwrap();
 
+            if read_size == 1 {
+                log::trace!("hello");
+            }
+
             return Poll::Ready(BatchRead {
                 handle,
                 result: Ok((
@@ -271,8 +275,8 @@ impl UdpGroup {
                 result: Ok((
                     read_size,
                     PathInfo {
-                        from: raddr.clone(),
-                        to: laddr,
+                        from: laddr,
+                        to: raddr.clone(),
                     },
                 )),
             });
@@ -343,5 +347,78 @@ impl UdpGroup {
                 .try_into_datalen()
         })
         .await
+    }
+
+    /// Return the local bound socket addresses iterator.
+    pub fn local_addrs(&self) -> impl Iterator<Item = &SocketAddr> {
+        self.laddrs.values()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io;
+
+    use hala_future::executor::future_spawn;
+    use hala_io::test::io_test;
+    use rand::{seq::SliceRandom, thread_rng};
+
+    use super::*;
+
+    #[hala_test::test(io_test)]
+    async fn test_send() -> io::Result<()> {
+        _ = pretty_env_logger::try_init_timed();
+
+        let laddrs = vec!["127.0.0.1:0".parse().unwrap(); 1];
+
+        let server_group = UdpGroup::bind(laddrs.as_slice()).unwrap();
+
+        let client_group = UdpGroup::bind(laddrs.as_slice()).unwrap();
+
+        let raddrs = server_group
+            .local_addrs()
+            .map(|addr| *addr)
+            .collect::<Vec<_>>();
+
+        let loops = 10000;
+
+        future_spawn(async move {
+            loop {
+                let mut buf = vec![0; 1024];
+
+                let (recv_size, recv_path_info) = server_group.recv_from(&mut buf).await.unwrap();
+
+                server_group
+                    .send_to_on_path(
+                        &buf[..recv_size],
+                        PathInfo {
+                            from: recv_path_info.to,
+                            to: recv_path_info.from,
+                        },
+                    )
+                    .await
+                    .unwrap();
+            }
+        });
+
+        for i in 0..loops {
+            let raddr = raddrs.choose(&mut thread_rng()).unwrap();
+
+            let data = format!("hello world {}", i);
+
+            let (send_size, send_path_info) =
+                client_group.send_to(data.as_bytes(), *raddr).await.unwrap();
+
+            let mut buf = vec![0; 1024];
+
+            let (read_size, path_info) = client_group.recv_from(&mut buf).await.unwrap();
+
+            assert_eq!(read_size, send_size);
+
+            assert_eq!(path_info.from, send_path_info.to);
+            assert_eq!(path_info.to, send_path_info.from);
+        }
+
+        Ok(())
     }
 }

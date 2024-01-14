@@ -109,11 +109,11 @@ pub fn register_io_context<C: RawIoContext + Send + Sync + 'static>(context: C) 
 /// Notice: this function must be called after a call [`register_io_context`], otherwise panic will occur.
 /// or the `mio-driver` is available
 pub fn io_context() -> &'static IoContext {
-    if cfg!(feature = "mio-driver") {
-        REGISTER.get_or_init(|| {
-            return IoContext(Box::new(default_context::MioContext::new().unwrap()));
-        })
-    } else {
-        REGISTER.get().as_ref().unwrap()
-    }
+    #[cfg(feature = "mio-driver")]
+    return REGISTER.get_or_init(|| {
+        return IoContext(Box::new(default_context::MioContext::new().unwrap()));
+    });
+
+    #[cfg(not(feature = "mio-driver"))]
+    REGISTER.get().as_ref().expect("")
 }

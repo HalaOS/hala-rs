@@ -31,15 +31,19 @@ impl MioDriver {
         loop {
             match f() {
                 Err(err) if err.kind() == io::ErrorKind::Interrupted => {
-                    log::trace!("");
                     continue;
                 }
                 Err(err) if err.kind() == io::ErrorKind::WouldBlock => return Err(err),
 
-                r => {
+                Err(err) => {
+                    log::trace!("nonblocking_call error: {}", err);
+                    return Err(err);
+                }
+
+                Ok(r) => {
                     _ = poller.remove_waker(token, interests);
 
-                    return r;
+                    return Ok(r);
                 }
             }
         }
