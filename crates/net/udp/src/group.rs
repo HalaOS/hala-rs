@@ -296,13 +296,15 @@ impl UdpGroup {
     ///
     /// If successful, the received packet length and data transfer [`path`](PathInfo) information is returned.
     ///
-    /// *Restrictions*: concurrently calls to recv_from are not allowed!!!
+    /// *Restrictions*: concurrently calls to recv_from are not allowed!!!, the later calling will override earlier calling's out buf.
     pub async fn recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, PathInfo)> {
         let ptr = Box::into_raw(Box::new(buf as *mut [u8]));
 
-        self.batching_read_buf
-            .compare_exchange(null_mut(), ptr, Ordering::AcqRel, Ordering::Relaxed)
-            .expect("concurrently calls to recv_from are not allowed");
+        let old_ptr = self.batching_read_buf.swap(ptr, Ordering::AcqRel);
+
+        if old_ptr != null_mut() {
+            _ = unsafe { Box::from_raw(old_ptr) };
+        }
 
         let batch_read = self.batching_reader.wait().await;
 
@@ -315,13 +317,15 @@ impl UdpGroup {
     ///
     /// If successful, the sent packet length and data transfer [`path`](PathInfo) information is returned.
     ///
-    /// *Restrictions*: concurrently calls to send_to are not allowed!!!
+    /// *Restrictions*: concurrently calls to send_to are not allowed!!!, the later calling will override earlier calling's in buf.
     pub async fn send_to(&self, buf: &[u8], raddr: SocketAddr) -> io::Result<(usize, PathInfo)> {
         let ptr = Box::into_raw(Box::new((buf as *const [u8], raddr)));
 
-        self.batching_write_buf
-            .compare_exchange(null_mut(), ptr, Ordering::AcqRel, Ordering::Relaxed)
-            .expect("concurrently calls to recv_from are not allowed");
+        let old_ptr = self.batching_write_buf.swap(ptr, Ordering::AcqRel);
+
+        if old_ptr != null_mut() {
+            _ = unsafe { Box::from_raw(old_ptr) };
+        }
 
         let batch_write = self.batching_writer.wait().await;
 

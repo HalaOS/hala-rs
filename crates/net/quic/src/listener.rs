@@ -3,21 +3,24 @@ use std::{
     net::{SocketAddr, ToSocketAddrs},
 };
 
-use hala_udp::UdpSocket;
+use hala_udp::UdpGroup;
 
 use crate::{state::QuicListenerState, Config, QuicConn};
 
 pub struct QuicListener {
     state: QuicListenerState,
-    laddr: SocketAddr,
+    laddrs: Vec<SocketAddr>,
 }
 
 impl QuicListener {
     /// Create new quic server listener and bind to `laddrs`.
     pub fn bind<L: ToSocketAddrs>(laddrs: L, config: Config) -> io::Result<Self> {
-        let udp_socket = UdpSocket::bind(laddrs)?;
+        let udp_socket = UdpGroup::bind(laddrs)?;
 
-        let laddr = udp_socket.local_addr()?;
+        let laddrs = udp_socket
+            .local_addrs()
+            .map(|laddr| *laddr)
+            .collect::<Vec<_>>();
 
         let max_datagram_size = config.max_datagram_size;
 
@@ -25,7 +28,7 @@ impl QuicListener {
 
         event_loop::run_event_loop(udp_socket, state.clone(), max_datagram_size);
 
-        Ok(QuicListener { state, laddr })
+        Ok(QuicListener { state, laddrs })
     }
 
     /// Accept one incoming quic [`connection`](QuicConn).
@@ -40,8 +43,8 @@ impl QuicListener {
     }
 
     /// Get the [`SocketAddr`] to which this listener is bound.
-    pub fn local_addr(&self) -> SocketAddr {
-        self.laddr
+    pub fn local_addrs(&self) -> impl Iterator<Item = &SocketAddr> {
+        self.laddrs.iter()
     }
 }
 
@@ -54,7 +57,7 @@ mod event_loop {
     use super::*;
 
     pub(super) fn run_event_loop(
-        udp_socket: UdpSocket,
+        udp_socket: UdpGroup,
         state: QuicListenerState,
         max_datagram_size: usize,
     ) {
@@ -88,28 +91,35 @@ mod event_loop {
     }
 
     async fn run_recv_event_loop(
-        udp_socket: Arc<UdpSocket>,
+        udp_socket: Arc<UdpGroup>,
         state: QuicListenerState,
         max_datagram_size: usize,
     ) -> io::Result<()> {
         let mut buf = vec![0; max_datagram_size];
 
-        let laddr = udp_socket.local_addr()?;
+        let laddrs = udp_socket
+            .local_addrs()
+            .map(|laddr| *laddr)
+            .collect::<Vec<_>>();
 
-        log::trace!("Quic server listen on {:?}, start recv data.", laddr);
+        log::trace!("Quic server listen on {:?}, start recv data.", laddrs);
 
         loop {
-            let (recv_size, raddr) = udp_socket.recv_from(&mut buf).await?;
+            let (recv_size, path_info) = udp_socket.recv_from(&mut buf).await?;
 
-            log::trace!("Quic server recv data, len={}, raddr={}", recv_size, raddr);
+            log::trace!(
+                "Quic server recv data, len={}, path_info={:?}",
+                recv_size,
+                path_info
+            );
 
             let write_result = state
                 .write(
                     buf.as_mut_slice(),
                     recv_size,
                     RecvInfo {
-                        from: raddr,
-                        to: laddr,
+                        from: path_info.from,
+                        to: path_info.to,
                     },
                 )
                 .await?;
@@ -138,13 +148,21 @@ mod event_loop {
     }
 
     async fn run_send_event_loop(
-        udp_socket: Arc<UdpSocket>,
+        udp_socket: Arc<UdpGroup>,
         state: QuicListenerState,
     ) -> io::Result<()> {
         loop {
             let (buf, send_info) = state.read().await?;
 
-            udp_socket.send_to(&buf, send_info.to).await?;
+            udp_socket
+                .send_to_on_path(
+                    &buf,
+                    hala_udp::PathInfo {
+                        from: send_info.from,
+                        to: send_info.to,
+                    },
+                )
+                .await?;
         }
     }
 }

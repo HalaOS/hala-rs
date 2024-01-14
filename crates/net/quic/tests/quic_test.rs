@@ -58,7 +58,7 @@ fn mock_config(is_server: bool, max_datagram_size: usize) -> Config {
 async fn test_establish() -> io::Result<()> {
     let listener = QuicListener::bind("127.0.0.1:0", mock_config(true, 1350)).unwrap();
 
-    let raddr = listener.local_addr();
+    let raddr = listener.local_addrs().next().unwrap().clone();
 
     future_spawn(async move {
         let _ = listener.accept().await.unwrap();
@@ -90,7 +90,7 @@ async fn test_connect_timeout() -> io::Result<()> {
 async fn test_open_client_stream() -> io::Result<()> {
     let listener = QuicListener::bind("127.0.0.1:0", mock_config(true, 1350)).unwrap();
 
-    let raddr = listener.local_addr();
+    let raddr = listener.local_addrs().next().unwrap().clone();
 
     let send_data = b"test test a";
 
@@ -132,7 +132,7 @@ async fn test_open_client_stream() -> io::Result<()> {
 async fn test_open_server_stream() -> io::Result<()> {
     let listener = QuicListener::bind("127.0.0.1:0", mock_config(true, 1350)).unwrap();
 
-    let raddr = listener.local_addr();
+    let raddr = listener.local_addrs().next().unwrap().clone();
 
     let send_data = b"hello hala os";
 
@@ -170,7 +170,7 @@ async fn test_server_max_streams_stream() -> io::Result<()> {
 
     let listener = QuicListener::bind("127.0.0.1:0", config).unwrap();
 
-    let raddr = listener.local_addr();
+    let raddr = listener.local_addrs().next().unwrap().clone();
 
     let send_data = b"hello hala os";
 
@@ -219,7 +219,7 @@ async fn test_client_max_streams_stream() -> io::Result<()> {
 
     let listener = QuicListener::bind("127.0.0.1:0", config).unwrap();
 
-    let raddr = listener.local_addr();
+    let raddr = listener.local_addrs().next().unwrap().clone();
 
     let send_data = b"hello hala os";
 
@@ -262,7 +262,7 @@ async fn test_client_max_streams_stream() -> io::Result<()> {
 
 #[hala_test::test(io_test)]
 async fn test_dynamic_peer_streams_left_bid() -> io::Result<()> {
-    _ = pretty_env_logger::try_init_timed();
+    // _ = pretty_env_logger::try_init_timed();
 
     let mut config = mock_config(true, 1350);
 
@@ -270,7 +270,7 @@ async fn test_dynamic_peer_streams_left_bid() -> io::Result<()> {
 
     let listener = QuicListener::bind("127.0.0.1:0", config).unwrap();
 
-    let raddr = listener.local_addr();
+    let raddr = listener.local_addrs().next().unwrap().clone();
 
     let send_data = b"hello hala os";
 

@@ -7,8 +7,9 @@ use std::{
 
 use hala_future::executor::future_spawn;
 use hala_io::timeout;
-use hala_udp::UdpSocket;
+use hala_udp::UdpGroup;
 use quiche::{ConnectionId, RecvInfo};
+use rand::{seq::IteratorRandom, thread_rng};
 
 use crate::{
     state::{QuicConnState, QuicConnectorState},
@@ -67,7 +68,7 @@ impl QuicConn {
         raddrs: R,
         config: &mut Config,
     ) -> io::Result<Self> {
-        let udpsocket = UdpSocket::bind(laddrs)?;
+        let udpsocket = UdpGroup::bind(laddrs)?;
 
         let mut lastest_error = None;
 
@@ -86,19 +87,27 @@ impl QuicConn {
     }
 
     async fn connect_with(
-        udp_socket: &UdpSocket,
+        udp_socket: &UdpGroup,
         raddr: SocketAddr,
         config: &mut Config,
     ) -> io::Result<QuicConn> {
         let mut buf = vec![0; config.max_datagram_size];
 
-        let laddr = udp_socket.local_addr()?;
+        let laddr = *udp_socket.local_addrs().choose(&mut thread_rng()).unwrap();
 
         let mut connector_state = QuicConnectorState::new(config, laddr, raddr)?;
 
         loop {
             if let Some((send_size, send_info)) = connector_state.send(&mut buf)? {
-                udp_socket.send_to(&buf[..send_size], send_info.to).await?;
+                udp_socket
+                    .send_to_on_path(
+                        &buf[..send_size],
+                        hala_udp::PathInfo {
+                            from: send_info.from,
+                            to: send_info.to,
+                        },
+                    )
+                    .await?;
             }
 
             if connector_state.is_closed() {
@@ -112,7 +121,7 @@ impl QuicConn {
 
             log::trace!("Connect send timeout={:?}", send_timeout);
 
-            let (recv_size, raddr) =
+            let (recv_size, path_info) =
                 match timeout(udp_socket.recv_from(&mut buf), send_timeout).await {
                     Ok(r) => r,
                     Err(err) if err.kind() == io::ErrorKind::TimedOut => {
@@ -125,8 +134,8 @@ impl QuicConn {
             connector_state.recv(
                 &mut buf[..recv_size],
                 RecvInfo {
-                    from: raddr,
-                    to: laddr,
+                    from: path_info.from,
+                    to: path_info.to,
                 },
             )?;
 
@@ -264,7 +273,7 @@ mod event_loop {
 
     use super::*;
 
-    pub(super) fn run_client_loop(udp_socket: UdpSocket, conn: QuicConn, max_datagram_size: usize) {
+    pub(super) fn run_client_loop(udp_socket: UdpGroup, conn: QuicConn, max_datagram_size: usize) {
         let udp_socket = Arc::new(udp_socket);
 
         let udp_socket_cloned = udp_socket.clone();
@@ -321,23 +330,21 @@ mod event_loop {
     }
 
     async fn run_client_recv_loop(
-        udp_socket: Arc<UdpSocket>,
+        udp_socket: Arc<UdpGroup>,
         conn: QuicConn,
         max_datagram_size: usize,
     ) -> io::Result<()> {
         let mut buf = vec![0; max_datagram_size];
 
-        let laddr = udp_socket.local_addr()?;
-
         loop {
-            let (recv_size, raddr) = udp_socket.recv_from(&mut buf).await?;
+            let (recv_size, path_info) = udp_socket.recv_from(&mut buf).await?;
 
             conn.state
                 .write(
                     &mut buf[..recv_size],
                     RecvInfo {
-                        from: raddr,
-                        to: laddr,
+                        from: path_info.from,
+                        to: path_info.to,
                     },
                 )
                 .await?;
@@ -345,7 +352,7 @@ mod event_loop {
     }
 
     async fn run_client_send_loop(
-        udp_socket: Arc<UdpSocket>,
+        udp_socket: Arc<UdpGroup>,
         conn: QuicConn,
         max_datagram_size: usize,
     ) -> io::Result<()> {
