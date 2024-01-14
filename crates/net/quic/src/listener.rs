@@ -7,6 +7,7 @@ use hala_udp::UdpGroup;
 
 use crate::{state::QuicListenerState, Config, QuicConn};
 
+#[derive(Clone)]
 pub struct QuicListener {
     state: QuicListenerState,
     laddrs: Vec<SocketAddr>,
@@ -45,6 +46,11 @@ impl QuicListener {
     /// Get the [`SocketAddr`] to which this listener is bound.
     pub fn local_addrs(&self) -> impl Iterator<Item = &SocketAddr> {
         self.laddrs.iter()
+    }
+
+    /// Close this listener and drop the incoming queue.
+    pub async fn close(&self) {
+        self.state.close().await
     }
 }
 

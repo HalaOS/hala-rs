@@ -2,54 +2,10 @@ use std::{io, net::SocketAddr, sync::Arc};
 
 use bytes::BytesMut;
 use dashmap::DashMap;
-use futures::{
-    channel::mpsc::{Receiver, Sender},
-    future::BoxFuture,
-};
+use futures::channel::mpsc::{Receiver, Sender};
 use hala_future::executor::future_spawn;
 
-/// The transport layer protocol of gateway.
-#[derive(Debug, Clone)]
-pub enum Protocol {
-    Tcp,
-    Quic,
-    Http1,
-    Http2,
-    Http3,
-    Other(String),
-}
-
-/// Forwarding channel creation context.
-pub struct ForwardContext {
-    /// Connection from endpoint
-    pub from: SocketAddr,
-    /// Connection to endpoint.
-    pub to: SocketAddr,
-    /// Gateway transport layer protocol.
-    pub protocol: Protocol,
-    /// Backward data sender.
-    pub backward: Sender<BytesMut>,
-    /// Forward data receiver.
-    pub forward: Receiver<BytesMut>,
-}
-
-/// The result returns by [`handshake`](Handshaker::handshake) function
-pub struct HandshakeResult {
-    pub context: ForwardContext,
-    pub transport_id: String,
-    pub conn_str: String,
-}
-
-/// Handshake protocol type.
-pub trait Handshaker {
-    /// Start a new handshake async task.
-    ///
-    /// If successful, returns [`HandshakeResult`]
-    fn handshake(
-        &self,
-        forward_cx: ForwardContext,
-    ) -> BoxFuture<'static, io::Result<HandshakeResult>>;
-}
+use crate::handshake::{HandshakeContext, Handshaker};
 
 /// Transport channel type create by [`open_channel`](Transport::open_channel) function
 pub struct TransportChannel {
@@ -70,16 +26,24 @@ pub trait Transport {
 ///
 #[derive(Clone)]
 pub struct TransportManager {
+    max_packet_len: usize,
+    cache_queue_len: usize,
     handshaker: Arc<Box<dyn Handshaker + Sync + Send + 'static>>,
     transports: Arc<DashMap<String, Box<dyn Transport + Sync + Send + 'static>>>,
 }
 
 impl TransportManager {
     /// Create new instance of this type using the [`handshaker`](Handshaker) instance..
-    pub fn new<H: Handshaker + Sync + Send + 'static>(handshaker: H) -> Self {
+    pub fn new<H: Handshaker + Sync + Send + 'static>(
+        handshaker: H,
+        cache_queue_len: usize,
+        max_packet_len: usize,
+    ) -> Self {
         Self {
             handshaker: Arc::new(Box::new(handshaker)),
             transports: Default::default(),
+            cache_queue_len,
+            max_packet_len,
         }
     }
 
@@ -98,7 +62,7 @@ impl TransportManager {
     }
 
     /// Start a new handshake processing.
-    pub async fn handshake(&self, forward_cx: ForwardContext) -> io::Result<()> {
+    pub async fn handshake(&self, forward_cx: HandshakeContext) -> io::Result<()> {
         let result = self.handshaker.handshake(forward_cx).await?;
 
         let transport = self
@@ -115,14 +79,26 @@ impl TransportManager {
 
         Ok(())
     }
+
+    /// Get forwarding packet queue len.
+    pub fn cache_queue_len(&self) -> usize {
+        self.cache_queue_len
+    }
+
+    /// Get max length of packet in forwarding queue.
+    pub fn max_packet_len(&self) -> usize {
+        self.max_packet_len
+    }
 }
 
 mod event_loop {
     use futures::{SinkExt, StreamExt};
 
+    use crate::handshake::Protocol;
+
     use super::*;
 
-    pub(super) fn run_event_loop(forward_cx: ForwardContext, channel: TransportChannel) {
+    pub(super) fn run_event_loop(forward_cx: HandshakeContext, channel: TransportChannel) {
         let forward_fut = run_forward_loop(
             forward_cx.from.clone(),
             forward_cx.to.clone(),
@@ -145,8 +121,8 @@ mod event_loop {
     }
 
     async fn run_forward_loop(
-        from: SocketAddr,
-        to: SocketAddr,
+        from: String,
+        to: String,
         protocol: Protocol,
         mut receiver: Receiver<BytesMut>,
         mut sender: Sender<BytesMut>,
@@ -173,8 +149,8 @@ mod event_loop {
     }
 
     async fn run_backward_loop(
-        from: SocketAddr,
-        to: SocketAddr,
+        from: String,
+        to: String,
         protocol: Protocol,
         mut receiver: Receiver<BytesMut>,
         mut sender: Sender<BytesMut>,

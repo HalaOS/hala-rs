@@ -1,4 +1,5 @@
 use std::{
+    fmt::Debug,
     io,
     net::{SocketAddr, ToSocketAddrs},
     ops,
@@ -18,10 +19,16 @@ use crate::{
 
 /// Socket connection type for quic protocol.
 #[must_use = "If return variable is not bound, the created stream will be dropped immediately"]
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct QuicConn {
     state: QuicConnState,
     conn_counter: Arc<()>,
+}
+
+impl Debug for QuicConn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.state)
+    }
 }
 
 impl From<QuicConnState> for QuicConn {
@@ -177,11 +184,17 @@ impl QuicConn {
 
 /// Stream socket type for quic protocol.
 #[must_use = "If return variable is not bound, the created stream will be dropped immediately"]
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct QuicStream {
-    conn: QuicConn,
-    stream_id: u64,
+    pub conn: QuicConn,
+    pub stream_id: u64,
     stream_counter: Arc<()>,
+}
+
+impl Debug for QuicStream {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}, stream_id={}", self.conn, self.stream_id)
+    }
 }
 
 impl From<(QuicConn, u64)> for QuicStream {

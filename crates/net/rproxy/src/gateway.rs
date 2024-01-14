@@ -45,7 +45,7 @@ impl GatewayManager {
 
     /// Start all gateway service.
     pub fn start(&self, tm: TransportManager) -> io::Result<()> {
-        for gateway in self.protocols.iter_mut() {
+        for gateway in self.protocols.iter() {
             gateway.value().start(tm.clone())?;
         }
 
@@ -54,7 +54,7 @@ impl GatewayManager {
 
     /// Stop all gateway service
     pub fn stop(&self) -> io::Result<()> {
-        for gateway in self.protocols.iter_mut() {
+        for gateway in self.protocols.iter() {
             gateway.value().stop()?;
         }
 
@@ -63,7 +63,7 @@ impl GatewayManager {
 
     /// Block current thread until the all managed gateway have been stopped.
     pub fn join(&self) {
-        for gateway in self.protocols.iter_mut() {
+        for gateway in self.protocols.iter() {
             gateway.join();
         }
     }
