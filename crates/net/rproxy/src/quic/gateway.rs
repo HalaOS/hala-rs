@@ -225,6 +225,9 @@ mod event_loop {
             }
         }
 
+        // try close forward loop
+        _ = stream.close().await;
+
         log::error!(
             "{} {:?}, stop backward loop with backward receiver broken.",
             id,
