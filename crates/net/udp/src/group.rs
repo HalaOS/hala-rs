@@ -181,7 +181,10 @@ impl UdpGroup {
             );
 
             let cmd_resp = match cmd_resp {
-                Ok(cmd_resp) => cmd_resp,
+                Ok(cmd_resp) => {
+                    _ = unsafe { Box::from_raw(buf) };
+                    cmd_resp
+                }
                 Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
                     batching_read_buf
                         .compare_exchange(null_mut(), buf, Ordering::AcqRel, Ordering::Relaxed)
@@ -190,6 +193,7 @@ impl UdpGroup {
                     return Poll::Pending;
                 }
                 Err(err) => {
+                    _ = unsafe { Box::from_raw(buf) };
                     return Poll::Ready(BatchRead {
                         handle,
                         result: Err(err),
@@ -199,9 +203,7 @@ impl UdpGroup {
 
             let (read_size, raddr) = cmd_resp.try_into_recv_from().unwrap();
 
-            if read_size == 1 {
-                log::trace!("hello");
-            }
+            log::trace!("batch_read ready");
 
             return Poll::Ready(BatchRead {
                 handle,
@@ -240,6 +242,8 @@ impl UdpGroup {
 
             let (buf_ref, raddr) = unsafe { &mut *buf };
 
+            let raddr = raddr.clone();
+
             let buf_ref = unsafe { &**buf_ref };
 
             let cmd_resp = driver.fd_cntl(
@@ -247,12 +251,16 @@ impl UdpGroup {
                 Cmd::SendTo {
                     waker: cx.waker().clone(),
                     buf: buf_ref,
-                    raddr: raddr.clone(),
+                    raddr,
                 },
             );
 
             let cmd_resp = match cmd_resp {
-                Ok(cmd_resp) => cmd_resp,
+                Ok(cmd_resp) => {
+                    _ = unsafe { Box::from_raw(buf) };
+
+                    cmd_resp
+                }
                 Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
                     batching_write_buf
                         .compare_exchange(null_mut(), buf, Ordering::AcqRel, Ordering::Relaxed)
@@ -261,6 +269,7 @@ impl UdpGroup {
                     return Poll::Pending;
                 }
                 Err(err) => {
+                    _ = unsafe { Box::from_raw(buf) };
                     return Poll::Ready(BatchWrite {
                         handle,
                         result: Err(err),
@@ -276,7 +285,7 @@ impl UdpGroup {
                     read_size,
                     PathInfo {
                         from: laddr,
-                        to: raddr.clone(),
+                        to: raddr,
                     },
                 )),
             });
@@ -289,13 +298,10 @@ impl UdpGroup {
     ///
     /// *Restrictions*: concurrently calls to recv_from are not allowed!!!
     pub async fn recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, PathInfo)> {
+        let ptr = Box::into_raw(Box::new(buf as *mut [u8]));
+
         self.batching_read_buf
-            .compare_exchange(
-                null_mut(),
-                &mut (buf as *mut [u8]),
-                Ordering::AcqRel,
-                Ordering::Relaxed,
-            )
+            .compare_exchange(null_mut(), ptr, Ordering::AcqRel, Ordering::Relaxed)
             .expect("concurrently calls to recv_from are not allowed");
 
         let batch_read = self.batching_reader.wait().await;
@@ -311,13 +317,10 @@ impl UdpGroup {
     ///
     /// *Restrictions*: concurrently calls to send_to are not allowed!!!
     pub async fn send_to(&self, buf: &[u8], raddr: SocketAddr) -> io::Result<(usize, PathInfo)> {
+        let ptr = Box::into_raw(Box::new((buf as *const [u8], raddr)));
+
         self.batching_write_buf
-            .compare_exchange(
-                null_mut(),
-                &mut ((buf as *const [u8]), raddr),
-                Ordering::AcqRel,
-                Ordering::Relaxed,
-            )
+            .compare_exchange(null_mut(), ptr, Ordering::AcqRel, Ordering::Relaxed)
             .expect("concurrently calls to recv_from are not allowed");
 
         let batch_write = self.batching_writer.wait().await;
@@ -334,7 +337,7 @@ impl UdpGroup {
             format!("path info not found, {:?}", path_info),
         ))?;
 
-        would_block(|cx| {
+        let r = would_block(|cx| {
             self.driver
                 .fd_cntl(
                     fd,
@@ -346,7 +349,9 @@ impl UdpGroup {
                 )?
                 .try_into_datalen()
         })
-        .await
+        .await;
+
+        r
     }
 
     /// Return the local bound socket addresses iterator.
@@ -367,8 +372,6 @@ mod tests {
 
     #[hala_test::test(io_test)]
     async fn test_send() -> io::Result<()> {
-        _ = pretty_env_logger::try_init_timed();
-
         let laddrs = vec!["127.0.0.1:0".parse().unwrap(); 1];
 
         let server_group = UdpGroup::bind(laddrs.as_slice()).unwrap();
@@ -417,6 +420,40 @@ mod tests {
 
             assert_eq!(path_info.from, send_path_info.to);
             assert_eq!(path_info.to, send_path_info.from);
+        }
+
+        Ok(())
+    }
+
+    #[hala_test::test(io_test)]
+    async fn test_sequence_send_recv() -> io::Result<()> {
+        let laddrs = vec!["127.0.0.1:0".parse().unwrap(); 1];
+
+        let server_group = UdpGroup::bind(laddrs.as_slice()).unwrap();
+
+        let client_group = UdpGroup::bind(laddrs.as_slice()).unwrap();
+
+        let raddrs = server_group
+            .local_addrs()
+            .map(|addr| *addr)
+            .collect::<Vec<_>>();
+
+        let loops = 10000;
+
+        for i in 0..loops {
+            let raddr = raddrs.choose(&mut thread_rng()).unwrap();
+
+            let data = format!("hello world {}", i);
+
+            let (send_size, send_path_info) =
+                client_group.send_to(data.as_bytes(), *raddr).await.unwrap();
+
+            let mut buf = vec![0; 1024];
+
+            let (read_size, path_info) = server_group.recv_from(&mut buf).await.unwrap();
+
+            assert_eq!(read_size, send_size);
+            assert_eq!(path_info, send_path_info);
         }
 
         Ok(())
