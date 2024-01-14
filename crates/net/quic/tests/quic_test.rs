@@ -262,7 +262,7 @@ async fn test_client_max_streams_stream() -> io::Result<()> {
 
 #[hala_test::test(io_test)]
 async fn test_dynamic_peer_streams_left_bid() -> io::Result<()> {
-    // _ = pretty_env_logger::try_init_timed();
+    _ = pretty_env_logger::try_init_timed();
 
     let mut config = mock_config(true, 1350);
 

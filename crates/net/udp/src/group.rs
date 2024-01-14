@@ -17,8 +17,6 @@ use hala_io::{
     would_block, Cmd, Description, Driver, Handle, Interest, OpenFlags,
 };
 
-use crate::UdpSocket;
-
 /// The return type of batching read.
 struct BatchRead {
     /// ready udp socket handle.

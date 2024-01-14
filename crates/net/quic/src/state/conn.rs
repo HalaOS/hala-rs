@@ -320,27 +320,29 @@ impl QuicConnState {
             return true;
         }
 
-        match state.quiche_conn.stream_recv(stream.stream_id, buf) {
-            Ok((read_size, fin)) => {
-                if !fin {
-                    log::trace!("{:?} {:?}, recv_len={}, pending", self, stream, read_size);
+        loop {
+            match state.quiche_conn.stream_recv(stream.stream_id, buf) {
+                Ok((read_size, fin)) => {
+                    if !fin {
+                        log::trace!("{:?} {:?}, recv_len={}, pending", self, stream, read_size);
+
+                        continue;
+                    } else {
+                        log::trace!("{:?} {:?}, recv_len={}, closed", self, stream, read_size);
+
+                        return true;
+                    }
+                }
+                Err(quiche::Error::Done) => {
+                    log::trace!("{:?} {:?}, pending", self, stream);
 
                     return false;
-                } else {
-                    log::trace!("{:?} {:?}, recv_len={}, closed", self, stream, read_size);
+                }
+                Err(err) => {
+                    log::trace!("{:?} {:?}, closed with error, err={}", self, stream, err);
 
                     return true;
                 }
-            }
-            Err(quiche::Error::Done) => {
-                log::trace!("{:?} {:?}, pending", self, stream);
-
-                return false;
-            }
-            Err(err) => {
-                log::trace!("{:?} {:?}, closed with error, err={}", self, stream, err);
-
-                return true;
             }
         }
     }
