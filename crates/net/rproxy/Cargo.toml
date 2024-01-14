@@ -10,3 +10,12 @@ version.workspace = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+bytes = {workspace = true}
+dashmap = {workspace = true}
+futures = {workspace = true}
+log = {workspace = true}
+
+hala-future = {workspace = true}
+hala-io = {workspace = true}
+hala-quic = {workspace = true}
+hala-tcp = {workspace = true}
