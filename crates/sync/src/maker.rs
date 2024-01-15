@@ -12,6 +12,19 @@ pub struct AsyncLockableMaker<Locker, Wakers> {
     wakers: Wakers,
 }
 
+impl<Locker, Wakers> Default for AsyncLockableMaker<Locker, Wakers>
+where
+    Locker: Default,
+    Wakers: Default,
+{
+    fn default() -> Self {
+        Self {
+            inner_locker: Default::default(),
+            wakers: Default::default(),
+        }
+    }
+}
+
 impl<Locker, Wakers> AsyncLockableMaker<Locker, Wakers>
 where
     Locker: LockableNew,

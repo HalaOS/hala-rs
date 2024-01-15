@@ -172,6 +172,12 @@ impl QuicConn {
         self.state.to_quiche_conn().await
     }
 
+    /// Returns the number of bidirectional streams that can be created
+    /// before the peer's stream count limit is reached.
+    pub async fn peer_streams_left_bidi(&self) -> u64 {
+        self.state.to_quiche_conn().await.peer_streams_left_bidi()
+    }
+
     /// The source id of this connection.
     pub fn source_id(&self) -> &ConnectionId<'static> {
         &self.state.scid

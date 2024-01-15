@@ -1,4 +1,4 @@
-use std::{io, net::SocketAddr};
+use std::io;
 
 use bytes::BytesMut;
 use futures::{

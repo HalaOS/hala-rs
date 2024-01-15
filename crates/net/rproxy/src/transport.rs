@@ -1,22 +1,32 @@
-use std::{io, net::SocketAddr, sync::Arc};
+use std::{io, sync::Arc};
 
 use bytes::BytesMut;
 use dashmap::DashMap;
-use futures::channel::mpsc::{Receiver, Sender};
+use futures::{
+    channel::mpsc::{Receiver, Sender},
+    future::BoxFuture,
+};
 use hala_future::executor::future_spawn;
 
 use crate::handshake::{HandshakeContext, Handshaker};
 
 /// Transport channel type create by [`open_channel`](Transport::open_channel) function
 pub struct TransportChannel {
-    pub forward: Sender<BytesMut>,
-    pub backward: Receiver<BytesMut>,
+    pub max_packet_len: usize,
+    pub cache_queue_len: usize,
+    pub sender: Sender<BytesMut>,
+    pub receiver: Receiver<BytesMut>,
 }
 
 /// [`Channel`](TransportChannel) factory responsible for forward/backward data forwarding
 pub trait Transport {
     /// Open new [`channel`](TransportChannel) instance with `conn_str`.
-    fn open_channel(&self, conn_str: &str) -> io::Result<TransportChannel>;
+    fn open_channel(
+        &self,
+        conn_str: &str,
+        max_packet_len: usize,
+        cache_queue_len: usize,
+    ) -> BoxFuture<'static, io::Result<TransportChannel>>;
 
     /// Get identity `str` of this transport.
     fn id(&self) -> &str;
@@ -73,7 +83,9 @@ impl TransportManager {
                 format!("transport {} not found.", result.transport_id),
             ))?;
 
-        let channel = transport.open_channel(&result.conn_str)?;
+        let channel = transport
+            .open_channel(&result.conn_str, self.max_packet_len, self.cache_queue_len)
+            .await?;
 
         event_loop::run_event_loop(result.context, channel);
 
@@ -104,14 +116,14 @@ mod event_loop {
             forward_cx.to.clone(),
             forward_cx.protocol.clone(),
             forward_cx.forward,
-            channel.forward,
+            channel.sender,
         );
 
         let backward_fut = run_backward_loop(
             forward_cx.from,
             forward_cx.to,
             forward_cx.protocol,
-            channel.backward,
+            channel.receiver,
             forward_cx.backward,
         );
 
