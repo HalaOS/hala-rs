@@ -49,6 +49,9 @@ struct RawQuicConnState {
     /// When a connection sees a stream ID for the first time,
     /// it is placed into this stream ID set.
     register_incoming_stream_ids: HashSet<u64>,
+    /// When a new outgoing stream is created, it's id is placed into this set.
+    /// The state machine use this set to avoid recv error before first data send.
+    register_outgoing_stream_ids: HashSet<u64>,
     /// The latest outgoing stream id on record.
     lastest_outgoing_stream_id: u64,
     /// Incoming stream id buffer.
@@ -106,6 +109,7 @@ impl RawQuicConnState {
             ping_timeout,
             send_ack_eliciting_instant: Instant::now(),
             register_incoming_stream_ids: Default::default(),
+            register_outgoing_stream_ids: Default::default(),
             lastest_outgoing_stream_id: first_outgoing_stream_id,
             incoming: Default::default(),
             dropping_stream_queue: Default::default(),
@@ -542,6 +546,11 @@ impl QuicConnState {
                         fin,
                     );
 
+                    if state.lastest_outgoing_stream_id % 2 == id % 2 {
+                        // remove id from outgoing set.
+                        state.register_outgoing_stream_ids.remove(&id);
+                    }
+
                     self.notify_readable(&mut state)?;
 
                     return Ok(write_size);
@@ -593,13 +602,57 @@ impl QuicConnState {
         }
     }
 
+    async fn stream_recv_wait<'a>(
+        &'a self,
+        stream_id: u64,
+        mut state: maker::AsyncLockableMakerGuard<
+            'a,
+            SpinMutex<RawQuicConnState>,
+            SpinMutex<VecDeque<std::task::Waker>>,
+        >,
+    ) -> io::Result<()> {
+        self.notify_readable(&mut state)?;
+
+        let event = QuicConnStateEvent::StreamReadable(self.scid.clone(), stream_id);
+
+        let wait_fut = async {
+            self.mediator
+                .wait(event, state)
+                .await
+                .map_err(into_io_error)
+        };
+
+        match wait_fut.await {
+            Ok(_) => {
+                log::trace!(
+                    "{:?} wakeup stream to read data, stream_id={}",
+                    self,
+                    stream_id
+                );
+
+                return Ok(());
+            }
+            Err(err) => {
+                log::error!(
+                    "{:?} wakeup stream to read failed, stream_id={}, err={}",
+                    self,
+                    stream_id,
+                    err
+                );
+
+                return Err(into_io_error(err));
+            }
+        }
+    }
     /// Reads data from stream, and returns tuple (read_size,fin)
     pub async fn stream_recv(&self, id: u64, buf: &mut [u8]) -> io::Result<(usize, bool)> {
-        let event = QuicConnStateEvent::StreamReadable(self.scid.clone(), id);
-
         loop {
             // Asynchronously lock the [`QuicConnState`]
-            let mut state = self.state.lock().await;
+            let mut state: maker::AsyncLockableMakerGuard<
+                '_,
+                SpinMutex<RawQuicConnState>,
+                SpinMutex<VecDeque<std::task::Waker>>,
+            > = self.state.lock().await;
 
             self.handle_quic_conn_status(&mut state)?;
 
@@ -622,35 +675,21 @@ impl QuicConnState {
 
                     log::trace!("{:?}, stream read Done, stream_id={}", self, id,);
 
-                    let wait_fut = async {
-                        self.mediator
-                            .wait(event.clone(), state)
-                            .await
-                            .map_err(into_io_error)
-                    };
+                    self.stream_recv_wait(id, state).await?;
+                }
+                Err(quiche::Error::InvalidStreamState(_)) => {
+                    if state.register_outgoing_stream_ids.contains(&id) {
+                        log::trace!(
+                            "{:?},outgoin stream read before send, stream_id={}",
+                            self,
+                            id,
+                        );
 
-                    match timeout(wait_fut, Some(Duration::from_millis(500))).await {
-                        Ok(_) => {
-                            log::trace!("{:?} wakeup stream to read data, stream_id={}", self, id,);
+                        self.stream_recv_wait(id, state).await?;
+                    } else {
+                        self.notify_readable(&mut state)?;
 
-                            // try again.
-                            continue;
-                        }
-                        Err(err) if err.kind() == io::ErrorKind::TimedOut => {
-                            log::trace!("{:?} stream read timeout, stream_id={}", self, id,);
-
-                            continue;
-                        }
-                        Err(err) => {
-                            log::error!(
-                                "{:?} wakeup stream to read failed, stream_id={}, err={}",
-                                self,
-                                id,
-                                err
-                            );
-
-                            return Err(into_io_error(err));
-                        }
+                        return Err(into_io_error(quiche::Error::InvalidStreamState(id)));
                     }
                 }
                 Err(err) => {
@@ -715,6 +754,8 @@ impl QuicConnState {
 
         let stream_id = state.lastest_outgoing_stream_id;
         state.lastest_outgoing_stream_id += 4;
+
+        state.register_outgoing_stream_ids.insert(stream_id);
 
         Ok(stream_id)
     }
@@ -784,6 +825,20 @@ impl QuicConnState {
     /// Returns the number of source Connection IDs that should be provided to the peer without exceeding the limit it advertised.
     pub async fn scids_left(&self) -> usize {
         self.state.lock().await.quiche_conn.scids_left()
+    }
+
+    /// Adjusted peer_streams_left_bidi according to register_outgoing_stream_ids.
+    pub async fn peer_streams_left_bidi(&self) -> u64 {
+        let state = self.state.lock().await;
+
+        let peer_streams_left_bidi = state.quiche_conn.peer_streams_left_bidi();
+        let outgoing_cached = state.register_outgoing_stream_ids.len() as u64;
+
+        if peer_streams_left_bidi >= outgoing_cached {
+            peer_streams_left_bidi - outgoing_cached
+        } else {
+            0
+        }
     }
 
     /// Convert [`QuicConnState`] to [`quiche::Connection`]

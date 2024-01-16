@@ -162,9 +162,10 @@ impl QuicConnPool {
                 )
             }
             Err(err) => {
-                println!(
+                log::trace!(
                     "quic conn pool stop event loop, conn_str={:?}, err={}",
-                    self.channel_open_flag, err
+                    self.channel_open_flag,
+                    err
                 )
             }
         }
@@ -172,7 +173,8 @@ impl QuicConnPool {
 
     async fn get_conn(&mut self) -> io::Result<QuicConn> {
         for (_, conn) in self.conns.iter() {
-            if conn.peer_streams_left_bidi().await > 0 {
+            // avoid crypto handshake stream.
+            if conn.peer_streams_left_bidi().await > 1 {
                 return Ok(conn.clone());
             }
         }
@@ -182,6 +184,8 @@ impl QuicConnPool {
         let conn = QuicConn::connect("0.0.0.0:0", self.raddrs.as_slice(), &mut config).await?;
 
         self.conns.insert(conn.source_id().clone(), conn.clone());
+
+        log::trace!("Create new conn: {:?}", conn);
 
         Ok(conn)
     }
@@ -194,7 +198,7 @@ impl QuicConnPool {
             let conn = match self.get_conn().await {
                 Ok(conn) => conn,
                 Err(err) => {
-                    println!(
+                    log::trace!(
                         "Open quic conn failed, try again({}). open_flag={:?}, err={}",
                         self.retry_times - i,
                         self.channel_open_flag,
@@ -218,7 +222,7 @@ impl QuicConnPool {
                     return;
                 }
                 Err(err) => {
-                    println!(
+                    log::trace!(
                         "{:?} open stream error,try again({}). open_flag={:?}, err={}",
                         conn,
                         self.retry_times - i,
@@ -234,7 +238,7 @@ impl QuicConnPool {
             }
         }
 
-        println!(
+        log::trace!(
             "open stream error. open_flag={:?}, err={}",
             self.channel_open_flag,
             last_error.unwrap(),
@@ -300,18 +304,23 @@ mod event_loops {
         mut stream: QuicStream,
         mut forward_receiver: mpsc::Receiver<BytesMut>,
     ) {
-        println!(
+        log::trace!(
             "start send event loop. open_flag={:?}, channel={:?}, {:?}",
-            channel_open_flag, channel_id, stream,
+            channel_open_flag,
+            channel_id,
+            stream,
         );
 
         while let Some(buf) = forward_receiver.next().await {
             match stream.write_all(&buf).await {
                 Ok(_) => {}
                 Err(err) => {
-                    println!(
+                    log::trace!(
                         "stop send loop. open_flag={:?}, channel={:?}, {:?}, err={}",
-                        channel_open_flag, channel_id, stream, err
+                        channel_open_flag,
+                        channel_id,
+                        stream,
+                        err
                     );
 
                     _ = stream.close().await;
@@ -323,9 +332,11 @@ mod event_loops {
 
         _ = stream.close().await;
 
-        println!(
+        log::trace!(
             "stop send loop. open_flag={:?}, channel={:?}, {:?}, err=forward channel closed",
-            channel_open_flag, channel_id, stream,
+            channel_open_flag,
+            channel_id,
+            stream,
         );
     }
 
@@ -336,9 +347,11 @@ mod event_loops {
         mut backward_sender: mpsc::Sender<BytesMut>,
         max_packet_len: usize,
     ) {
-        println!(
+        log::trace!(
             "start recv loop. open_flag={:?}, channel={:?}, {:?}",
-            channel_open_flag, channel_id, stream,
+            channel_open_flag,
+            channel_id,
+            stream,
         );
 
         loop {
@@ -349,7 +362,7 @@ mod event_loops {
                     let buf = buf.into_bytes_mut(Some(read_size));
 
                     if backward_sender.send(buf).await.is_err() {
-                        println!(
+                        log::trace!(
                             "stop recv loop. open_flag={:?}, channel={:?}, {:?}, err=backward pipe broken",
                             channel_open_flag,
                             channel_id,
@@ -362,9 +375,11 @@ mod event_loops {
                     }
 
                     if fin {
-                        println!(
+                        log::trace!(
                             "stop recv loop. open_flag={:?}, channel={:?}, {:?}, err=peer sent pin",
-                            channel_open_flag, channel_id, stream,
+                            channel_open_flag,
+                            channel_id,
+                            stream,
                         );
 
                         _ = stream.close().await;
@@ -373,9 +388,12 @@ mod event_loops {
                     }
                 }
                 Err(err) => {
-                    println!(
+                    log::trace!(
                         "stop recv loop. open_flag={:?}, channel={:?}, {:?}, err={}",
-                        channel_open_flag, channel_id, stream, err
+                        channel_open_flag,
+                        channel_id,
+                        stream,
+                        err
                     );
 
                     // try stop send loop
@@ -444,7 +462,7 @@ mod tests {
             .set_application_protos(&[b"hq-interop", b"hq-29", b"hq-28", b"hq-27", b"http/0.9"])
             .unwrap();
 
-        config.set_max_idle_timeout(5000);
+        config.set_max_idle_timeout(10000);
         config.set_max_recv_udp_payload_size(max_datagram_size);
         config.set_max_send_udp_payload_size(max_datagram_size);
         config.set_initial_max_data(10_000_000);
@@ -594,18 +612,16 @@ mod tests {
         let cache_queue_len = 1024;
         let max_packet_len = 1350;
 
-        let listener = create_echo_server(20).await;
+        let listener = create_echo_server(3).await;
 
         let raddr = *listener.local_addrs().next().unwrap();
 
         let tm = mock_tm(raddr, cache_queue_len, max_packet_len);
 
-        for i in 0..10 {
+        for i in 0..100 {
             let (mut sender, mut receiver) = mock_client(&tm, cache_queue_len).await;
 
-            for j in 0..1000 {
-                println!("{} {}", i, j);
-
+            for j in 0..100 {
                 let send_data = format!("Hello world, {} {}", i, j);
 
                 sender
@@ -617,6 +633,59 @@ mod tests {
 
                 assert_eq!(&buf, send_data.as_bytes());
             }
+        }
+
+        listener.close().await;
+
+        Ok(())
+    }
+
+    #[hala_test::test(io_test)]
+    async fn echo_mult_client_multi_thread() -> io::Result<()> {
+        // pretty_env_logger::init();
+
+        let cache_queue_len = 1024;
+        let max_packet_len = 1350;
+
+        let listener = create_echo_server(3).await;
+
+        let raddr = *listener.local_addrs().next().unwrap();
+
+        let tm = mock_tm(raddr, cache_queue_len, max_packet_len);
+
+        let (sx, mut rx) = mpsc::channel(0);
+
+        let clients = 100;
+
+        for i in 0..clients {
+            let (mut sender, mut receiver) = mock_client(&tm, cache_queue_len).await;
+
+            let mut sx = sx.clone();
+
+            future_spawn(async move {
+                log::trace!("start {}", i);
+
+                for j in 0..100 {
+                    let send_data = format!("Hello world, {} {}", i, j);
+
+                    sender
+                        .send(BytesMut::from(send_data.as_bytes()))
+                        .await
+                        .unwrap();
+
+                    let buf = receiver.next().await.unwrap();
+
+                    assert_eq!(&buf, send_data.as_bytes());
+                }
+
+                sx.send(()).await.unwrap();
+
+                log::trace!("finished {}", i);
+            })
+        }
+
+        for _ in 0..clients {
+            rx.next().await.unwrap();
         }
 
         listener.close().await;

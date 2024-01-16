@@ -80,6 +80,11 @@ impl TcpListener {
             .fd_cntl(self.fd, Cmd::LocalAddr)?
             .try_into_sockaddr()
     }
+
+    /// Close and stop tcp server listener.
+    pub async fn close(&self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 impl Drop for TcpListener {

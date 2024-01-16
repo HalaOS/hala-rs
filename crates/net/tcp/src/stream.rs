@@ -19,6 +19,15 @@ pub struct TcpStream {
     driver: Driver,
 }
 
+impl Drop for TcpStream {
+    fn drop(&mut self) {
+        self.driver
+            .fd_cntl(self.poller, Cmd::Deregister(self.fd))
+            .unwrap();
+        self.driver.fd_close(self.fd).unwrap()
+    }
+}
+
 impl Debug for TcpStream {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "TcpStream({:?})", self.fd)
@@ -177,14 +186,5 @@ impl AsyncRead for TcpStream {
                 )?
                 .try_into_datalen()
         })
-    }
-}
-
-impl Drop for TcpStream {
-    fn drop(&mut self) {
-        self.driver
-            .fd_cntl(self.poller, Cmd::Deregister(self.fd))
-            .unwrap();
-        self.driver.fd_close(self.fd).unwrap()
     }
 }
