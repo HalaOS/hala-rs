@@ -160,15 +160,18 @@ mod event_loop {
         loop {
             let (buf, send_info) = state.read().await?;
 
-            udp_socket
-                .send_to_on_path(
-                    &buf,
-                    hala_udp::PathInfo {
-                        from: send_info.from,
-                        to: send_info.to,
-                    },
-                )
-                .await?;
+            let path_info = hala_udp::PathInfo {
+                from: send_info.from,
+                to: send_info.to,
+            };
+
+            let send_size = udp_socket.send_to_on_path(&buf, path_info).await?;
+
+            log::trace!(
+                "Quic server send data, len={}, path_info={:?}",
+                send_size,
+                path_info
+            );
         }
     }
 }

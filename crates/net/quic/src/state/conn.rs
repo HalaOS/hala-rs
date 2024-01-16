@@ -450,7 +450,7 @@ impl QuicConnState {
                         }
                         Err(err) if err.kind() == io::ErrorKind::TimedOut => {
                             // cancel waiting readable event notify.
-                            self.mediator.wait_cancel(&event);
+                            // self.mediator.wait_cancel(&event);
                             // relock state.
                             let mut state = self.state.lock().await;
 
@@ -501,7 +501,7 @@ impl QuicConnState {
 
     /// Asynchronous write new data to state machine.
     pub async fn write(&self, buf: &mut [u8], recv_info: RecvInfo) -> io::Result<usize> {
-        // let event = QuicConnStateEvent::Readable(self.scid.clone());
+        log::trace!("{:?} write data, len={}", self, buf.len());
 
         let mut state = self.state.lock().await;
 
@@ -531,6 +531,13 @@ impl QuicConnState {
         let event = QuicConnStateEvent::StreamWritable(self.scid.clone(), id);
 
         loop {
+            log::trace!(
+                "{:?} stream write, stream_id={}, len={}, fin={}",
+                self,
+                id,
+                buf.len(),
+                fin,
+            );
             // Asynchronously lock the [`QuicConnState`]
             let mut state = self.state.lock().await;
 
@@ -539,7 +546,7 @@ impl QuicConnState {
             match state.quiche_conn.stream_send(id, buf, fin) {
                 Ok(write_size) => {
                     log::trace!(
-                        "{:?} stream write, stream_id={}, len={}, fin={}",
+                        "{:?} stream write succeed, stream_id={}, len={}, fin={}",
                         self,
                         id,
                         write_size,
@@ -647,19 +654,22 @@ impl QuicConnState {
     /// Reads data from stream, and returns tuple (read_size,fin)
     pub async fn stream_recv(&self, id: u64, buf: &mut [u8]) -> io::Result<(usize, bool)> {
         loop {
+            log::trace!(
+                "{:?} stream read, stream_id={}, len={}",
+                self,
+                id,
+                buf.len(),
+            );
+
             // Asynchronously lock the [`QuicConnState`]
-            let mut state: maker::AsyncLockableMakerGuard<
-                '_,
-                SpinMutex<RawQuicConnState>,
-                SpinMutex<VecDeque<std::task::Waker>>,
-            > = self.state.lock().await;
+            let mut state = self.state.lock().await;
 
             self.handle_quic_conn_status(&mut state)?;
 
             match state.quiche_conn.stream_recv(id, buf) {
                 Ok((read_size, fin)) => {
                     log::trace!(
-                        "{:?} stream read, stream_id={}, len={}, fin={}",
+                        "{:?} stream read succeed, stream_id={}, len={}, fin={}",
                         self,
                         id,
                         read_size,
@@ -678,6 +688,8 @@ impl QuicConnState {
                     self.stream_recv_wait(id, state).await?;
                 }
                 Err(quiche::Error::InvalidStreamState(_)) => {
+                    self.notify_readable(&mut state)?;
+
                     if state.register_outgoing_stream_ids.contains(&id) {
                         log::trace!(
                             "{:?},outgoin stream read before send, stream_id={}",
@@ -687,8 +699,6 @@ impl QuicConnState {
 
                         self.stream_recv_wait(id, state).await?;
                     } else {
-                        self.notify_readable(&mut state)?;
-
                         return Err(into_io_error(quiche::Error::InvalidStreamState(id)));
                     }
                 }

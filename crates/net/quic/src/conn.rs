@@ -290,6 +290,8 @@ pub mod async_read_write {
 
 mod event_loop {
 
+    use hala_udp::PathInfo;
+
     use super::*;
 
     pub(super) fn run_client_loop(udp_socket: UdpGroup, conn: QuicConn, max_datagram_size: usize) {
@@ -358,6 +360,12 @@ mod event_loop {
         loop {
             let (recv_size, path_info) = udp_socket.recv_from(&mut buf).await?;
 
+            log::trace!(
+                "Quic client recv data, len={}, path_info={:?}",
+                recv_size,
+                path_info
+            );
+
             conn.state
                 .write(
                     &mut buf[..recv_size],
@@ -380,7 +388,20 @@ mod event_loop {
         loop {
             let (read_size, send_info) = conn.state.read(&mut buf).await?;
 
-            udp_socket.send_to(&buf[..read_size], send_info.to).await?;
+            let path_info = PathInfo {
+                from: send_info.from,
+                to: send_info.to,
+            };
+
+            let send_size = udp_socket
+                .send_to_on_path(&buf[..read_size], path_info)
+                .await?;
+
+            log::trace!(
+                "Quic client send data, len={}, path_info={:?}",
+                send_size,
+                path_info
+            );
         }
     }
 }

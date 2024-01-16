@@ -64,6 +64,7 @@ impl TcpStream {
         Self::new_with(driver, fd, poller)
     }
 
+    /// Get socket local bound [`address`](SocketAddr)
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
         self.driver
             .fd_cntl(self.fd, Cmd::LocalAddr)?
@@ -74,6 +75,13 @@ impl TcpStream {
         self.driver.fd_cntl(self.fd, Cmd::Shutdown(how))?;
 
         Ok(())
+    }
+
+    /// Get remote peer socket [`address`](SocketAddr)
+    pub fn remote_addr(&self) -> io::Result<SocketAddr> {
+        self.driver
+            .fd_cntl(self.fd, Cmd::RemoteAddr)?
+            .try_into_sockaddr()
     }
 }
 

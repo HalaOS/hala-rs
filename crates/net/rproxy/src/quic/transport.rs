@@ -312,8 +312,11 @@ mod event_loops {
         );
 
         while let Some(buf) = forward_receiver.next().await {
+            log::trace!("{} forward data: {}", channel_id, buf.len());
             match stream.write_all(&buf).await {
-                Ok(_) => {}
+                Ok(_) => {
+                    log::trace!("{} forward data: {}, success", channel_id, buf.len());
+                }
                 Err(err) => {
                     log::trace!(
                         "stop send loop. open_flag={:?}, channel={:?}, {:?}, err={}",
@@ -462,7 +465,7 @@ mod tests {
             .set_application_protos(&[b"hq-interop", b"hq-29", b"hq-28", b"hq-27", b"http/0.9"])
             .unwrap();
 
-        config.set_max_idle_timeout(10000);
+        config.set_max_idle_timeout(5000);
         config.set_max_recv_udp_payload_size(max_datagram_size);
         config.set_max_send_udp_payload_size(max_datagram_size);
         config.set_initial_max_data(10_000_000);
@@ -503,9 +506,13 @@ mod tests {
         let mut buf = vec![0; 1370];
 
         loop {
+            log::trace!("{:?} begin read", stream);
             let (read_size, fin) = stream.stream_recv(&mut buf).await.unwrap();
+            log::trace!("{:?} end read", stream);
 
+            log::trace!("{:?} begin write", stream);
             stream.write_all(&buf[..read_size]).await.unwrap();
+            log::trace!("{:?} end write", stream);
 
             if fin {
                 return;
@@ -578,6 +585,8 @@ mod tests {
 
     #[hala_test::test(io_test)]
     async fn echo_single_client() -> io::Result<()> {
+        pretty_env_logger::init_timed();
+
         let cache_queue_len = 1024;
         let max_packet_len = 1350;
 
@@ -592,12 +601,20 @@ mod tests {
         for i in 0..1000 {
             let send_data = format!("Hello world, {}", i);
 
+            log::info!("begin send {}", i);
+
             sender
                 .send(BytesMut::from(send_data.as_bytes()))
                 .await
                 .unwrap();
 
+            log::info!("finish send {}", i);
+
+            log::info!("begin recv {}", i);
+
             let buf = receiver.next().await.unwrap();
+
+            log::info!("finish recv {}", i);
 
             assert_eq!(&buf, send_data.as_bytes());
         }
@@ -609,6 +626,8 @@ mod tests {
 
     #[hala_test::test(io_test)]
     async fn echo_mult_client() -> io::Result<()> {
+        pretty_env_logger::init_timed();
+
         let cache_queue_len = 1024;
         let max_packet_len = 1350;
 
@@ -632,7 +651,11 @@ mod tests {
                 let buf = receiver.next().await.unwrap();
 
                 assert_eq!(&buf, send_data.as_bytes());
+
+                log::info!("{} {}", i, j);
             }
+
+            log::info!("finish {}", i);
         }
 
         listener.close().await;
@@ -642,8 +665,6 @@ mod tests {
 
     #[hala_test::test(io_test)]
     async fn echo_mult_client_multi_thread() -> io::Result<()> {
-        // pretty_env_logger::init();
-
         let cache_queue_len = 1024;
         let max_packet_len = 1350;
 

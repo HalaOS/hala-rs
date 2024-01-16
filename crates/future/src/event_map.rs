@@ -165,7 +165,7 @@ where
 
 impl<'a, E, G> std::future::Future for Wait<'a, E, G>
 where
-    E: Send + Eq + Hash + Clone + Unpin,
+    E: Send + Eq + Hash + Clone + Unpin + Debug,
     G: AsyncGuardMut<'a> + Unpin + 'a,
 {
     type Output = Result<(), EventMapError>;
@@ -174,6 +174,8 @@ where
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
+        log::trace!("Event map poll.");
+
         if let Some(guard) = self.guard.take() {
             // insert waker into waiting map.
             self.event_map.wakers.insert(
@@ -185,6 +187,8 @@ where
             );
 
             G::Locker::unlock(guard);
+
+            log::trace!("event_map release guard, event={:?}", self.event);
         }
 
         // Check reason to avoid unexpected `poll` calling.

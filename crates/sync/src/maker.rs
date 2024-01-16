@@ -124,6 +124,7 @@ where
             drop(guard);
 
             if let Some(wake) = self.locker.wakers.lock().pop_front() {
+                log::trace!("AsyncLockableMakerGuard wake next one");
                 wake.wake();
             }
         }
@@ -150,14 +151,21 @@ where
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
+        log::trace!("AsyncLockableMakerFuture poll");
+
         let mut wakers = self.locker.wakers.lock();
 
         match self.locker.inner_locker.try_lock() {
-            Some(guard) => std::task::Poll::Ready(AsyncLockableMakerGuard {
-                locker: self.locker,
-                inner_guard: Some(guard),
-            }),
+            Some(guard) => {
+                log::trace!("AsyncLockableMakerFuture poll locked");
+
+                std::task::Poll::Ready(AsyncLockableMakerGuard {
+                    locker: self.locker,
+                    inner_guard: Some(guard),
+                })
+            }
             None => {
+                log::trace!("AsyncLockableMakerFuture poll pending");
                 wakers.push_back(cx.waker().clone());
 
                 std::task::Poll::Pending
