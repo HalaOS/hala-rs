@@ -1,4 +1,4 @@
-use std::{io, sync::Arc};
+use std::{fmt::Debug, io, sync::Arc};
 
 use bytes::BytesMut;
 use dashmap::DashMap;
@@ -7,15 +7,41 @@ use futures::{
     future::BoxFuture,
 };
 use hala_future::executor::future_spawn;
+use uuid::Uuid;
 
 use crate::handshake::{HandshakeContext, Handshaker};
 
 /// Transport channel type create by [`open_channel`](Transport::open_channel) function
 pub struct TransportChannel {
+    pub uuid: Uuid,
     pub max_packet_len: usize,
     pub cache_queue_len: usize,
     pub sender: Sender<BytesMut>,
     pub receiver: Receiver<BytesMut>,
+}
+
+impl TransportChannel {
+    /// Create new channel with random uuid.
+    pub fn new(
+        max_packet_len: usize,
+        cache_queue_len: usize,
+        sender: Sender<BytesMut>,
+        receiver: Receiver<BytesMut>,
+    ) -> Self {
+        Self {
+            uuid: Uuid::new_v4(),
+            max_packet_len,
+            cache_queue_len,
+            sender,
+            receiver,
+        }
+    }
+}
+
+impl Debug for TransportChannel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "TransportChannel({:?})", self.uuid)
+    }
 }
 
 /// [`Channel`](TransportChannel) factory responsible for forward/backward data forwarding

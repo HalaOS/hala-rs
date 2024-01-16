@@ -11,3 +11,5 @@ pub use conn::*;
 
 mod listener;
 pub use listener::*;
+
+pub type QuicConnectionId<'a> = quiche::ConnectionId<'a>;

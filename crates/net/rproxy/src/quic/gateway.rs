@@ -351,12 +351,12 @@ mod tests {
             });
 
             Box::pin(async move {
-                Ok(TransportChannel {
+                Ok(TransportChannel::new(
                     max_packet_len,
                     cache_queue_len,
-                    sender: forward_sender,
-                    receiver: backward_receiver,
-                })
+                    forward_sender,
+                    backward_receiver,
+                ))
             })
         }
     }
