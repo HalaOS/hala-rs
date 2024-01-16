@@ -165,6 +165,14 @@ mod event_loop {
 
             match (&*stream).read(buf.as_mut()).await {
                 Ok(read_size) => {
+                    if read_size == 0 {
+                        log::info!(
+                            "{} {:?}, stop forward loop with tcp stream broken",
+                            id,
+                            stream,
+                        );
+                        return;
+                    }
                     match forward_sender
                         .send(buf.into_bytes_mut(Some(read_size)))
                         .await
@@ -327,7 +335,7 @@ mod tests {
 
         let mut stream = TcpStream::connect(raddr).unwrap();
 
-        for i in 0..10 {
+        for i in 0..100 {
             let data = format!("hello world {}", i);
 
             stream.write_all(data.as_bytes()).await.unwrap();
@@ -346,7 +354,7 @@ mod tests {
 
     #[hala_test::test(io_test)]
     async fn echo_close_stream_test() -> io::Result<()> {
-        _ = pretty_env_logger::try_init_timed();
+        // _ = pretty_env_logger::try_init_timed();
 
         let gateway = TcpGateway::bind("hello", "127.0.0.1:0").unwrap();
 
@@ -382,7 +390,7 @@ mod tests {
     async fn echo_multi_thread_test() -> io::Result<()> {
         // pretty_env_logger::init();
 
-        let count = 10;
+        let count = 100;
 
         let gateway = TcpGateway::bind("hello", "127.0.0.1:0").unwrap();
 

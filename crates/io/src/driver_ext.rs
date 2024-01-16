@@ -239,13 +239,13 @@ impl<T: RawDriverExt + Clone> RawDriver for RawDriverExtProxy<T> {
                     .poller_reregister(handle, source, interests)
                     .map(|_| CmdResp::None)
             }
-            crate::Cmd::Deregister(source) => {
-                handle.expect(Description::Poller)?;
+            // crate::Cmd::Deregister(source) => {
+            //     handle.expect(Description::Poller)?;
 
-                self.inner
-                    .poller_deregister(handle, source)
-                    .map(|_| CmdResp::None)
-            }
+            //     self.inner
+            //         .poller_deregister(handle, source)
+            //         .map(|_| CmdResp::None)
+            // }
             crate::Cmd::Accept(waker) => {
                 handle.expect(Description::TcpListener)?;
 

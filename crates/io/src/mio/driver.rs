@@ -127,6 +127,10 @@ impl RawDriverExt for MioDriver {
     fn timeout_close(&self, handle: crate::Handle) -> std::io::Result<()> {
         handle.expect(Description::Timeout)?;
 
+        let typed_handle = TypedHandle::<MioWithPoller<MioTimer>>::new(handle);
+
+        typed_handle.with_mut(|timer| timer.poller().deregister(handle))?;
+
         handle.drop_as::<MioWithPoller<MioTimer>>();
 
         Ok(())
@@ -170,6 +174,10 @@ impl RawDriverExt for MioDriver {
 
     fn tcp_listener_close(&self, handle: crate::Handle) -> std::io::Result<()> {
         handle.expect(Description::TcpListener)?;
+
+        let typed_handle = TypedHandle::<MioWithPoller<mio::net::TcpListener>>::new(handle);
+
+        typed_handle.with_mut(|timer| timer.poller().deregister(handle))?;
 
         handle.drop_as::<MioWithPoller<mio::net::TcpListener>>();
 
@@ -234,6 +242,10 @@ impl RawDriverExt for MioDriver {
     fn tcp_stream_close(&self, handle: crate::Handle) -> std::io::Result<()> {
         handle.expect(Description::TcpStream)?;
 
+        let typed_handle = TypedHandle::<MioWithPoller<mio::net::TcpStream>>::new(handle);
+
+        typed_handle.with_mut(|timer| timer.poller().deregister(handle))?;
+
         handle.drop_as::<MioWithPoller<mio::net::TcpStream>>();
 
         Ok(())
@@ -294,6 +306,10 @@ impl RawDriverExt for MioDriver {
 
     fn udp_socket_close(&self, handle: crate::Handle) -> std::io::Result<()> {
         handle.expect(Description::UdpSocket)?;
+
+        let typed_handle = TypedHandle::<MioWithPoller<mio::net::UdpSocket>>::new(handle);
+
+        typed_handle.with_mut(|timer| timer.poller().deregister(handle))?;
 
         handle.drop_as::<MioWithPoller<mio::net::UdpSocket>>();
 

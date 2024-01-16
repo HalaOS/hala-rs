@@ -15,15 +15,11 @@ use futures::{AsyncRead, AsyncWrite};
 /// A TCP stream between a local and a remote socket.
 pub struct TcpStream {
     pub fd: Handle,
-    poller: Handle,
     driver: Driver,
 }
 
 impl Drop for TcpStream {
     fn drop(&mut self) {
-        self.driver
-            .fd_cntl(self.poller, Cmd::Deregister(self.fd))
-            .unwrap();
         self.driver.fd_close(self.fd).unwrap()
     }
 }
@@ -50,7 +46,7 @@ impl TcpStream {
             _ => {}
         }
 
-        Ok(Self { fd, driver, poller })
+        Ok(Self { fd, driver })
     }
 
     /// Opens a TCP connection to a remote host.

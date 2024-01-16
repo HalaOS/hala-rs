@@ -126,7 +126,7 @@ pub enum Cmd<'a> {
     },
 
     /// Deregister io event interests with `Poll`
-    Deregister(Handle),
+    // Deregister(Handle),
 
     /// Try accept one incoming connection.
     Accept(Waker),

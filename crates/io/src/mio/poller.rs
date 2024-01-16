@@ -209,7 +209,14 @@ impl MioPoller {
             }
         }
 
-        self.remove_waker(handle.token, Interest::all()).map(|_| ())
+        self.remove_waker(handle.token, Interest::all())
+            .map(|waker| {
+                if let Some(waker) = waker {
+                    waker.wake();
+                }
+
+                ()
+            })
     }
 
     pub(super) fn add_waker(&self, token: Token, interests: Interest, waker: Waker) {

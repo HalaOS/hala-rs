@@ -85,10 +85,6 @@ impl Future for Sleep {
 impl Drop for Sleep {
     fn drop(&mut self) {
         if let Some(fd) = self.fd.take() {
-            self.driver
-                .fd_cntl(self.poller, Cmd::Deregister(fd))
-                .unwrap();
-
             self.driver.fd_close(fd).unwrap();
         }
     }

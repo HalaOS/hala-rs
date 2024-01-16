@@ -52,8 +52,6 @@ impl Debug for PathInfo {
 pub struct UdpGroup {
     /// hala io driver instance.
     driver: Driver,
-    /// The poller handle associated with field `fds`.
-    poller: Handle,
     /// fds of this udp group.
     fds: HashMap<SocketAddr, Handle>,
     /// mapping handle to address.
@@ -71,9 +69,6 @@ pub struct UdpGroup {
 impl Drop for UdpGroup {
     fn drop(&mut self) {
         for fd in self.fds.iter().map(|(_, fd)| *fd) {
-            self.driver
-                .fd_cntl(self.poller, Cmd::Deregister(fd))
-                .unwrap();
             self.driver.fd_close(fd).unwrap()
         }
     }
@@ -117,7 +112,6 @@ impl UdpGroup {
 
         let group = UdpGroup {
             driver: io_context.driver().clone(),
-            poller: io_context.poller(),
             fds,
             laddrs: addrs,
             batching_read_buf: Default::default(),
