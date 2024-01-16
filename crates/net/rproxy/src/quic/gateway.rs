@@ -250,7 +250,7 @@ mod tests {
 
     use crate::{
         handshake::{HandshakeResult, Handshaker},
-        transport::{Transport, TransportChannel},
+        transport::{ChannelOpenFlag, Transport, TransportChannel},
     };
 
     use super::*;
@@ -320,7 +320,7 @@ mod tests {
                 Ok(HandshakeResult {
                     context: forward_cx,
                     transport_id: "EchoTransport".into(),
-                    conn_str: "".into(),
+                    channel_open_flag: ChannelOpenFlag::ConnectString("".into()),
                 })
             })
         }
@@ -335,7 +335,7 @@ mod tests {
 
         fn open_channel(
             &self,
-            _: &str,
+            _: ChannelOpenFlag,
             max_packet_len: usize,
             cache_queue_len: usize,
         ) -> BoxFuture<'static, io::Result<crate::transport::TransportChannel>> {

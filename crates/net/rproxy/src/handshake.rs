@@ -6,6 +6,8 @@ use futures::{
     future::BoxFuture,
 };
 
+use crate::transport::ChannelOpenFlag;
+
 /// The transport layer protocol of gateway.
 #[derive(Debug, Clone)]
 pub enum Protocol {
@@ -39,7 +41,7 @@ pub struct HandshakeResult {
     /// Transport type id
     pub transport_id: String,
     /// Transport connection string.
-    pub conn_str: String,
+    pub channel_open_flag: ChannelOpenFlag,
 }
 
 /// Handshake protocol type.

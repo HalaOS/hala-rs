@@ -14,6 +14,7 @@ bytes = {workspace = true}
 dashmap = {workspace = true}
 futures = {workspace = true}
 log = {workspace = true}
+url = {workspace = true}
 uuid = {workspace = true, features = [
   "v4", # Lets you generate random UUIDs
   "fast-rng", # Use a faster (but still sufficiently random) RNG

@@ -1,4 +1,4 @@
-use std::{fmt::Debug, io, sync::Arc};
+use std::{fmt::Debug, io, net::SocketAddr, sync::Arc};
 
 use bytes::BytesMut;
 use dashmap::DashMap;
@@ -7,6 +7,7 @@ use futures::{
     future::BoxFuture,
 };
 use hala_future::executor::future_spawn;
+use url::Url;
 use uuid::Uuid;
 
 use crate::handshake::{HandshakeContext, Handshaker};
@@ -44,12 +45,39 @@ impl Debug for TransportChannel {
     }
 }
 
+/// Transport channel open flag.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub enum ChannelOpenFlag {
+    /// Remote peer socket address list.
+    RemoteAddresses(Vec<SocketAddr>),
+    /// Remote peer socket address.
+    RemoteAddress(SocketAddr),
+    /// Parsed url list.
+    Urls(Vec<Url>),
+    /// Parsed url.
+    Url(Url),
+    /// Connection string.
+    ConnectString(String),
+}
+
+impl Debug for ChannelOpenFlag {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ChannelOpenFlag::RemoteAddresses(addrs) => write!(f, "RemoteAddresses({:?})", addrs),
+            ChannelOpenFlag::RemoteAddress(addr) => write!(f, "RemoteAddress({:?})", addr),
+            ChannelOpenFlag::Urls(urls) => write!(f, "Urls({:?})", urls),
+            ChannelOpenFlag::Url(url) => write!(f, "Url({:?})", url),
+            ChannelOpenFlag::ConnectString(url) => write!(f, "ConnectString({:?})", url),
+        }
+    }
+}
+
 /// [`Channel`](TransportChannel) factory responsible for forward/backward data forwarding
 pub trait Transport {
     /// Open new [`channel`](TransportChannel) instance with `conn_str`.
     fn open_channel(
         &self,
-        conn_str: &str,
+        flag: ChannelOpenFlag,
         max_packet_len: usize,
         cache_queue_len: usize,
     ) -> BoxFuture<'static, io::Result<TransportChannel>>;
@@ -110,7 +138,11 @@ impl TransportManager {
             ))?;
 
         let channel = transport
-            .open_channel(&result.conn_str, self.max_packet_len, self.cache_queue_len)
+            .open_channel(
+                result.channel_open_flag,
+                self.max_packet_len,
+                self.cache_queue_len,
+            )
             .await?;
 
         event_loop::run_event_loop(result.context, channel);

@@ -43,6 +43,7 @@ serde = {version = "^1.0", features = ["derive"]}
 serde_json = {version = "^1.0"}
 thiserror = "^1.0.50"
 thiserror-no-std = "^2.0"
+url = "^2.5.0"
 uuid = "^1.6.1"
 
 hala-future = {path = "crates/future", version = "^0.1"}
