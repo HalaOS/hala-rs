@@ -51,6 +51,7 @@ hala-io = {path = "crates/io", version = "^0.1"}
 hala-lockfree = {path = "crates/lockfree", version = "^0.1"}
 hala-ops = {path = "crates/ops", version = "^0.1"}
 hala-quic = {path = "crates/net/quic", version = "^0.1"}
+hala-quic2 = {path = "crates/net/quic2", version = "^0.1"}
 hala-rproxy = {path = "crates/net/rproxy", version = "^0.1"}
 hala-sync = {path = "crates/sync", version = "^0.1"}
 hala-tcp = {path = "crates/net/tcp", version = "^0.1"}
