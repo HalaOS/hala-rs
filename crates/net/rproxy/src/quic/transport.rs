@@ -465,7 +465,7 @@ mod tests {
             .set_application_protos(&[b"hq-interop", b"hq-29", b"hq-28", b"hq-27", b"http/0.9"])
             .unwrap();
 
-        config.set_max_idle_timeout(5000);
+        config.set_max_idle_timeout(1000);
         config.set_max_recv_udp_payload_size(max_datagram_size);
         config.set_max_send_udp_payload_size(max_datagram_size);
         config.set_initial_max_data(10_000_000);
@@ -585,7 +585,7 @@ mod tests {
 
     #[hala_test::test(io_test)]
     async fn echo_single_client() -> io::Result<()> {
-        pretty_env_logger::init_timed();
+        // pretty_env_logger::init_timed();
 
         let cache_queue_len = 1024;
         let max_packet_len = 1350;
@@ -608,13 +608,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            log::info!("finish send {}", i);
-
-            log::info!("begin recv {}", i);
-
             let buf = receiver.next().await.unwrap();
-
-            log::info!("finish recv {}", i);
 
             assert_eq!(&buf, send_data.as_bytes());
         }
@@ -626,8 +620,6 @@ mod tests {
 
     #[hala_test::test(io_test)]
     async fn echo_mult_client() -> io::Result<()> {
-        pretty_env_logger::init_timed();
-
         let cache_queue_len = 1024;
         let max_packet_len = 1350;
 

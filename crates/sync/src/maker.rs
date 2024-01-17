@@ -123,7 +123,9 @@ where
         if let Some(guard) = self.inner_guard.take() {
             drop(guard);
 
-            if let Some(wake) = self.locker.wakers.lock().pop_front() {
+            let mut wakers = self.locker.wakers.lock();
+
+            while let Some(wake) = wakers.pop_front() {
                 log::trace!("AsyncLockableMakerGuard wake next one");
                 wake.wake();
             }
@@ -153,23 +155,46 @@ where
     ) -> std::task::Poll<Self::Output> {
         log::trace!("AsyncLockableMakerFuture poll");
 
-        let mut wakers = self.locker.wakers.lock();
+        if let Some(guard) = self.locker.inner_locker.try_lock() {
+            log::trace!("AsyncLockableMakerFuture poll locked");
 
-        match self.locker.inner_locker.try_lock() {
-            Some(guard) => {
-                log::trace!("AsyncLockableMakerFuture poll locked");
-
-                std::task::Poll::Ready(AsyncLockableMakerGuard {
-                    locker: self.locker,
-                    inner_guard: Some(guard),
-                })
-            }
-            None => {
-                log::trace!("AsyncLockableMakerFuture poll pending");
-                wakers.push_back(cx.waker().clone());
-
-                std::task::Poll::Pending
-            }
+            return std::task::Poll::Ready(AsyncLockableMakerGuard {
+                locker: self.locker,
+                inner_guard: Some(guard),
+            });
         }
+
+        let mut wakers = self.locker.wakers.lock();
+        wakers.push_back(cx.waker().clone());
+
+        // Ensure that we haven't raced `MutexGuard::drop`'s unlock path by
+        // attempting to acquire the lock again
+        if let Some(guard) = self.locker.inner_locker.try_lock() {
+            log::trace!("AsyncLockableMakerFuture poll locked");
+
+            return std::task::Poll::Ready(AsyncLockableMakerGuard {
+                locker: self.locker,
+                inner_guard: Some(guard),
+            });
+        }
+
+        std::task::Poll::Pending
+
+        // match self.locker.inner_locker.try_lock() {
+        //     Some(guard) => {
+        //         log::trace!("AsyncLockableMakerFuture poll locked");
+
+        //         std::task::Poll::Ready(AsyncLockableMakerGuard {
+        //             locker: self.locker,
+        //             inner_guard: Some(guard),
+        //         })
+        //     }
+        //     None => {
+        //         log::trace!("AsyncLockableMakerFuture poll pending");
+        //         wakers.push_back(cx.waker().clone());
+
+        //         std::task::Poll::Pending
+        //     }
+        // }
     }
 }
