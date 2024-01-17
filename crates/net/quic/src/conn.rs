@@ -221,7 +221,7 @@ impl Drop for QuicStream {
             let stream_id = self.stream_id;
 
             future_spawn(async move {
-                conn.state.close_stream(stream_id).await.unwrap();
+                _ = conn.state.close_stream(stream_id).await;
             });
         }
     }
