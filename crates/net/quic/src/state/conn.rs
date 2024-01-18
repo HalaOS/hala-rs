@@ -541,8 +541,6 @@ impl QuicConnState {
             // Asynchronously lock the [`QuicConnState`]
             let mut state = self.state.lock().await;
 
-            self.handle_quic_conn_status(&mut state)?;
-
             match state.quiche_conn.stream_send(id, buf, fin) {
                 Ok(write_size) => {
                     log::trace!(
@@ -589,7 +587,9 @@ impl QuicConnState {
                 Err(quiche::Error::StreamStopped(id)) => {
                     log::error!("{:?} stream sending closed, stream_id={}", self, id,);
 
-                    self.notify_readable(&mut state)?;
+                    self.handle_quic_conn_status(&mut state)?;
+
+                    // self.notify_readable(&mut state)?;
 
                     return Err(into_io_error(quiche::Error::StreamStopped(id)));
                 }
@@ -601,7 +601,9 @@ impl QuicConnState {
                         err
                     );
 
-                    self.notify_readable(&mut state)?;
+                    self.handle_quic_conn_status(&mut state)?;
+
+                    // self.notify_readable(&mut state)?;
 
                     return Err(into_io_error(err));
                 }
@@ -663,8 +665,6 @@ impl QuicConnState {
 
             // Asynchronously lock the [`QuicConnState`]
             let mut state = self.state.lock().await;
-
-            self.handle_quic_conn_status(&mut state)?;
 
             match state.quiche_conn.stream_recv(id, buf) {
                 Ok((read_size, fin)) => {
@@ -775,6 +775,8 @@ impl QuicConnState {
     /// This function closes stream by sending len(0) data and fin flag.
     pub async fn close_stream(&self, id: u64) -> io::Result<()> {
         let mut state = self.state.lock().await;
+
+        self.handle_quic_conn_status(&mut state)?;
 
         state.dropping_stream_queue.push_back(id);
 
