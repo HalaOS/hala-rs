@@ -588,7 +588,7 @@ mod tests {
         // pretty_env_logger::init_timed();
 
         let cache_queue_len = 1024;
-        let max_packet_len = 1350;
+        let max_packet_len = 1370;
 
         let listener = create_echo_server(10).await;
 
