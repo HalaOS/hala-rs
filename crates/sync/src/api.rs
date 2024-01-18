@@ -24,7 +24,7 @@ pub trait Lockable {
 
 pub trait LockableNew: Lockable {
     type Value;
-    fn new(vlaue: Self::Value) -> Self;
+    fn new(value: Self::Value) -> Self;
 }
 
 /// A futures-aware lockable mutex object should implement this trait.

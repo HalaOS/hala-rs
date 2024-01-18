@@ -585,7 +585,7 @@ mod tests {
 
     #[hala_test::test(io_test)]
     async fn echo_single_client() -> io::Result<()> {
-        pretty_env_logger::init_timed();
+        // pretty_env_logger::init_timed();
 
         let cache_queue_len = 1024;
         let max_packet_len = 1350;
