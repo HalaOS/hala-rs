@@ -1,6 +1,8 @@
 use std::{
-    collections::VecDeque,
+    collections::HashMap,
+    fmt::Debug,
     ops::{self, DerefMut},
+    panic::Location,
     task::Waker,
 };
 
@@ -38,23 +40,30 @@ where
     }
 }
 
-impl<Locker, Wakers> AsyncLockable for AsyncLockableMaker<Locker, Wakers>
+impl<Locker, Wakers, Mediator> AsyncLockable for AsyncLockableMaker<Locker, Wakers>
 where
     Locker: Lockable + Send + Sync,
     for<'a> Locker::GuardMut<'a>: Send + Unpin,
     Wakers: Lockable + Send + Sync,
-    for<'b> Wakers::GuardMut<'b>: DerefMut<Target = VecDeque<Waker>>,
+    for<'b> Wakers::GuardMut<'b>: DerefMut<Target = Mediator>,
+    Mediator: AsyncLockableMediator + 'static,
 {
-    type GuardMut<'a>= AsyncLockableMakerGuard<'a, Locker, Wakers>
+    type GuardMut<'a>= AsyncLockableMakerGuard<'a, Locker, Wakers,Mediator>
     where
         Self: 'a;
 
-    type GuardMutFuture<'a> = AsyncLockableMakerFuture<'a, Locker, Wakers>
+    type GuardMutFuture<'a> = AsyncLockableMakerFuture<'a, Locker, Wakers,Mediator>
     where
         Self: 'a;
 
+    #[track_caller]
     fn lock(&self) -> Self::GuardMutFuture<'_> {
-        AsyncLockableMakerFuture { locker: self }
+        AsyncLockableMakerFuture {
+            locker: self,
+            wait_key: None,
+            #[cfg(feature = "trace_lock")]
+            caller: Location::caller(),
+        }
     }
 
     fn unlock<'a>(guard: Self::GuardMut<'a>) -> &'a Self {
@@ -67,32 +76,37 @@ where
 }
 
 /// RAII `Guard` type for [`AsyncLockableMaker`]
-pub struct AsyncLockableMakerGuard<'a, Locker, Wakers>
+pub struct AsyncLockableMakerGuard<'a, Locker, Wakers, Mediator>
 where
     Locker: Lockable,
     Wakers: Lockable,
-    for<'b> Wakers::GuardMut<'b>: DerefMut<Target = VecDeque<Waker>>,
+    for<'b> Wakers::GuardMut<'b>: DerefMut<Target = Mediator>,
+    Mediator: AsyncLockableMediator,
 {
     locker: &'a AsyncLockableMaker<Locker, Wakers>,
     inner_guard: Option<Locker::GuardMut<'a>>,
 }
 
-impl<'a, Locker, Wakers> AsyncGuardMut<'a> for AsyncLockableMakerGuard<'a, Locker, Wakers>
+impl<'a, Locker, Wakers, Mediator> AsyncGuardMut<'a>
+    for AsyncLockableMakerGuard<'a, Locker, Wakers, Mediator>
 where
     Locker: Lockable + Send + Sync,
     for<'b> Locker::GuardMut<'b>: Send + Unpin,
     Wakers: Lockable + Send + Sync,
-    for<'c> Wakers::GuardMut<'c>: DerefMut<Target = VecDeque<Waker>>,
+    for<'b> Wakers::GuardMut<'b>: DerefMut<Target = Mediator>,
+    Mediator: AsyncLockableMediator + 'static,
 {
     type Locker = AsyncLockableMaker<Locker, Wakers>;
 }
 
-impl<'a, Locker, Wakers, T> ops::Deref for AsyncLockableMakerGuard<'a, Locker, Wakers>
+impl<'a, Locker, Wakers, Mediator, T> ops::Deref
+    for AsyncLockableMakerGuard<'a, Locker, Wakers, Mediator>
 where
     Locker: Lockable,
     for<'c> Locker::GuardMut<'c>: ops::Deref<Target = T>,
     Wakers: Lockable,
-    for<'b> Wakers::GuardMut<'b>: DerefMut<Target = VecDeque<Waker>>,
+    for<'b> Wakers::GuardMut<'b>: DerefMut<Target = Mediator>,
+    Mediator: AsyncLockableMediator,
 {
     type Target = T;
 
@@ -101,23 +115,26 @@ where
     }
 }
 
-impl<'a, Locker, Wakers, T> ops::DerefMut for AsyncLockableMakerGuard<'a, Locker, Wakers>
+impl<'a, Locker, Wakers, Mediator, T> ops::DerefMut
+    for AsyncLockableMakerGuard<'a, Locker, Wakers, Mediator>
 where
     Locker: Lockable,
     for<'c> Locker::GuardMut<'c>: ops::DerefMut<Target = T>,
     Wakers: Lockable,
-    for<'b> Wakers::GuardMut<'b>: DerefMut<Target = VecDeque<Waker>>,
+    for<'b> Wakers::GuardMut<'b>: DerefMut<Target = Mediator>,
+    Mediator: AsyncLockableMediator,
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.inner_guard.as_deref_mut().unwrap()
     }
 }
 
-impl<'a, Locker, Wakers> Drop for AsyncLockableMakerGuard<'a, Locker, Wakers>
+impl<'a, Locker, Wakers, Mediator> Drop for AsyncLockableMakerGuard<'a, Locker, Wakers, Mediator>
 where
     Locker: Lockable,
     Wakers: Lockable,
-    for<'b> Wakers::GuardMut<'b>: DerefMut<Target = VecDeque<Waker>>,
+    for<'b> Wakers::GuardMut<'b>: DerefMut<Target = Mediator>,
+    Mediator: AsyncLockableMediator,
 {
     fn drop(&mut self) {
         if let Some(guard) = self.inner_guard.take() {
@@ -125,38 +142,58 @@ where
 
             let mut wakers = self.locker.wakers.lock();
 
-            while let Some(wake) = wakers.pop_front() {
-                log::trace!("AsyncLockableMakerGuard wake next one");
-                wake.wake();
-            }
+            wakers.notify_all();
         }
     }
 }
 
 /// Future created by [`lock`](AsyncLockableMaker::lock) function.
-pub struct AsyncLockableMakerFuture<'a, Locker, Wakers>
-where
-    Locker: Lockable,
-{
-    locker: &'a AsyncLockableMaker<Locker, Wakers>,
-}
-
-impl<'a, Locker, Wakers> std::future::Future for AsyncLockableMakerFuture<'a, Locker, Wakers>
+pub struct AsyncLockableMakerFuture<'a, Locker, Wakers, Mediator>
 where
     Locker: Lockable,
     Wakers: Lockable,
-    for<'b> Wakers::GuardMut<'b>: DerefMut<Target = VecDeque<Waker>>,
+    for<'b> Wakers::GuardMut<'b>: DerefMut<Target = Mediator>,
+    Mediator: AsyncLockableMediator,
 {
-    type Output = AsyncLockableMakerGuard<'a, Locker, Wakers>;
+    locker: &'a AsyncLockableMaker<Locker, Wakers>,
+    wait_key: Option<usize>,
+    #[cfg(feature = "trace_lock")]
+    caller: &'static Location<'static>,
+}
+
+#[cfg(feature = "trace_lock")]
+impl<'a, Locker, Wakers, Mediator> Debug for AsyncLockableMakerFuture<'a, Locker, Wakers, Mediator>
+where
+    Locker: Lockable,
+    Wakers: Lockable,
+    for<'b> Wakers::GuardMut<'b>: DerefMut<Target = Mediator>,
+    Mediator: AsyncLockableMediator,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "caller: {}({})", self.caller.file(), self.caller.line())
+    }
+}
+
+impl<'a, Locker, Wakers, Mediator> std::future::Future
+    for AsyncLockableMakerFuture<'a, Locker, Wakers, Mediator>
+where
+    Locker: Lockable,
+    Wakers: Lockable,
+    for<'b> Wakers::GuardMut<'b>: DerefMut<Target = Mediator>,
+    Mediator: AsyncLockableMediator,
+{
+    type Output = AsyncLockableMakerGuard<'a, Locker, Wakers, Mediator>;
 
     fn poll(
-        self: std::pin::Pin<&mut Self>,
+        mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
-        log::trace!("AsyncLockableMakerFuture poll");
+        #[cfg(feature = "trace_lock")]
+        log::trace!("async try lock, {:?}", self);
 
         if let Some(guard) = self.locker.inner_locker.try_lock() {
-            log::trace!("AsyncLockableMakerFuture poll locked");
+            #[cfg(feature = "trace_lock")]
+            log::trace!("async locked, {:?}", self);
 
             return std::task::Poll::Ready(AsyncLockableMakerGuard {
                 locker: self.locker,
@@ -165,12 +202,15 @@ where
         }
 
         let mut wakers = self.locker.wakers.lock();
-        wakers.push_back(cx.waker().clone());
+        self.wait_key = Some(wakers.wait_lockable(cx));
 
         // Ensure that we haven't raced `MutexGuard::drop`'s unlock path by
         // attempting to acquire the lock again
         if let Some(guard) = self.locker.inner_locker.try_lock() {
-            log::trace!("AsyncLockableMakerFuture poll locked");
+            #[cfg(feature = "trace_lock")]
+            log::trace!("async locked, {:?}", self);
+
+            wakers.cancel(self.wait_key.take().unwrap());
 
             return std::task::Poll::Ready(AsyncLockableMakerGuard {
                 locker: self.locker,
@@ -178,23 +218,50 @@ where
             });
         }
 
+        #[cfg(feature = "trace_lock")]
+        log::trace!("async lock pending, {:?}", self);
+
         std::task::Poll::Pending
+    }
+}
 
-        // match self.locker.inner_locker.try_lock() {
-        //     Some(guard) => {
-        //         log::trace!("AsyncLockableMakerFuture poll locked");
+pub struct DefaultAsyncLockableMediator {
+    key_next: usize,
+    wakers: HashMap<usize, Waker>,
+}
 
-        //         std::task::Poll::Ready(AsyncLockableMakerGuard {
-        //             locker: self.locker,
-        //             inner_guard: Some(guard),
-        //         })
-        //     }
-        //     None => {
-        //         log::trace!("AsyncLockableMakerFuture poll pending");
-        //         wakers.push_back(cx.waker().clone());
+impl Default for DefaultAsyncLockableMediator {
+    fn default() -> Self {
+        Self {
+            key_next: 0,
+            wakers: HashMap::new(),
+        }
+    }
+}
 
-        //         std::task::Poll::Pending
-        //     }
-        // }
+impl AsyncLockableMediator for DefaultAsyncLockableMediator {
+    fn wait_lockable(&mut self, cx: &mut std::task::Context<'_>) -> usize {
+        let key = self.key_next;
+        self.key_next += 1;
+
+        self.wakers.insert(key, cx.waker().clone());
+
+        key
+    }
+
+    fn cancel(&mut self, key: usize) -> bool {
+        self.wakers.remove(&key).is_some()
+    }
+
+    fn notify_one(&mut self) {
+        if let Some(key) = self.wakers.keys().next().map(|key| *key) {
+            self.wakers.remove(&key).unwrap().wake();
+        }
+    }
+
+    fn notify_all(&mut self) {
+        for (_, waker) in self.wakers.drain() {
+            waker.wake();
+        }
     }
 }

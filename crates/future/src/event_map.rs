@@ -174,8 +174,6 @@ where
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
-        log::trace!("Event map poll.");
-
         if let Some(guard) = self.guard.take() {
             // insert waker into waiting map.
             self.event_map.wakers.insert(
@@ -187,14 +185,13 @@ where
             );
 
             G::Locker::unlock(guard);
-
-            log::trace!("event_map release guard, event={:?}", self.event);
         }
 
         // Check reason to avoid unexpected `poll` calling.
         // For example, calling `wait` function in `futures::select!` block
 
         let reason = self.reason.load(Ordering::SeqCst);
+
         if reason == Reason::None.into() {
             return Poll::Pending;
         } else if reason == Reason::Cancel.into() {

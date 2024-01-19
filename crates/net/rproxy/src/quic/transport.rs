@@ -414,10 +414,7 @@ mod tests {
 
     use super::*;
 
-    use std::{
-        io,
-        sync::atomic::{AtomicUsize, Ordering},
-    };
+    use std::io;
 
     use bytes::BytesMut;
     use futures::AsyncWriteExt;
@@ -588,24 +585,7 @@ mod tests {
 
     #[hala_test::test(io_test)]
     async fn echo_single_client() -> io::Result<()> {
-        _ = pretty_env_logger::formatted_timed_builder()
-            .format(move |buf, record| {
-                use std::io::Write;
-
-                let style = buf.style();
-
-                let timestamp = buf.timestamp_nanos();
-
-                writeln!(
-                    buf,
-                    "({}):{}-{}",
-                    timestamp,
-                    record.target(),
-                    style.value(record.args())
-                )
-            })
-            .parse_filters("trace")
-            .init();
+        // pretty_env_logger::init_timed();
 
         let cache_queue_len = 1024;
         let max_packet_len = 1370;

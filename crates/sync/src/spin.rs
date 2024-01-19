@@ -1,12 +1,10 @@
 use std::{
     cell::UnsafeCell,
-    collections::VecDeque,
     ops,
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
-    task::Waker,
 };
 
-use crate::{maker::AsyncLockableMaker, Lockable, LockableNew};
+use crate::{maker::*, Lockable, LockableNew};
 
 /// A spin style mutex implementation without handle thread-specific data.
 pub struct SpinMutex<T> {
@@ -165,7 +163,8 @@ unsafe impl<'a, T: Send> Send for SpinMutexGuard<'a, T> {}
 unsafe impl<'a, T: Sync> Sync for SpinMutexGuard<'a, T> {}
 
 /// Futures-aware [`SpinMutex`] type
-pub type AsyncSpinMutex<T> = AsyncLockableMaker<SpinMutex<T>, SpinMutex<VecDeque<Waker>>>;
+pub type AsyncSpinMutex<T> =
+    AsyncLockableMaker<SpinMutex<T>, SpinMutex<DefaultAsyncLockableMediator>>;
 
 #[cfg(test)]
 mod tests {

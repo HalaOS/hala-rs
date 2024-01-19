@@ -233,12 +233,12 @@ impl QuicConnState {
 
         let mut events = vec![];
 
-        for id in state.quiche_conn.readable() {
+        while let Some(id) = state.quiche_conn.stream_readable_next() {
             events.push(QuicConnStateEvent::StreamReadable(self.scid.clone(), id));
             self.handle_quic_incoming_stream(state, id)?;
         }
 
-        for id in state.quiche_conn.writable() {
+        while let Some(id) = state.quiche_conn.stream_writable_next() {
             events.push(QuicConnStateEvent::StreamWritable(self.scid.clone(), id));
             self.handle_quic_incoming_stream(state, id)?;
         }
@@ -611,15 +611,14 @@ impl QuicConnState {
         }
     }
 
-    async fn stream_recv_wait<'a>(
+    async fn stream_recv_wait<'a, State>(
         &'a self,
         stream_id: u64,
-        mut state: maker::AsyncLockableMakerGuard<
-            'a,
-            SpinMutex<RawQuicConnState>,
-            SpinMutex<VecDeque<std::task::Waker>>,
-        >,
-    ) -> io::Result<()> {
+        mut state: State,
+    ) -> io::Result<()>
+    where
+        State: AsyncGuardMut<'a> + DerefMut<Target = RawQuicConnState> + Unpin + 'a,
+    {
         self.notify_readable(&mut state)?;
 
         let event = QuicConnStateEvent::StreamReadable(self.scid.clone(), stream_id);

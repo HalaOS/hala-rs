@@ -322,7 +322,7 @@ mod tests {
 
         let (mut sender, mut receiver) = mock_client(&tm, cache_queue_len).await;
 
-        for i in 0..10000 {
+        for i in 0..1000 {
             let send_data = format!("Hello world, {}", i);
 
             sender

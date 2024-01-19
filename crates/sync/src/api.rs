@@ -1,4 +1,4 @@
-use std::future::Future;
+use std::{future::Future, task::Context};
 
 /// Any mutex object should implement this trait
 pub trait Lockable {
@@ -51,8 +51,27 @@ pub trait AsyncLockable {
     fn unlock<'a>(guard: Self::GuardMut<'a>) -> &'a Self;
 }
 
+/// Trait for guard of [`AsyncLockable`]
 pub trait AsyncGuardMut<'a> {
     type Locker: AsyncLockable<GuardMut<'a> = Self>
     where
         Self: 'a;
+}
+
+/// Event manager for [`AsyncLockable`] listeners.
+pub trait AsyncLockableMediator {
+    /// Block the current task and wait for lockable event.
+    ///
+    /// Return the unique wait key.
+    fn wait_lockable(&mut self, cx: &mut Context<'_>) -> usize;
+
+    /// Cancel the waker by key value.
+    /// Returns true if remove waker successfully.
+    fn cancel(&mut self, key: usize) -> bool;
+
+    /// Randomly notify one listener that it can try to lock this mutex again.
+    fn notify_one(&mut self);
+
+    /// notify all listeners that they can try to lock this mutex again.
+    fn notify_all(&mut self);
 }
