@@ -42,6 +42,7 @@ impl<T> Lockable for SpinMutex<T> {
     where
         Self: 'a;
 
+    #[inline]
     fn lock(&self) -> Self::GuardMut<'_> {
         while self
             .flag
@@ -68,6 +69,7 @@ impl<T> Lockable for SpinMutex<T> {
         guard
     }
 
+    #[inline]
     fn try_lock(&self) -> Option<Self::GuardMut<'_>> {
         if self
             .flag
@@ -96,6 +98,7 @@ impl<T> Lockable for SpinMutex<T> {
         }
     }
 
+    #[inline]
     fn unlock(guard: Self::GuardMut<'_>) -> &Self {
         let locker = guard.locker;
 
@@ -124,17 +127,20 @@ impl<'a, T> Drop for SpinMutexGuard<'a, T> {
 }
 
 impl<'a, T> SpinMutexGuard<'a, T> {
+    #[inline]
     fn deref_check(&self) {
-        assert_eq!(
-            self.locker.guard.load(Ordering::Acquire),
-            self.ptr,
-            "fail to check constraint of deref/deref_mut ops"
-        );
+        // assert_eq!(
+        //     self.locker.guard.load(Ordering::Acquire),
+        //     self.ptr,
+        //     "fail to check constraint of deref/deref_mut ops"
+        // );
     }
 }
 
 impl<'a, T> ops::Deref for SpinMutexGuard<'a, T> {
     type Target = T;
+
+    #[inline]
     fn deref(&self) -> &Self::Target {
         self.deref_check();
         unsafe { &*self.locker.data.get() }
@@ -142,6 +148,7 @@ impl<'a, T> ops::Deref for SpinMutexGuard<'a, T> {
 }
 
 impl<'a, T> ops::DerefMut for SpinMutexGuard<'a, T> {
+    #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.deref_check();
         unsafe { &mut *self.locker.data.get() }

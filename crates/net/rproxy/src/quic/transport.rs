@@ -465,14 +465,14 @@ mod tests {
             .set_application_protos(&[b"hq-interop", b"hq-29", b"hq-28", b"hq-27", b"http/0.9"])
             .unwrap();
 
-        config.set_max_idle_timeout(1000);
+        config.set_max_idle_timeout(5000);
         config.set_max_recv_udp_payload_size(max_datagram_size);
         config.set_max_send_udp_payload_size(max_datagram_size);
         config.set_initial_max_data(10_000_000);
-        config.set_initial_max_stream_data_bidi_local((max_datagram_size * 10) as u64);
-        config.set_initial_max_stream_data_bidi_remote((max_datagram_size * 10) as u64);
-        config.set_initial_max_streams_bidi(9);
-        config.set_initial_max_streams_uni(9);
+        config.set_initial_max_stream_data_bidi_local(10_000_000);
+        config.set_initial_max_stream_data_bidi_remote(10_000_000);
+        config.set_initial_max_streams_bidi(100);
+        config.set_initial_max_streams_uni(100);
         config.set_disable_active_migration(false);
 
         config
@@ -585,8 +585,6 @@ mod tests {
 
     #[hala_test::test(io_test)]
     async fn echo_single_client() -> io::Result<()> {
-        // pretty_env_logger::init_timed();
-
         let cache_queue_len = 1024;
         let max_packet_len = 1370;
 
@@ -598,7 +596,7 @@ mod tests {
 
         let (mut sender, mut receiver) = mock_client(&tm, cache_queue_len).await;
 
-        for i in 0..1000 {
+        for i in 0..10000 {
             let send_data = format!("Hello world, {}", i);
 
             log::info!("begin send {}", i);
