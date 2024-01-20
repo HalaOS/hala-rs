@@ -1,25 +1,25 @@
 [package]
-description = "Hala asynchronous network programming primitive type udp"
-documentation = "https://docs.rs/hala-tcp"
+description = "Async TLS/SSL streams for hala network programming."
+documentation = "https://docs.rs/hala-tls"
 edition.workspace = true
 license = "MIT"
-name = "hala-tcp"
+name = "hala-tls"
 repository.workspace = true
 version.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+boring = {workspace = true}
+bytes = {workspace = true}
 futures = {workspace = true}
+
 hala-future = {workspace = true}
 hala-io = {workspace = true}
-log = {workspace = true}
-thiserror = {workspace = true}
+hala-sync = {workspace = true}
 
 [dev-dependencies]
-divan = {workspace = true}
-futures-test = {workspace = true}
 hala-io = {workspace = true, features = ["mio-driver"]}
+hala-tcp = {workspace = true}
 hala-test = {workspace = true}
 pretty_env_logger = {workspace = true}
-rand = {workspace = true}

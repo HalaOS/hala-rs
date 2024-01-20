@@ -23,6 +23,7 @@ anyhow = "^1"
 async-recursion = "1.0.5"
 async-tls = "0.13.0"
 bitmask-enum = "2.2.3"
+boring = "4.4.0"
 boxcar = "^0.2.4"
 bytes = "^1.5"
 clap = {version = "^4.4", features = ["derive"]}
@@ -56,4 +57,5 @@ hala-rproxy = {path = "crates/net/rproxy", version = "^0.1"}
 hala-sync = {path = "crates/sync", version = "^0.1"}
 hala-tcp = {path = "crates/net/tcp", version = "^0.1"}
 hala-test = {path = "crates/test", version = "^0.1"}
+hala-tls = {path = "crates/net/tls", version = "^0.1"}
 hala-udp = {path = "crates/net/udp", version = "^0.1"}
