@@ -18,3 +18,20 @@ hala-sync = {workspace = true}
 hala-tcp = {workspace = true}
 hala-test = {workspace = true}
 hala-udp = {workspace = true}
+
+[dev-dependencies]
+divan = {workspace = true}
+futures = {workspace = true}
+hala-io = {workspace = true, features = ["mio-driver"]}
+
+[features]
+default = ["mio-driver"]
+mio-driver = ["hala-io/mio-driver"]
+
+[[bench]]
+harness = false
+name = "tcp_bench"
+
+[[bench]]
+harness = false
+name = "quic_bench"
