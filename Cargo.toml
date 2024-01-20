@@ -21,8 +21,8 @@ version = "0.1.2"
 [workspace.dependencies]
 anyhow = "^1"
 async-recursion = "1.0.5"
+async-tls = "0.13.0"
 bitmask-enum = "2.2.3"
-boring = "4.4.0"
 boxcar = "^0.2.4"
 bytes = "^1.5"
 clap = {version = "^4.4", features = ["derive"]}

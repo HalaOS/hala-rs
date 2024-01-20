@@ -29,6 +29,7 @@ hala-sync = {workspace = true}
 hala-tcp = {workspace = true}
 
 [dev-dependencies]
+async-tls = {workspace = true}
 divan = {workspace = true}
 hala-io = {workspace = true, features = ["mio-driver"]}
 hala-test = {workspace = true}
