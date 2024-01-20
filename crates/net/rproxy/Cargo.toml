@@ -15,6 +15,7 @@ dashmap = {workspace = true}
 futures = {workspace = true}
 log = {workspace = true}
 url = {workspace = true}
+
 uuid = {workspace = true, features = [
   "v4", # Lets you generate random UUIDs
   "fast-rng", # Use a faster (but still sufficiently random) RNG
@@ -28,6 +29,7 @@ hala-sync = {workspace = true}
 hala-tcp = {workspace = true}
 
 [dev-dependencies]
+divan = {workspace = true}
 hala-io = {workspace = true, features = ["mio-driver"]}
 hala-test = {workspace = true}
 pretty_env_logger = {workspace = true}
@@ -35,3 +37,11 @@ pretty_env_logger = {workspace = true}
 [features]
 default = ["quic"]
 quic = ["hala-quic"]
+
+[[bench]]
+harness = false
+name = "quic_transport"
+
+[[bench]]
+harness = false
+name = "tcp_transport"

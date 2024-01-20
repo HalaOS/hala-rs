@@ -1,10 +1,11 @@
-use std::{io, net::ToSocketAddrs};
+use std::io;
 
 use crate::TcpStream;
 
 pub struct SslStream {}
 
 impl SslStream {
+    #[allow(unused)]
     pub fn connect(
         domain: &str,
         connector: boring::ssl::SslConnector,
