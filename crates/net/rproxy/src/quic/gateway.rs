@@ -7,7 +7,7 @@ use crate::{gateway::Gateway, transport::TransportManager};
 
 /// Gatway for Quic protocol
 pub struct QuicGateway {
-    listener: QuicListener,
+    pub listener: QuicListener,
     id: String,
     join_sender: std::sync::mpsc::Sender<()>,
     join_receiver: std::sync::mpsc::Receiver<()>,

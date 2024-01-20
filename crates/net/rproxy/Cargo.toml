@@ -45,3 +45,11 @@ name = "quic_transport"
 [[bench]]
 harness = false
 name = "tcp_transport"
+
+[[bench]]
+harness = false
+name = "quic_gateway"
+
+[[bench]]
+harness = false
+name = "tcp_gateway"
