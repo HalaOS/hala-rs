@@ -1,4 +1,4 @@
-use std::{io, net::SocketAddr, path::Path};
+use std::{io, net::SocketAddr};
 
 use futures::{AsyncReadExt, AsyncWriteExt};
 use hala_future::executor::future_spawn;
