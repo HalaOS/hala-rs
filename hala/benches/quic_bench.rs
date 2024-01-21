@@ -88,7 +88,7 @@ async fn handle_stream(mut stream: QuicStream) {
 }
 
 fn main() {
-    // pretty_env_logger::init_timed();
+    pretty_env_logger::init_timed();
 
     let raddr = block_on(async { create_echo_server() }, 10);
 

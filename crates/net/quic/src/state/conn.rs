@@ -402,10 +402,10 @@ impl QuicConnState {
             match state.quiche_conn.send(buf) {
                 Ok((send_size, send_info)) => {
                     log::trace!(
-                        "{:?} read data, len={}, send_info={:?}",
+                        "{:?} read data, len={}, elapsed={:?}",
                         self,
                         send_size,
-                        send_info
+                        send_info.at.elapsed()
                     );
 
                     // self.handle_stream_status(&mut state)?;
