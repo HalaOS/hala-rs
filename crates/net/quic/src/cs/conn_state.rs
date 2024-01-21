@@ -83,10 +83,6 @@ impl QuicStreamBuf {
             (len, self.fin)
         }
     }
-
-    pub(super) fn len(&self) -> usize {
-        self.buf.len()
-    }
 }
 
 /// Quic conn state machine server side.
