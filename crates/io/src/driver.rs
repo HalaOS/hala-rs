@@ -30,8 +30,6 @@ pub enum OpenFlags<'a> {
     Connect(&'a [SocketAddr]),
     Duration(Duration),
     UserDefined(&'a [u8]),
-    /// Flag to create poller in single thread mode.
-    LocalPoller,
 }
 
 impl<'a> OpenFlags<'a> {

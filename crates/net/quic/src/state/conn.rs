@@ -249,26 +249,38 @@ impl QuicConnState {
         Ok(())
     }
 
-    fn handle_ping_timout<Guard>(&self, state: &mut Guard) -> io::Result<Option<Duration>>
+    fn handle_send_timout<Guard>(&self, state: &mut Guard) -> io::Result<Option<Duration>>
     where
         Guard: DerefMut<Target = RawQuicConnState>,
     {
         let elapsed = state.send_ack_eliciting_instant.elapsed();
+
         if elapsed > state.ping_timeout {
             state
                 .quiche_conn
                 .send_ack_eliciting()
                 .map_err(into_io_error)?;
 
-            log::trace!("{:?} ping packet, timout={:?}", self, state.ping_timeout,);
-
             // reset ping timeout
             state.send_ack_eliciting_instant = Instant::now();
 
             return Ok(None);
-        } else {
-            Ok(Some(state.ping_timeout - elapsed))
         }
+
+        let ping_timout = state.ping_timeout - elapsed;
+
+        if let Some(timeout) = state.quiche_conn.timeout() {
+            if timeout < ping_timout {
+                if timeout < Duration::from_millis(10) {
+                    state.quiche_conn.on_timeout();
+                    return Ok(None);
+                }
+
+                return Ok(Some(timeout));
+            }
+        }
+
+        return Ok(Some(ping_timout));
     }
 
     fn handle_dropping_streams<Guard>(&self, state: &mut Guard) -> io::Result<()>
@@ -401,32 +413,12 @@ impl QuicConnState {
                     return Ok((send_size, send_info));
                 }
                 Err(quiche::Error::Done) => {
-                    self.handle_quic_conn_status(&mut state)?;
+                    let send_timeout = self.handle_send_timout(&mut state)?;
 
-                    let send_timeout = state.quiche_conn.timeout();
-
-                    let ping_timout = self.handle_ping_timout(&mut state)?;
-
-                    if ping_timout.is_none() {
+                    if send_timeout.is_none() {
                         // immediately send ping packet.
                         continue;
                     }
-
-                    let send_timeout = if let Some(send_timout) = send_timeout {
-                        let ping_timeout = ping_timout.unwrap();
-                        if send_timeout > ping_timout {
-                            Some(ping_timeout)
-                        } else {
-                            Some(send_timout)
-                        }
-                    } else {
-                        ping_timout
-                    };
-
-                    assert!(
-                        !ping_timout.as_ref().unwrap().is_zero(),
-                        "send_timeout can't be zero"
-                    );
 
                     log::trace!(
                         "{:?} read data pending, timeout={:?}, is_established={}",
@@ -460,11 +452,7 @@ impl QuicConnState {
                                     .send_ack_eliciting()
                                     .map_err(into_io_error)?;
 
-                                log::trace!(
-                                    "{:?} ping packet, timout={:?}",
-                                    self,
-                                    state.ping_timeout,
-                                );
+                                log::trace!("{:?} ping, timout={:?}", self, state.ping_timeout,);
 
                                 // reset ping timeout
                                 state.send_ack_eliciting_instant = Instant::now();
@@ -472,13 +460,17 @@ impl QuicConnState {
                                 continue;
                             }
 
-                            state.quiche_conn.on_timeout();
+                            if let Some(timeout_instant) = state.quiche_conn.timeout_instant() {
+                                if timeout_instant <= Instant::now() {
+                                    state.quiche_conn.on_timeout();
 
-                            log::debug!(
-                                "{:?} pending on_timeout, timeout={:?}",
-                                self,
-                                send_timeout
-                            );
+                                    log::debug!(
+                                        "{:?} send, timeout={:?}",
+                                        self,
+                                        state.quiche_conn.timeout()
+                                    );
+                                }
+                            }
 
                             continue;
                         }
@@ -588,13 +580,6 @@ impl QuicConnState {
                         }
                     }
                 }
-                Err(quiche::Error::StreamStopped(id)) => {
-                    log::error!("{:?} stream sending closed, stream_id={}", self, id,);
-
-                    self.handle_quic_conn_status(&mut state)?;
-
-                    return Err(into_io_error(quiche::Error::StreamStopped(id)));
-                }
                 Err(err) => {
                     log::error!(
                         "{:?} write stream data failed, stream_id={}, err={}",
@@ -684,15 +669,12 @@ impl QuicConnState {
                 Err(quiche::Error::Done) => {
                     self.handle_stream_status(&mut state)?;
 
-                    // self.notify_readable(&mut state)?;
-
                     log::trace!("{:?}, stream read Done, stream_id={}", self, id,);
 
                     self.stream_recv_wait(id, state).await?;
                 }
                 Err(quiche::Error::InvalidStreamState(_)) => {
-                    // self.notify_readable(&mut state)?;
-
+                    // Outgoing stream is not created yet, waiting for a readable event.
                     if state.register_outgoing_stream_ids.contains(&id) {
                         log::trace!(
                             "{:?},outgoing stream read before send, stream_id={}",
@@ -713,7 +695,7 @@ impl QuicConnState {
                         err
                     );
 
-                    self.notify_readable(&mut state)?;
+                    self.handle_stream_status(&mut state)?;
 
                     return Err(into_io_error(err));
                 }

@@ -76,7 +76,7 @@ pub trait RawDriverExt {
     fn udp_socket_close(&self, handle: Handle) -> io::Result<()>;
 
     /// Create new readiness io event poller.
-    fn poller_open(&self, local: bool) -> io::Result<Handle>;
+    fn poller_open(&self, duration: Option<Duration>) -> io::Result<Handle>;
 
     /// Clone pller handle.
     fn poller_clone(&self, handle: Handle) -> io::Result<Handle>;
@@ -161,12 +161,12 @@ impl<T: RawDriverExt + Clone> RawDriver for RawDriverExtProxy<T> {
                 self.inner.timeout_open(duration)
             }
             crate::Description::Poller => {
-                let local = match open_flags {
-                    OpenFlags::LocalPoller => true,
-                    _ => false,
+                let duration = match open_flags {
+                    OpenFlags::Duration(duration) => Some(duration),
+                    _ => None,
                 };
 
-                self.inner.poller_open(local)
+                self.inner.poller_open(duration)
             }
             crate::Description::External(id) => {
                 let buf = open_flags.try_into_user_defined()?;

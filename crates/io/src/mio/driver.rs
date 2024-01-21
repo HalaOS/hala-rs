@@ -316,12 +316,10 @@ impl RawDriverExt for MioDriver {
         Ok(())
     }
 
-    fn poller_open(&self, _local: bool) -> std::io::Result<crate::Handle> {
-        Ok((
-            Description::Poller,
-            MioPoller::new(Duration::from_millis(10))?,
-        )
-            .into())
+    fn poller_open(&self, duration: Option<Duration>) -> std::io::Result<crate::Handle> {
+        let duration = duration.unwrap_or(Duration::from_micros(10000));
+
+        Ok((Description::Poller, MioPoller::new(duration)?).into())
     }
 
     fn poller_clone(&self, handle: crate::Handle) -> std::io::Result<crate::Handle> {

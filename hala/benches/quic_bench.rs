@@ -1,4 +1,4 @@
-use std::{fmt, net::SocketAddr, time::Instant};
+use std::{net::SocketAddr, time::Instant};
 
 use futures::{AsyncReadExt, AsyncWriteExt};
 use hala_future::executor::{block_on, future_spawn};
@@ -88,6 +88,8 @@ async fn handle_stream(mut stream: QuicStream) {
 }
 
 fn main() {
+    // pretty_env_logger::init_timed();
+
     let raddr = block_on(async { create_echo_server() }, 10);
 
     println!("tcp_bench");
