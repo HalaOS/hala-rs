@@ -649,7 +649,7 @@ mod tests {
         let cache_queue_len = 1024;
         let max_packet_len = 1350;
 
-        let listener = create_echo_server(3).await;
+        let listener = create_echo_server(200).await;
 
         let raddr = *listener.local_addrs().next().unwrap();
 
