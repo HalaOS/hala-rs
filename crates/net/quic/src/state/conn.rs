@@ -396,7 +396,7 @@ impl QuicConnState {
                         send_info
                     );
 
-                    self.handle_stream_status(&mut state)?;
+                    // self.handle_stream_status(&mut state)?;
 
                     return Ok((send_size, send_info));
                 }
@@ -556,11 +556,15 @@ impl QuicConnState {
                         state.register_outgoing_stream_ids.remove(&id);
                     }
 
+                    self.handle_stream_status(&mut state)?;
+
                     self.notify_readable(&mut state)?;
 
                     return Ok(write_size);
                 }
                 Err(quiche::Error::Done) => {
+                    self.handle_stream_status(&mut state)?;
+
                     self.notify_readable(&mut state)?;
 
                     log::trace!("{:?}, stream write Done, stream_id={}", self, id,);

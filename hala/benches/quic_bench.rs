@@ -1,4 +1,9 @@
-use std::{net::SocketAddr, time::Instant};
+use std::{
+    fmt,
+    net::SocketAddr,
+    sync::atomic::{AtomicUsize, Ordering},
+    time::Instant,
+};
 
 use futures::{AsyncReadExt, AsyncWriteExt};
 use hala_future::executor::{block_on, future_spawn};
@@ -84,6 +89,29 @@ async fn handle_stream(mut stream: QuicStream) {
         }
 
         stream.write_all(&buf[..read_size]).await.unwrap();
+    }
+}
+
+struct Padded<T> {
+    value: T,
+    width: usize,
+}
+
+impl<T: fmt::Display> fmt::Display for Padded<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{: <width$}", self.value, width = self.width)
+    }
+}
+
+static MAX_MODULE_WIDTH: AtomicUsize = AtomicUsize::new(0);
+
+fn max_target_width(target: &str) -> usize {
+    let max_width = MAX_MODULE_WIDTH.load(Ordering::Relaxed);
+    if max_width < target.len() {
+        MAX_MODULE_WIDTH.store(target.len(), Ordering::Relaxed);
+        target.len()
+    } else {
+        max_width
     }
 }
 

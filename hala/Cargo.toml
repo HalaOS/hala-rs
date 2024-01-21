@@ -24,6 +24,7 @@ hala-udp = {workspace = true}
 divan = {workspace = true}
 futures = {workspace = true}
 hala-io = {workspace = true, features = ["mio-driver"]}
+pretty_env_logger = {workspace = true}
 
 [features]
 default = ["mio-driver"]
