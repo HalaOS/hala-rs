@@ -143,7 +143,7 @@ where
 
             let mut wakers = self.locker.wakers.lock();
 
-            wakers.notify_one();
+            wakers.notify_all();
         }
     }
 }
