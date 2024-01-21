@@ -17,6 +17,7 @@ hala-quic = {workspace = true}
 hala-sync = {workspace = true}
 hala-tcp = {workspace = true}
 hala-test = {workspace = true}
+hala-tls = {workspace = true}
 hala-udp = {workspace = true}
 
 [dev-dependencies]

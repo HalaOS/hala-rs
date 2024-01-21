@@ -2,6 +2,7 @@ pub use hala_future as future;
 pub use hala_io as io;
 pub use hala_lockfree as lockfree;
 pub use hala_ops as ops;
+pub use hala_tls as tls;
 
 pub mod net {
     pub use hala_quic as quic;

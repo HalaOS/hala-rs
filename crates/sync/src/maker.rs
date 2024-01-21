@@ -1,10 +1,11 @@
 use std::{
     collections::HashMap,
-    fmt::Debug,
     ops::{self, DerefMut},
-    panic::Location,
     task::Waker,
 };
+
+#[cfg(feature = "trace_lock")]
+use std::{fmt::Debug, panic::Location};
 
 use super::*;
 
@@ -142,7 +143,7 @@ where
 
             let mut wakers = self.locker.wakers.lock();
 
-            wakers.notify_all();
+            wakers.notify_one();
         }
     }
 }

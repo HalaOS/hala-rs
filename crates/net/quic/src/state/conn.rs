@@ -178,7 +178,7 @@ impl QuicConnState {
     where
         Guard: DerefMut<Target = RawQuicConnState>,
     {
-        if state.quiche_conn.is_closed() {
+        if state.quiche_conn.is_closed() || state.quiche_conn.is_draining() {
             self.mediator.notify_any(event_map::Reason::Cancel);
 
             return Err(io::Error::new(
@@ -223,27 +223,28 @@ impl QuicConnState {
         Ok(())
     }
 
-    fn handle_quic_read_write_successful<'a, Guard>(&self, state: &mut Guard) -> io::Result<()>
+    fn handle_stream_status<'a, Guard>(&self, state: &mut Guard) -> io::Result<()>
     where
         Guard: DerefMut<Target = RawQuicConnState>,
     {
-        self.handle_quic_conn_status(state)?;
-
-        self.handle_half_closed_streams(state)?;
-
-        let mut events = vec![];
-
         while let Some(id) = state.quiche_conn.stream_readable_next() {
-            events.push(QuicConnStateEvent::StreamReadable(self.scid.clone(), id));
             self.handle_quic_incoming_stream(state, id)?;
+            self.mediator.notify_one(
+                QuicConnStateEvent::StreamReadable(self.scid.clone(), id),
+                event_map::Reason::On,
+            );
+
+            return Ok(());
         }
 
         while let Some(id) = state.quiche_conn.stream_writable_next() {
-            events.push(QuicConnStateEvent::StreamWritable(self.scid.clone(), id));
-            self.handle_quic_incoming_stream(state, id)?;
-        }
+            self.mediator.notify_one(
+                QuicConnStateEvent::StreamWritable(self.scid.clone(), id),
+                event_map::Reason::On,
+            );
 
-        self.mediator.notify_all(&events, event_map::Reason::On);
+            return Ok(());
+        }
 
         Ok(())
     }
@@ -380,12 +381,11 @@ impl QuicConnState {
         let event = QuicConnStateEvent::Readable(self.scid.clone());
 
         loop {
-            // Asynchronously lock the [`QuicConnState`]
+            log::trace!("{:?} read data", self);
+
             let mut state = self.state.lock().await;
 
             self.handle_dropping_streams(&mut state)?;
-
-            log::trace!("{:?} read data", self,);
 
             match state.quiche_conn.send(buf) {
                 Ok((send_size, send_info)) => {
@@ -396,7 +396,7 @@ impl QuicConnState {
                         send_info
                     );
 
-                    self.handle_quic_read_write_successful(&mut state)?;
+                    self.handle_stream_status(&mut state)?;
 
                     return Ok((send_size, send_info));
                 }
@@ -509,9 +509,9 @@ impl QuicConnState {
             Ok(write_size) => {
                 log::trace!("{:?} write data success, len={}", self, write_size);
 
-                self.handle_quic_read_write_successful(&mut state)?;
+                self.handle_stream_status(&mut state)?;
 
-                self.notify_readable(&mut state)?;
+                self.handle_half_closed_streams(&mut state)?;
 
                 return Ok(write_size);
             }
@@ -589,8 +589,6 @@ impl QuicConnState {
 
                     self.handle_quic_conn_status(&mut state)?;
 
-                    // self.notify_readable(&mut state)?;
-
                     return Err(into_io_error(quiche::Error::StreamStopped(id)));
                 }
                 Err(err) => {
@@ -602,8 +600,6 @@ impl QuicConnState {
                     );
 
                     self.handle_quic_conn_status(&mut state)?;
-
-                    // self.notify_readable(&mut state)?;
 
                     return Err(into_io_error(err));
                 }
@@ -675,23 +671,27 @@ impl QuicConnState {
                         fin,
                     );
 
+                    self.handle_stream_status(&mut state)?;
+
                     self.notify_readable(&mut state)?;
 
                     return Ok((read_size, fin));
                 }
                 Err(quiche::Error::Done) => {
-                    self.notify_readable(&mut state)?;
+                    self.handle_stream_status(&mut state)?;
+
+                    // self.notify_readable(&mut state)?;
 
                     log::trace!("{:?}, stream read Done, stream_id={}", self, id,);
 
                     self.stream_recv_wait(id, state).await?;
                 }
                 Err(quiche::Error::InvalidStreamState(_)) => {
-                    self.notify_readable(&mut state)?;
+                    // self.notify_readable(&mut state)?;
 
                     if state.register_outgoing_stream_ids.contains(&id) {
                         log::trace!(
-                            "{:?},outgoin stream read before send, stream_id={}",
+                            "{:?},outgoing stream read before send, stream_id={}",
                             self,
                             id,
                         );

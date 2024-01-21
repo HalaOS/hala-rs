@@ -106,6 +106,7 @@ where
     }
 
     /// Notify one event `E` on.
+    #[inline(always)]
     pub fn notify_one<Q>(&self, event: Q, reason: Reason) -> bool
     where
         Q: Borrow<E>,
@@ -121,6 +122,7 @@ where
     }
 
     /// Notify all event on in the providing `events` list
+    #[inline(always)]
     pub fn notify_all<L: AsRef<[E]>>(&self, events: L, reason: Reason) {
         for event in events.as_ref() {
             self.notify_one(event, reason);
@@ -128,6 +130,7 @@ where
     }
 
     /// Notify all event on in the providing `events` list
+    #[inline(always)]
     pub fn notify_any(&self, reason: Reason) {
         let events = self
             .wakers
@@ -138,6 +141,7 @@ where
         self.notify_all(&events, reason);
     }
 
+    #[inline(always)]
     pub fn wait<'a, Q, G>(&'a self, event: Q, guard: G) -> Wait<'a, E, G>
     where
         G: AsyncGuardMut<'a> + 'a,
@@ -170,6 +174,7 @@ where
 {
     type Output = Result<(), EventMapError>;
 
+    #[inline(always)]
     fn poll(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,

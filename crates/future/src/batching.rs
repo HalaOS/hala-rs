@@ -199,6 +199,7 @@ impl<R> FutureBatcher<R> {
     }
 
     /// Push a new task future.
+    ///
     pub fn push<Fut>(&self, fut: Fut) -> usize
     where
         Fut: Future<Output = R> + Send + 'static,
@@ -242,6 +243,7 @@ impl<R> ops::Deref for Wait<R> {
 
 impl<R> Future for Wait<R> {
     type Output = R;
+
     fn poll(
         self: Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,

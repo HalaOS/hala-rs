@@ -1,10 +1,25 @@
-use std::{net::SocketAddr, time::Instant};
+use std::{net::SocketAddr, path::Path, sync::Arc, time::Instant};
 
 use futures::{AsyncReadExt, AsyncWriteExt};
 use hala_future::executor::{block_on, future_spawn};
 use hala_tcp::{TcpListener, TcpStream};
+use hala_tls::{accept, connect, SslAcceptor, SslConnector, SslFiletype, SslMethod, SslStream};
 
 fn create_echo_server() -> SocketAddr {
+    let root_path = Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    let mut acceptor = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
+
+    acceptor
+        .set_private_key_file(root_path.join("cert/server.key"), SslFiletype::PEM)
+        .unwrap();
+    acceptor
+        .set_certificate_chain_file(root_path.join("cert/server.crt"))
+        .unwrap();
+
+    acceptor.check_private_key().unwrap();
+    let acceptor = Arc::new(acceptor.build());
+
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
 
     let raddr = listener.local_addr().unwrap();
@@ -13,6 +28,7 @@ fn create_echo_server() -> SocketAddr {
         loop {
             match listener.accept().await {
                 Ok((stream, _)) => {
+                    let stream = accept(&acceptor, stream).await.unwrap();
                     future_spawn(handle_echo_stream(stream));
                 }
                 Err(_) => break,
@@ -23,7 +39,7 @@ fn create_echo_server() -> SocketAddr {
     raddr
 }
 
-async fn handle_echo_stream(mut stream: TcpStream) {
+async fn handle_echo_stream(mut stream: SslStream<TcpStream>) {
     let mut buf = vec![0; 1370];
 
     loop {
@@ -46,7 +62,19 @@ fn main() {
 }
 
 async fn test_echo(raddr: SocketAddr, times: u32) {
-    let mut stream = TcpStream::connect(raddr).unwrap();
+    let root_path = Path::new(env!("CARGO_MANIFEST_DIR"));
+
+    let stream = TcpStream::connect(raddr).unwrap();
+
+    let mut config = SslConnector::builder(SslMethod::tls()).unwrap();
+
+    config
+        .set_ca_file(root_path.join("cert/hala_ca.pem"))
+        .unwrap();
+
+    let config = config.build().configure().unwrap();
+
+    let mut stream = connect(config, "hala.quic", stream).await.unwrap();
 
     let start = Instant::now();
 
