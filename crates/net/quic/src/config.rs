@@ -7,11 +7,11 @@ use std::{
 /// Hala quic peer config, Adds hala quic specific configuration options to [`quiche::Config`](quiche::Config)
 pub struct Config {
     /// Quic ping frame send interval.
-    pub ping_timeout: Duration,
-
+    pub send_ping_interval: Duration,
+    /// Quic connection state machine event queue max length.
+    pub max_conn_state_cache_len: usize,
     /// Quic mtu.
     pub max_datagram_size: usize,
-
     /// mixin quiche configs.
     quiche_config: quiche::Config,
 }
@@ -28,9 +28,10 @@ impl Config {
         quiche_config.set_max_send_udp_payload_size(max_datagram_size);
 
         Ok(Self {
-            ping_timeout: Duration::from_secs(2),
+            send_ping_interval: Duration::from_secs(2),
             quiche_config,
             max_datagram_size: 1350,
+            max_conn_state_cache_len: 1024,
         })
     }
 

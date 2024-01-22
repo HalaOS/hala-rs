@@ -34,7 +34,7 @@ impl QuicConnectorState {
 
         Ok(Self {
             quiche_conn,
-            ping_timeout: config.ping_timeout,
+            ping_timeout: config.send_ping_interval,
         })
     }
 

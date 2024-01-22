@@ -11,15 +11,17 @@ use futures::{
 };
 use hala_future::executor::future_spawn;
 use hala_io::{
-    bytes::{Buf, BufMut, Bytes, BytesMut},
+    bytes::{Bytes, BytesMut},
     timeout, ReadBuf,
 };
 use quiche::{RecvInfo, SendInfo};
 
 use crate::errors::into_io_error;
 
+use super::{QuicIncomingStream, QuicStreamBuf};
+
 /// Event variant for quic connection state machine.
-pub enum QuicConnStateEvent {
+pub(super) enum QuicConnCmd {
     OpenStream {
         /// Unique stream ID
         stream_id: u64,
@@ -46,45 +48,6 @@ pub enum QuicConnStateEvent {
     Close,
 }
 
-/// Raw incoming stream for quic connection.
-pub struct QuicIncomingStream {
-    pub stream_id: u64,
-    pub stream_data_receiver: Receiver<QuicStreamBuf>,
-}
-
-#[derive(Default)]
-pub struct QuicStreamBuf {
-    buf: BytesMut,
-    fin: bool,
-}
-
-impl QuicStreamBuf {
-    pub(super) fn append_buf(&mut self, buf: QuicStreamBuf) {
-        self.append(buf.buf, buf.fin);
-    }
-    pub(super) fn append(&mut self, buf: BytesMut, fin: bool) {
-        assert!(!self.fin, "Append data after sent fin flag.");
-
-        self.buf.put(buf);
-        self.fin = fin;
-    }
-
-    pub(super) fn read(&mut self, buf: &mut [u8]) -> (usize, bool) {
-        if buf.len() < self.buf.len() {
-            let mut src = self.buf.split_to(buf.len());
-
-            src.copy_to_slice(buf);
-
-            (buf.len(), false)
-        } else {
-            let len = self.buf.len();
-            self.buf.copy_to_slice(&mut buf[..len]);
-
-            (len, self.fin)
-        }
-    }
-}
-
 /// Quic conn state machine server side.
 pub struct QuicConnState {
     /// The max length of stream received data cache queue.
@@ -92,7 +55,7 @@ pub struct QuicConnState {
     /// quiche connection instance.
     quiche_conn: quiche::Connection,
     /// Event receiver of state machine
-    event_receiver: Receiver<QuicConnStateEvent>,
+    event_receiver: Receiver<QuicConnCmd>,
     /// Quic connection data sender.
     conn_data_sender: Sender<(Bytes, SendInfo)>,
     /// Incoming stream sender.
@@ -123,11 +86,11 @@ impl Debug for QuicConnState {
 
 impl QuicConnState {
     /// Create new quic connection state machine. and ready to run.
-    pub fn new(
+    pub(super) fn new(
         max_stream_recv_packet_cache_len: usize,
         quiche_conn: quiche::Connection,
         send_ping_timeout: Duration,
-        event_receiver: Receiver<QuicConnStateEvent>,
+        event_receiver: Receiver<QuicConnCmd>,
         conn_data_sender: Sender<(Bytes, SendInfo)>,
         incoming_stream_sender: Sender<QuicIncomingStream>,
     ) -> Self {
@@ -274,13 +237,13 @@ impl QuicConnState {
     }
 
     /// dispach received state machine event.
-    async fn dispatch_event(&mut self, event: QuicConnStateEvent) -> io::Result<()> {
+    async fn dispatch_event(&mut self, event: QuicConnCmd) -> io::Result<()> {
         match event {
-            QuicConnStateEvent::OpenStream {
+            QuicConnCmd::OpenStream {
                 stream_id,
                 stream_data_sender,
             } => self.on_open_stream(stream_id, stream_data_sender).await,
-            QuicConnStateEvent::StreamSend {
+            QuicConnCmd::StreamSend {
                 stream_id,
                 buf,
                 fin,
@@ -293,8 +256,8 @@ impl QuicConnState {
                     self.on_stream_send(stream_id, buf, fin).await
                 }
             }
-            QuicConnStateEvent::Recv { buf, recv_info } => self.on_recv(buf, recv_info).await,
-            QuicConnStateEvent::Close => {
+            QuicConnCmd::Recv { buf, recv_info } => self.on_recv(buf, recv_info).await,
+            QuicConnCmd::Close => {
                 return Err(io::Error::new(
                     io::ErrorKind::Interrupted,
                     "Quic conn state machine canceld by user.",

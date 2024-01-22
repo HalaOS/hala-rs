@@ -97,7 +97,7 @@ impl QuicAcceptor {
             if conn.is_established() {
                 return Ok(QuicAcceptorHandshake::Incoming {
                     conn,
-                    ping_timeout: self.config.ping_timeout,
+                    ping_timeout: self.config.send_ping_interval,
                     write_size,
                     read_size,
                     send_info,
@@ -193,7 +193,7 @@ impl QuicAcceptor {
                 conn,
                 write_size,
                 read_size,
-                ping_timeout: self.config.ping_timeout,
+                ping_timeout: self.config.send_ping_interval,
                 send_info,
             });
         } else {
