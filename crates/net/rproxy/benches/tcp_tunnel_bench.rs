@@ -64,7 +64,7 @@ impl Handshaker for MockHandshaker {
                 max_packet_len,
                 max_cache_len,
                 tunnel_service_id: "TcpTransport".into(),
-                transport_config: TransportConfig::Tcp(raddr),
+                transport_config: TransportConfig::Tcp(vec![raddr]),
             },
         ))
     }

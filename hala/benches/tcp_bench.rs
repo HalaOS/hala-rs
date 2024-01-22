@@ -79,7 +79,7 @@ async fn test_echo(raddr: SocketAddr, times: u32) {
     let start = Instant::now();
 
     for i in 0..times {
-        let send_data = format!("Hello world, {}", i);
+        let send_data = format!("Hello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello worldHello world, {}", i);
 
         stream.write(send_data.as_bytes()).await.unwrap();
 

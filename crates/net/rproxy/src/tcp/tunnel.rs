@@ -177,8 +177,8 @@ mod event_loops {
     }
 
     fn create_conn(flag: &TunnelOpenConfiguration) -> io::Result<TcpStream> {
-        match flag.transport_config {
-            TransportConfig::Tcp(raddrs) => TcpStream::connect(raddrs),
+        match &flag.transport_config {
+            TransportConfig::Tcp(raddrs) => TcpStream::connect(raddrs.as_slice()),
             _ => Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!("Unknown open flag: {:?}", flag),
@@ -257,7 +257,7 @@ mod tests {
                     max_packet_len,
                     max_cache_len,
                     tunnel_service_id: "TcpTransport".into(),
-                    transport_config: TransportConfig::Tcp(raddr),
+                    transport_config: TransportConfig::Tcp(vec![raddr]),
                 },
             ))
         }

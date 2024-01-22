@@ -7,7 +7,7 @@ use hala_quic::QuicConnectionId;
 pub enum TransportConfig {
     None,
     /// Tcp transport with bind socket address.
-    Tcp(SocketAddr),
+    Tcp(Vec<SocketAddr>),
     /// Quic transport with bind socket addresses and [`Config`].
     Quic(Vec<SocketAddr>, Vec<SocketAddr>),
     /// Tcp + SSL transport for client.
