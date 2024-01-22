@@ -91,5 +91,4 @@ impl<'a, T> ops::DerefMut for SpinMutexGuard<'a, T> {
 unsafe impl<'a, T: Send> Send for SpinMutexGuard<'a, T> {}
 
 /// Futures-aware [`SpinMutex`] type
-pub type AsyncSpinMutex<T> =
-    AsyncLockableMaker<SpinMutex<T>, SpinMutex<DefaultAsyncLockableMediator>>;
+pub type AsyncSpinMutex<T> = AsyncLockableMaker<SpinMutex<T>>;
