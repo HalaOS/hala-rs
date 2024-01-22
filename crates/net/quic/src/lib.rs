@@ -13,6 +13,4 @@ pub mod errors;
 
 pub type QuicConnectionId<'a> = quiche::ConnectionId<'a>;
 
-pub mod cs;
-
 pub use quiche::CongestionControlAlgorithm;
