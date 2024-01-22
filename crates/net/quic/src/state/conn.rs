@@ -270,12 +270,8 @@ impl QuicConnState {
         let ping_timout = state.ping_timeout - elapsed;
 
         if let Some(timeout) = state.quiche_conn.timeout() {
-            if timeout < ping_timout {
-                if timeout < Duration::from_millis(10) {
-                    state.quiche_conn.on_timeout();
-                    return Ok(None);
-                }
-
+            // Skip timer accuracy issue
+            if timeout < ping_timout && timeout > Duration::from_millis(10) {
                 return Ok(Some(timeout));
             }
         }
@@ -408,7 +404,8 @@ impl QuicConnState {
                         send_info.at.elapsed()
                     );
 
-                    // self.handle_stream_status(&mut state)?;
+                    // reset ping timer
+                    state.send_ack_eliciting_instant = Instant::now();
 
                     return Ok((send_size, send_info));
                 }
