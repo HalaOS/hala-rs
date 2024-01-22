@@ -127,68 +127,66 @@ impl QuicConnState {
     }
 
     async fn send(&mut self) -> io::Result<()> {
-        let mut buf = ReadBuf::with_capacity(self.quiche_conn.send_quantum());
+        loop {
+            let mut buf = ReadBuf::with_capacity(self.quiche_conn.send_quantum());
 
-        match self.quiche_conn.send(buf.as_mut()) {
-            Ok((send_size, send_info)) => {
-                let buf = buf.into_bytes(Some(send_size));
+            match self.quiche_conn.send(buf.as_mut()) {
+                Ok((send_size, send_info)) => {
+                    let buf = buf.into_bytes(Some(send_size));
 
-                log::trace!(
-                    "{:?}, send data, send_size={}, elapsed={:?}",
-                    self,
-                    send_size,
-                    send_info.at.elapsed()
-                );
+                    log::trace!(
+                        "{:?}, send data, send_size={}, elapsed={:?}",
+                        self,
+                        send_size,
+                        send_info.at.elapsed()
+                    );
 
-                self.conn_data_sender
-                    .send((buf, send_info))
-                    .await
-                    .map_err(into_io_error)?;
-            }
-            Err(quiche::Error::Done) => {}
-            Err(err) => {
-                return Err(into_io_error(err));
+                    self.conn_data_sender
+                        .send((buf, send_info))
+                        .await
+                        .map_err(into_io_error)?;
+                }
+                Err(quiche::Error::Done) => {
+                    return Ok(());
+                }
+                Err(err) => {
+                    return Err(into_io_error(err));
+                }
             }
         }
-
-        Ok(())
     }
 
     /// Calculate send ping/timeout data duration.
     async fn handle_send_timout(&mut self) -> io::Result<Duration> {
-        loop {
-            let mut elapsed = self.send_ack_eliciting_instant.elapsed();
+        let mut elapsed = self.send_ack_eliciting_instant.elapsed();
 
-            while elapsed >= self.send_ping_timeout {
-                self.quiche_conn
-                    .send_ack_eliciting()
-                    .map_err(into_io_error)?;
+        while elapsed >= self.send_ping_timeout {
+            self.quiche_conn
+                .send_ack_eliciting()
+                .map_err(into_io_error)?;
 
-                // reset ping timeout
-                self.send_ack_eliciting_instant = Instant::now();
+            // reset ping timeout
+            self.send_ack_eliciting_instant = Instant::now();
 
-                self.send().await?;
+            self.send().await?;
 
-                elapsed = self.send_ack_eliciting_instant.elapsed();
-            }
-
-            let send_ping_timeout = self.send_ping_timeout - elapsed;
-
-            if let Some(timeout) = self.quiche_conn.timeout() {
-                if timeout < send_ping_timeout {
-                    if self.quiche_conn.timeout_instant().unwrap() < Instant::now() {
-                        self.send().await?;
-
-                        // The above code may be taking too long to execute, so it needs to be re-run to check.
-                        continue;
-                    }
-
-                    return Ok(timeout);
-                }
-            }
-
-            return Ok(send_ping_timeout);
+            elapsed = self.send_ack_eliciting_instant.elapsed();
         }
+
+        let send_ping_timeout = self.send_ping_timeout - elapsed;
+
+        if let Some(timeout) = self.quiche_conn.timeout() {
+            if timeout < send_ping_timeout {
+                if self.quiche_conn.timeout_instant().unwrap() < Instant::now() {
+                    self.send().await?;
+                    return Ok(send_ping_timeout);
+                }
+
+                return Ok(timeout);
+            }
+        }
+
+        return Ok(send_ping_timeout);
     }
 
     /// Start main event loop
@@ -272,7 +270,7 @@ impl QuicConnState {
             || (!self.quiche_conn.is_server() && stream_id % 2 == 1)
         {
             // new incoming stream.
-            if !self.incoming_stream_ids.insert(stream_id) {
+            if self.incoming_stream_ids.insert(stream_id) {
                 let (stream_data_sender, stream_data_receiver) =
                     mpsc::channel(self.max_stream_recv_packet_cache_len);
 
@@ -311,7 +309,7 @@ impl QuicConnState {
             self.on_stream_recv(stream_id).await?;
         }
 
-        todo!()
+        Ok(())
     }
 
     /// Handle connection recevied data.
@@ -364,6 +362,10 @@ impl QuicConnState {
 
         match self.quiche_conn.stream_recv(stream_id, buf.as_mut()) {
             Ok((recv_size, fin)) => {
+                // Reading data from a stream may trigger queueing of control messages (e.g. MAX_STREAM_DATA).
+                // send() should be called after reading.
+                self.send().await?;
+
                 log::trace!(
                     "{:?}, stream_id={}, recv_size={}, fin={}, recv data successfully",
                     self,
@@ -373,10 +375,6 @@ impl QuicConnState {
                 );
 
                 let buf = buf.into_bytes_mut(Some(recv_size));
-
-                // Reading data from a stream may trigger queueing of control messages (e.g. MAX_STREAM_DATA).
-                // send() should be called after reading.
-                self.send().await?;
 
                 if let Some(sender) = self.stream_data_senders.get_mut(&stream_id) {
                     sender
@@ -415,44 +413,10 @@ impl QuicConnState {
             "Call stream({stream_id}) send before open it."
         );
 
-        let stream_capacity = match self.quiche_conn.stream_capacity(stream_id) {
-            Ok(capacity) => capacity,
-            Err(quiche::Error::StreamStopped(_)) => {
-                log::error!(
-                    "{:?}, stream_id={}, stream stopped by STOP_SENDING",
-                    self,
-                    stream_id,
-                );
-
-                self.try_close_stream(stream_id);
-
-                return Ok(());
-            }
-            Err(err) => {
-                log::error!(
-                    "{:?}, stream_id={}, send data error: {}",
-                    self,
-                    stream_id,
-                    err
-                );
-                return Err(into_io_error(err));
-            }
-        };
-
-        if stream_capacity == 0 {
-            self.cache_stream_send_remaining(stream_id, buf, fin);
-
-            return Ok(());
-        }
-
-        let remaining = buf.split_off(stream_capacity);
-
-        // The fin flag is set only when the entire buf has been transferred.
-        let send_fin = if remaining.len() == 0 { fin } else { false };
-
-        match self.quiche_conn.stream_send(stream_id, &buf, send_fin) {
+        match self.quiche_conn.stream_send(stream_id, &buf, fin) {
             Ok(send_size) => {
-                assert_eq!(send_size, buf.len());
+                // send connection data immediately
+                self.send().await?;
 
                 log::trace!(
                     "{:?}, stream_id={}, send data, len={}",
@@ -461,10 +425,10 @@ impl QuicConnState {
                     send_size,
                 );
 
-                // send connection data immediately
-                self.send().await?;
-
-                self.cache_stream_send_remaining(stream_id, buf, fin);
+                if send_size < buf.len() {
+                    _ = buf.split_off(send_size);
+                    self.cache_stream_send_remaining(stream_id, buf, fin);
+                }
             }
             Err(quiche::Error::Done) => {
                 assert!(false, "not here");

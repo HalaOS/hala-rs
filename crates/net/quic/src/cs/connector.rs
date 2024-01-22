@@ -13,7 +13,7 @@ use rand::{seq::SliceRandom, thread_rng};
 use ring::rand::{SecureRandom, SystemRandom};
 
 use crate::{
-    cs::{quic_conn_recv_loop, quic_conn_send_loop},
+    cs::event_loop::{quic_conn_recv_loop, quic_conn_send_loop},
     errors::into_io_error,
     Config,
 };
@@ -183,10 +183,14 @@ impl QuicConnector {
 }
 
 /// try to establish a new quic connection using the provided [`QuicConnectorBuilder`]
-pub async fn connect<L: ToSocketAddrs, R: ToSocketAddrs>(
-    mut builder: QuicConnectorBuilder,
-) -> io::Result<QuicConn> {
+pub async fn connect(mut builder: QuicConnectorBuilder) -> io::Result<QuicConn> {
     let udpsocket = UdpGroup::bind(builder.laddrs.as_slice())?;
+
+    // update laddrs to get random port bind result.
+    builder.laddrs = udpsocket
+        .local_addrs()
+        .map(|addr| *addr)
+        .collect::<Vec<_>>();
 
     let mut lastest_error = None;
 

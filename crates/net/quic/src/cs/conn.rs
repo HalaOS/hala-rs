@@ -5,6 +5,7 @@ use futures::{
     SinkExt, StreamExt,
 };
 
+use hala_future::executor::future_spawn;
 use hala_io::bytes::Bytes;
 use quiche::{ConnectionId, SendInfo};
 
@@ -40,6 +41,16 @@ pub struct QuicStreamAcceptor {
 impl Debug for QuicStreamAcceptor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "QuicConnAcceptor, {:?}", self.config,)
+    }
+}
+
+impl Drop for QuicStreamAcceptor {
+    fn drop(&mut self) {
+        let mut event_sender = self.event_sender.clone();
+
+        future_spawn(async move {
+            _ = event_sender.send(QuicConnCmd::Close).await;
+        });
     }
 }
 
@@ -244,5 +255,15 @@ impl QuicConn {
     /// Get a clone of [`QuicConnCmd`] sender.
     pub(super) fn event_sender(&self) -> Sender<QuicConnCmd> {
         self.acceptor.event_sender.clone()
+    }
+
+    /// Get quic connection source id
+    pub fn source_id(&self) -> &ConnectionId<'static> {
+        &self.acceptor.config.scid
+    }
+
+    /// Get quic connection destination id
+    pub fn destination_id(&self) -> &ConnectionId<'static> {
+        &self.acceptor.config.dcid
     }
 }

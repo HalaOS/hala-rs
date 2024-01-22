@@ -1,8 +1,12 @@
-use std::{net::SocketAddr, time::Instant};
+use std::{io, net::SocketAddr, time::Instant};
 
 use futures::{AsyncReadExt, AsyncWriteExt};
-use hala_future::executor::{block_on, future_spawn};
-use hala_quic::{Config, QuicConn, QuicListener, QuicStream};
+use hala_future::executor::future_spawn;
+use hala_io::test::io_test;
+
+use crate::Config;
+
+use super::{connect, QuicConn, QuicConnectorBuilder, QuicListener, QuicStream};
 
 fn mock_config(is_server: bool, max_datagram_size: usize) -> Config {
     use std::path::Path;
@@ -54,7 +58,7 @@ fn mock_config(is_server: bool, max_datagram_size: usize) -> Config {
 }
 
 fn create_echo_server() -> SocketAddr {
-    let listener = QuicListener::bind("127.0.0.1:0", mock_config(true, 1370)).unwrap();
+    let mut listener = QuicListener::bind("127.0.0.1:0", mock_config(true, 1370)).unwrap();
 
     let raddr = listener.local_addrs().next().unwrap().clone();
 
@@ -67,8 +71,8 @@ fn create_echo_server() -> SocketAddr {
     raddr
 }
 
-async fn handle_conn(conn: QuicConn) {
-    while let Some(stream) = conn.accept_stream().await {
+async fn handle_conn(mut conn: QuicConn) {
+    while let Some(stream) = conn.accept().await {
         future_spawn(handle_stream(stream));
     }
 }
@@ -87,22 +91,20 @@ async fn handle_stream(mut stream: QuicStream) {
     }
 }
 
-fn main() {
+#[hala_test::test(io_test)]
+async fn test_echo() -> io::Result<()> {
     // pretty_env_logger::init_timed();
 
-    let raddr = block_on(async { create_echo_server() }, 10);
+    let raddr = create_echo_server();
 
-    println!("quic_bench");
+    let connector_builder =
+        QuicConnectorBuilder::new("127.0.0.1:0", raddr, mock_config(false, 1370))?;
 
-    block_on(test_echo(raddr, 10000), 10);
-}
+    let mut conn = connect(connector_builder).await.unwrap();
 
-async fn test_echo(raddr: SocketAddr, times: u32) {
-    let conn = QuicConn::connect("127.0.0.1:0", raddr, &mut mock_config(false, 1370))
-        .await
-        .unwrap();
+    let mut stream = conn.open().await.unwrap();
 
-    let mut stream = conn.open_stream().await.unwrap();
+    let times = 10000;
 
     let start = Instant::now();
 
@@ -119,4 +121,6 @@ async fn test_echo(raddr: SocketAddr, times: u32) {
     }
 
     println!("\ttest_echo: {:?}", start.elapsed() / times,);
+
+    Ok(())
 }
