@@ -1,6 +1,9 @@
-pub mod gateway;
-pub mod handshake;
-pub mod quic;
-pub mod tcp;
-pub mod transport;
-pub mod tunnel;
+mod gateway;
+mod handshake;
+mod protocol;
+mod tunnel;
+
+pub use gateway::*;
+pub use handshake::*;
+pub use protocol::*;
+pub use tunnel::*;

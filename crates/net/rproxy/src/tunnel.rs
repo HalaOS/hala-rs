@@ -104,7 +104,7 @@ mod event_loop {
     use futures::{SinkExt, StreamExt};
     use hala_future::executor::future_spawn;
 
-    use crate::{handshake::HandshakeContext, transport::PathInfo};
+    use crate::{handshake::HandshakeContext, protocol::PathInfo};
 
     use super::*;
 

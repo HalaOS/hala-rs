@@ -21,7 +21,7 @@ pub trait Gateway {
 
 #[derive(Clone, Default)]
 pub struct GatewayManager {
-    protocols: Arc<DashMap<String, Box<dyn Gateway + Sync + Send + 'static>>>,
+    protocols: Arc<DashMap<String, Box<dyn Gateway + Send + 'static>>>,
 }
 
 impl GatewayManager {
@@ -33,7 +33,7 @@ impl GatewayManager {
     /// Register gateway.
     ///
     /// If the same ID is used to register the transport twice, the function will panic.
-    pub fn register<G: Gateway + Sync + Send + 'static>(&self, gateway: G) {
+    pub fn register<G: Gateway + Send + 'static>(&self, gateway: G) {
         let id = gateway.id().to_string();
         assert!(
             self.protocols

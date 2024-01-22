@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use bytes::BytesMut;
 use futures::channel::mpsc::{Receiver, Sender};
 
-use crate::transport::{PathInfo, TransportConfig};
+use crate::protocol::{PathInfo, TransportConfig};
 
 /// Reverse proxy handshake protocol must implement this trait.
 ///

@@ -29,14 +29,3 @@ divan = {workspace = true}
 hala-io = {workspace = true, features = ["mio-driver"]}
 hala-test = {workspace = true}
 pretty_env_logger = {workspace = true}
-
-[[bench]]
-harness = false
-name = "quic_tunnel_bench"
-
-[[bench]]
-harness = false
-name = "tcp_tunnel_bench"
-
-[[example]]
-name = "rproxy"
