@@ -199,7 +199,7 @@ mod tests {
 
         let (sender, mut receiver) = mpsc::channel::<()>(0);
 
-        let clients = 4;
+        let clients = 24;
 
         for _ in 0..clients {
             let config = tunnel_open_flag("", raddr);
