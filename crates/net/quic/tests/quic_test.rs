@@ -3,7 +3,7 @@ use std::{io, time::Duration};
 use futures::{AsyncReadExt, AsyncWriteExt};
 use hala_future::executor::future_spawn;
 use hala_io::{sleep, test::io_test};
-use hala_quic::{Config, QuicConn, QuicListener};
+use hala_quic::{Config, QuicConn, QuicConnPool, QuicListener};
 
 fn mock_config(is_server: bool, max_datagram_size: usize) -> Config {
     use std::path::Path;
@@ -344,6 +344,63 @@ async fn test_dynamic_peer_streams_left_bid() -> io::Result<()> {
 
             log::info!("Client wait peer stream update");
             sleep(Duration::from_millis(500)).await.unwrap();
+        }
+    }
+
+    Ok(())
+}
+
+#[hala_test::test(io_test)]
+async fn test_conn_pool() -> io::Result<()> {
+    let mut config = mock_config(true, 1350);
+
+    config.set_initial_max_streams_bidi(2);
+
+    let listener = QuicListener::bind("127.0.0.1:0", config).unwrap();
+
+    let raddr = listener.local_addrs().next().unwrap().clone();
+
+    future_spawn(async move {
+        let conn = listener.accept().await.unwrap();
+
+        while let Some(mut stream) = conn.accept_stream().await {
+            future_spawn(async move {
+                let mut buf = vec![0; 1024];
+
+                let read_size = stream.read(&mut buf).await.unwrap();
+
+                stream
+                    .stream_send(&mut buf[..read_size], true)
+                    .await
+                    .unwrap();
+            });
+        }
+    });
+
+    let conn_pool = QuicConnPool::new(10, raddr, mock_config(false, 1350))?;
+
+    let mut streams = vec![];
+
+    for _ in 0..10 {
+        let mut stream = conn_pool.open_stream().await.unwrap();
+
+        stream.write(b"hello").await.unwrap();
+
+        streams.push(stream);
+    }
+
+    let err = conn_pool.open_stream().await.expect_err("WouldBlock");
+
+    assert_eq!(err.kind(), io::ErrorKind::WouldBlock);
+
+    streams.drain(..);
+
+    loop {
+        // waiting stream closed.
+        sleep(Duration::from_secs(1)).await.unwrap();
+
+        if conn_pool.open_stream().await.is_ok() {
+            break;
         }
     }
 
