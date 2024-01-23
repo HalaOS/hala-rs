@@ -3,7 +3,7 @@ use std::{io, sync::Arc};
 use async_trait::async_trait;
 use dashmap::DashMap;
 
-use crate::{tunnel::TunnelFactoryManager, Protocol, TransportConfig};
+use crate::{tunnel::TunnelFactoryManager, Protocol, ProtocolConfig};
 
 /// The gateway is responsible for accepting new connections and forwarding data.
 #[async_trait]
@@ -27,7 +27,7 @@ pub trait GatewayFactory {
     /// Create new gateway instance.
     async fn create(
         &self,
-        transport_config: TransportConfig,
+        protocol_config: ProtocolConfig,
         tunnel_factory_manager: TunnelFactoryManager,
     ) -> io::Result<Box<dyn Gateway + Send + 'static>>;
 }
@@ -63,15 +63,15 @@ impl GatewayFactoryManager {
         );
     }
 
-    /// Create a new gateway instance using provided [`TransportConfig`]
-    pub async fn start(&self, id: &str, transport_config: TransportConfig) -> io::Result<String> {
+    /// Create a new gateway instance using provided [`ProtocolConfig`]
+    pub async fn start(&self, id: &str, protocol_config: ProtocolConfig) -> io::Result<String> {
         let factory = self.gateway_factories.get_mut(id).ok_or(io::Error::new(
             io::ErrorKind::NotFound,
             format!("gateway factory not found, id={}", id),
         ))?;
 
         let gateway = factory
-            .create(transport_config, self.tunnel_factory_manager.clone())
+            .create(protocol_config, self.tunnel_factory_manager.clone())
             .await?;
 
         let id = gateway.id().to_string();

@@ -1,19 +1,18 @@
 use std::net::SocketAddr;
 
 use clap::ValueEnum;
-use hala_quic::QuicConnectionId;
+use hala_quic::{Config, QuicConnectionId};
 
 /// transport config data for reverse proxy.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum TransportConfig {
     /// empty transport config.
     None,
     /// Tcp transport with bind socket address.
     Tcp(Vec<SocketAddr>),
     /// Quic transport with bind socket addresses and [`Config`].
-    Quic(Vec<SocketAddr>, Vec<SocketAddr>),
+    Quic(Vec<SocketAddr>, Config),
     /// Tcp + SSL transport for client.
-    Ssl(SocketAddr),
+    Ssl(Vec<SocketAddr>),
 }
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -23,6 +22,15 @@ pub enum Protocol {
     TcpSsl,
     Tcp,
     Quic,
+}
+
+pub struct ProtocolConfig {
+    /// The config for transport layer
+    pub transport_config: TransportConfig,
+    /// The max packet len for trasnferring.
+    pub max_packet_len: usize,
+    /// The max cached packet len for trasnferring.
+    pub max_cache_len: usize,
 }
 
 /// Transfer path information.

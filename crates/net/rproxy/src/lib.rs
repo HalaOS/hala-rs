@@ -7,3 +7,5 @@ pub use gateway::*;
 pub use handshaker::*;
 pub use protocol::*;
 pub use tunnel::*;
+
+pub mod quic;

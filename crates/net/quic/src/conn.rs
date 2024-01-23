@@ -238,6 +238,11 @@ impl QuicStream {
         self.conn.state.stream_recv(self.stream_id, buf).await
     }
 
+    /// Shutdown stream read operations.
+    pub async fn stream_shutdown(&self) -> io::Result<()> {
+        self.conn.state.stream_shutdown(self.stream_id, 0).await
+    }
+
     pub fn to_id(&self) -> u64 {
         self.stream_id
     }

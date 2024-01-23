@@ -35,13 +35,12 @@ pub struct HandshakeContext {
 }
 
 /// Tunnel open configuration.
-#[derive(Debug, Clone)]
 pub struct TunnelOpenConfiguration {
     pub max_packet_len: usize,
     /// The max cache len of gateway transfer data.
     pub max_cache_len: usize,
     /// The ID of tunnel for data forwarding.
     pub tunnel_service_id: String,
-    /// The transport configuration of tunnel.
+    /// The transport configuration for tunnel.
     pub transport_config: TransportConfig,
 }

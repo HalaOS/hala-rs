@@ -1,6 +1,7 @@
 use std::{
     io,
     net::{SocketAddr, ToSocketAddrs},
+    sync::Arc,
 };
 
 use hala_sync::{AsyncLockable, AsyncSpinMutex};
@@ -61,15 +62,18 @@ impl RawConnPool {
 }
 
 /// Connection pool for quic client.
+#[derive(Clone)]
 pub struct QuicConnPool {
-    raw: AsyncSpinMutex<RawConnPool>,
+    raw: Arc<AsyncSpinMutex<RawConnPool>>,
 }
 
 impl QuicConnPool {
     /// Create new quic connection pool instance.
     pub fn new<R: ToSocketAddrs>(max_conns: usize, raddrs: R, config: Config) -> io::Result<Self> {
         Ok(Self {
-            raw: AsyncSpinMutex::new(RawConnPool::new(max_conns, raddrs, config)?),
+            raw: Arc::new(AsyncSpinMutex::new(RawConnPool::new(
+                max_conns, raddrs, config,
+            )?)),
         })
     }
 
