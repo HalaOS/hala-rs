@@ -1,9 +1,9 @@
 mod gateway;
-mod handshake;
+mod handshaker;
 mod protocol;
 mod tunnel;
 
 pub use gateway::*;
-pub use handshake::*;
+pub use handshaker::*;
 pub use protocol::*;
 pub use tunnel::*;

@@ -6,7 +6,7 @@ use dashmap::DashMap;
 use futures::channel::mpsc::{Receiver, Sender};
 use uuid::Uuid;
 
-use crate::handshake::{BoxHandshaker, HandshakeContext, Handshaker, TunnelOpenConfiguration};
+use crate::handshaker::{BoxHandshaker, HandshakeContext, Handshaker, TunnelOpenConfiguration};
 
 /// Transport channel type create by [`open_channel`](Transport::open_channel) function
 pub struct Tunnel {
@@ -104,7 +104,7 @@ mod event_loop {
     use futures::{SinkExt, StreamExt};
     use hala_future::executor::future_spawn;
 
-    use crate::{handshake::HandshakeContext, protocol::PathInfo};
+    use crate::{handshaker::HandshakeContext, protocol::PathInfo};
 
     use super::*;
 
