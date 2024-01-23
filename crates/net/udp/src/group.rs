@@ -360,7 +360,6 @@ impl UdpGroup {
 
 #[cfg(test)]
 mod tests {
-    use std::io;
 
     use hala_future::executor::future_spawn;
     use hala_io::test::io_test;
@@ -369,7 +368,7 @@ mod tests {
     use super::*;
 
     #[hala_test::test(io_test)]
-    async fn test_send() -> io::Result<()> {
+    async fn test_send() {
         let laddrs = vec!["127.0.0.1:0".parse().unwrap(); 1];
 
         let server_group = UdpGroup::bind(laddrs.as_slice()).unwrap();
@@ -419,12 +418,10 @@ mod tests {
             assert_eq!(path_info.from, send_path_info.to);
             assert_eq!(path_info.to, send_path_info.from);
         }
-
-        Ok(())
     }
 
     #[hala_test::test(io_test)]
-    async fn test_sequence_send_recv() -> io::Result<()> {
+    async fn test_sequence_send_recv() {
         let laddrs = vec!["127.0.0.1:0".parse().unwrap(); 1];
 
         let server_group = UdpGroup::bind(laddrs.as_slice()).unwrap();
@@ -453,7 +450,5 @@ mod tests {
             assert_eq!(read_size, send_size);
             assert_eq!(path_info, send_path_info);
         }
-
-        Ok(())
     }
 }

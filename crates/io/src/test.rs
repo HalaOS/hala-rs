@@ -1,25 +1,14 @@
 pub use std::future::Future;
-use std::io;
 
 use hala_future::executor::block_on;
 
 /// Test runner with multithread spawner and global poll event loop
-pub fn io_test<T, Fut>(label: &'static str, test: T)
+pub fn io_test<T, Fut>(_: &'static str, test: T)
 where
     T: FnOnce() -> Fut + 'static,
-    Fut: Future<Output = io::Result<()>> + Send + 'static,
+    Fut: Future<Output = ()> + Send + 'static,
 {
     let fut = test();
 
-    // let start = Instant::now();
-
-    match block_on(fut, 10) {
-        Ok(_) => {
-            // println!("test {} ... finished in {:?}", label, start.elapsed());
-        }
-        Err(err) => {
-            println!("test {} catch error:", label);
-            println!("{}", err);
-        }
-    }
+    block_on(fut, 10);
 }

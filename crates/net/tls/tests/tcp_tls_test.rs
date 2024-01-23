@@ -1,4 +1,4 @@
-use std::{io, net::SocketAddr, path::Path, sync::Arc};
+use std::{net::SocketAddr, path::Path, sync::Arc};
 
 use futures::{AsyncReadExt, AsyncWriteExt};
 use hala_future::executor::future_spawn;
@@ -55,7 +55,7 @@ async fn handle_echo_stream(mut stream: SslStream<TcpStream>) {
 }
 
 #[hala_test::test(io_test)]
-async fn test_echo() -> io::Result<()> {
+async fn test_echo() {
     let root_path = Path::new(env!("CARGO_MANIFEST_DIR"));
 
     let raddr = create_echo_server();
@@ -83,6 +83,4 @@ async fn test_echo() -> io::Result<()> {
 
         assert_eq!(&buf[..read_size], send_data.as_bytes());
     }
-
-    Ok(())
 }

@@ -9,3 +9,6 @@ pub use protocol::*;
 pub use tunnel::*;
 
 pub mod quic;
+
+#[cfg(test)]
+mod mock;

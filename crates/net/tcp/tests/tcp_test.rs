@@ -1,4 +1,4 @@
-use std::{io, net::SocketAddr};
+use std::net::SocketAddr;
 
 use futures::{AsyncReadExt, AsyncWriteExt};
 use hala_future::executor::future_spawn;
@@ -39,7 +39,7 @@ async fn handle_echo_stream(mut stream: TcpStream) {
 }
 
 #[hala_test::test(io_test)]
-async fn test_echo() -> io::Result<()> {
+async fn test_echo() {
     let raddr = create_echo_server();
 
     let mut stream = TcpStream::connect(raddr).unwrap();
@@ -55,6 +55,4 @@ async fn test_echo() -> io::Result<()> {
 
         assert_eq!(&buf[..read_size], send_data.as_bytes());
     }
-
-    Ok(())
 }

@@ -1,5 +1,4 @@
 use std::{
-    fmt::Debug,
     io,
     ops::{Deref, DerefMut},
     time::Duration,

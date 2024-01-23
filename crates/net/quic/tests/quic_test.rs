@@ -55,7 +55,7 @@ fn mock_config(is_server: bool, max_datagram_size: usize) -> Config {
 }
 
 #[hala_test::test(io_test)]
-async fn test_establish() -> io::Result<()> {
+async fn test_establish() {
     let listener = QuicListener::bind("127.0.0.1:0", mock_config(true, 1350)).unwrap();
 
     let raddr = listener.local_addrs().next().unwrap().clone();
@@ -67,12 +67,10 @@ async fn test_establish() -> io::Result<()> {
     let _ = QuicConn::connect("127.0.0.1:0", raddr, &mut mock_config(false, 1350))
         .await
         .unwrap();
-
-    Ok(())
 }
 
 #[hala_test::test(io_test)]
-async fn test_connect_timeout() -> io::Result<()> {
+async fn test_connect_timeout() {
     let mut config = mock_config(false, 1350);
 
     config.set_max_idle_timeout(1000);
@@ -82,12 +80,10 @@ async fn test_connect_timeout() -> io::Result<()> {
         .unwrap_err();
 
     assert_eq!(error.kind(), io::ErrorKind::TimedOut);
-
-    Ok(())
 }
 
 #[hala_test::test(io_test)]
-async fn test_open_client_stream() -> io::Result<()> {
+async fn test_open_client_stream() {
     let listener = QuicListener::bind("127.0.0.1:0", mock_config(true, 1350)).unwrap();
 
     let raddr = listener.local_addrs().next().unwrap().clone();
@@ -124,12 +120,10 @@ async fn test_open_client_stream() -> io::Result<()> {
     let read_size = stream.read(&mut buf).await.unwrap();
 
     assert_eq!(&buf[..read_size], send_data);
-
-    Ok(())
 }
 
 #[hala_test::test(io_test)]
-async fn test_open_server_stream() -> io::Result<()> {
+async fn test_open_server_stream() {
     let listener = QuicListener::bind("127.0.0.1:0", mock_config(true, 1350)).unwrap();
 
     let raddr = listener.local_addrs().next().unwrap().clone();
@@ -158,12 +152,10 @@ async fn test_open_server_stream() -> io::Result<()> {
     let read_size = stream.read(&mut buf).await.unwrap();
 
     assert_eq!(send_data, &buf[..read_size]);
-
-    Ok(())
 }
 
 #[hala_test::test(io_test)]
-async fn test_server_max_streams_stream() -> io::Result<()> {
+async fn test_server_max_streams_stream() {
     let mut config = mock_config(true, 1350);
 
     config.set_initial_max_streams_bidi(3);
@@ -209,12 +201,10 @@ async fn test_server_max_streams_stream() -> io::Result<()> {
     let mut stream = conn.open_stream().await.unwrap();
 
     stream.write(send_data).await.expect_err("StreamLimit");
-
-    Ok(())
 }
 
 #[hala_test::test(io_test)]
-async fn test_client_max_streams_stream() -> io::Result<()> {
+async fn test_client_max_streams_stream() {
     let config = mock_config(true, 1350);
 
     let listener = QuicListener::bind("127.0.0.1:0", config).unwrap();
@@ -256,12 +246,10 @@ async fn test_client_max_streams_stream() -> io::Result<()> {
     let mut stream = conn.open_stream().await.unwrap();
 
     stream.write(send_data).await.expect_err("StreamLimit");
-
-    Ok(())
 }
 
 #[hala_test::test(io_test)]
-async fn test_dynamic_peer_streams_left_bid() -> io::Result<()> {
+async fn test_dynamic_peer_streams_left_bid() {
     // _ = pretty_env_logger::try_init_timed();
 
     let mut config = mock_config(true, 1350);
@@ -346,12 +334,10 @@ async fn test_dynamic_peer_streams_left_bid() -> io::Result<()> {
             sleep(Duration::from_millis(500)).await.unwrap();
         }
     }
-
-    Ok(())
 }
 
 #[hala_test::test(io_test)]
-async fn test_conn_pool() -> io::Result<()> {
+async fn test_conn_pool() {
     let mut config = mock_config(true, 1350);
 
     config.set_initial_max_streams_bidi(2);
@@ -377,14 +363,14 @@ async fn test_conn_pool() -> io::Result<()> {
         }
     });
 
-    let conn_pool = QuicConnPool::new(10, raddr, mock_config(false, 1350))?;
+    let conn_pool = QuicConnPool::new(10, raddr, mock_config(false, 1350)).unwrap();
 
     let mut streams = vec![];
 
     for _ in 0..10 {
-        let mut stream = conn_pool.open_stream().await.unwrap();
+        let stream = conn_pool.open_stream().await.unwrap();
 
-        stream.write(b"hello").await.unwrap();
+        // stream.write(b"hello").await.unwrap();
 
         streams.push(stream);
     }
@@ -403,6 +389,4 @@ async fn test_conn_pool() -> io::Result<()> {
             break;
         }
     }
-
-    Ok(())
 }

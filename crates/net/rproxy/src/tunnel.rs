@@ -6,7 +6,7 @@ use dashmap::DashMap;
 use futures::channel::mpsc::{Receiver, Sender};
 use uuid::Uuid;
 
-use crate::handshaker::{BoxHandshaker, HandshakeContext, Handshaker, TunnelOpenConfiguration};
+use crate::handshaker::{BoxHandshaker, HandshakeContext, Handshaker, TunnelOpenConfig};
 
 /// Transport channel type create by [`open_channel`](Transport::open_channel) function
 pub struct Tunnel {
@@ -41,7 +41,7 @@ impl Debug for Tunnel {
 #[async_trait]
 pub trait TunnelFactory {
     /// Using [`config`](TunnelOpenConfiguration) to open new tunnel instance.
-    async fn open_tunnel(&self, config: TunnelOpenConfiguration) -> io::Result<Tunnel>;
+    async fn open_tunnel(&self, config: TunnelOpenConfig) -> io::Result<Tunnel>;
 
     /// Get tunnel service id.
     fn id(&self) -> &str;

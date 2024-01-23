@@ -14,7 +14,7 @@ pub trait Handshaker {
     async fn handshake(
         &self,
         cx: HandshakeContext,
-    ) -> io::Result<(HandshakeContext, TunnelOpenConfiguration)>;
+    ) -> io::Result<(HandshakeContext, TunnelOpenConfig)>;
 }
 
 /// An owned dynamically typed [`Handshaker`].
@@ -35,7 +35,7 @@ pub struct HandshakeContext {
 }
 
 /// Tunnel open configuration.
-pub struct TunnelOpenConfiguration {
+pub struct TunnelOpenConfig {
     pub max_packet_len: usize,
     /// The max cache len of gateway transfer data.
     pub max_cache_len: usize,

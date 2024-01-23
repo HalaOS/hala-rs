@@ -5,7 +5,7 @@ use futures::channel::mpsc;
 use hala_quic::QuicConnPool;
 use hala_sync::{AsyncLockable, AsyncSpinMutex};
 
-use crate::{TransportConfig, Tunnel, TunnelFactory, TunnelOpenConfiguration};
+use crate::{TransportConfig, Tunnel, TunnelFactory, TunnelOpenConfig};
 
 /// The tunnel factory for quic protocol.
 pub struct QuicTunnelFactory {
@@ -50,7 +50,7 @@ impl QuicTunnelFactory {
 #[async_trait]
 impl TunnelFactory for QuicTunnelFactory {
     /// Using [`config`](TunnelOpenConfiguration) to open new tunnel instance.
-    async fn open_tunnel(&self, config: TunnelOpenConfiguration) -> io::Result<Tunnel> {
+    async fn open_tunnel(&self, config: TunnelOpenConfig) -> io::Result<Tunnel> {
         let (forward_sender, forward_receiver) = mpsc::channel(config.max_cache_len);
         let (backward_sender, backward_receiver) = mpsc::channel(config.max_cache_len);
 
@@ -137,5 +137,30 @@ mod event_loops {
         _ = stream.stream_shutdown().await;
 
         log::trace!("{:?}, stop send loop, forward tunnel broken.", stream);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use hala_io::test::io_test;
+
+    use crate::mock::{create_quic_echo_server, mock_config};
+
+    #[hala_test::test(io_test)]
+    async fn test_quic_tunnel() {
+        let raddr = create_quic_echo_server(2);
+
+        let tunnel_factory = QuicTunnelFactory::new(1);
+
+        let config = TunnelOpenConfig {
+            max_packet_len: 1370,
+            max_cache_len: 10,
+            tunnel_service_id: "".into(),
+            transport_config: TransportConfig::Quic(vec![raddr], mock_config(false, 1370)),
+        };
+
+        let tunnel = tunnel_factory.open_tunnel(config).await.unwrap();
     }
 }

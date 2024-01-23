@@ -177,7 +177,7 @@ impl MockQuic {
 }
 
 #[hala_test::test(io_test)]
-async fn test_connect() -> io::Result<()> {
+async fn test_connect() {
     let mut mock = MockQuic::new().await;
 
     assert!(mock.server_conn.is_none());
@@ -187,12 +187,10 @@ async fn test_connect() -> io::Result<()> {
     mock.send_to_server().await.unwrap();
 
     assert!(mock.server_conn.is_some());
-
-    Ok(())
 }
 
 #[hala_test::test(io_test)]
-async fn test_open_stream() -> io::Result<()> {
+async fn test_open_stream() {
     let mut mock = MockQuic::new().await;
 
     let stream_id = mock.client.open_stream().await.unwrap();
@@ -224,12 +222,10 @@ async fn test_open_stream() -> io::Result<()> {
         .unwrap();
 
     assert_eq!(stream_id, 9);
-
-    Ok(())
 }
 
 #[hala_test::test(io_test)]
-async fn test_stream_write() -> io::Result<()> {
+async fn test_stream_write() {
     let mock = MockQuic::new().await;
 
     let stream_id = mock.client.open_stream().await.unwrap();
@@ -243,12 +239,10 @@ async fn test_stream_write() -> io::Result<()> {
         .map(|len| len.expect("stream_write"));
 
     assert_eq!(result, Poll::Ready(send_buf.len()));
-
-    Ok(())
 }
 
 #[hala_test::test(io_test)]
-async fn test_max_stream_data() -> io::Result<()> {
+async fn test_max_stream_data() {
     let mock = MockQuic::new().await;
 
     let stream_id = mock.client.open_stream().await.unwrap();
@@ -266,12 +260,10 @@ async fn test_max_stream_data() -> io::Result<()> {
         poll_once!(mock.client.stream_send(stream_id, send_buf, false)).map(|len| len.expect(""));
 
     assert_eq!(result, Poll::Pending);
-
-    Ok(())
 }
 
 #[hala_test::test(io_test)]
-async fn test_server_stream_accept() -> io::Result<()> {
+async fn test_server_stream_accept() {
     let send_data = b"hello";
 
     let mut mock = MockQuic::new().await;
@@ -319,12 +311,10 @@ async fn test_server_stream_accept() -> io::Result<()> {
         .unwrap();
 
     assert_eq!(&buf[..read_size], send_data);
-
-    Ok(())
 }
 
 #[hala_test::test(io_test)]
-async fn test_client_stream_accept() -> io::Result<()> {
+async fn test_client_stream_accept() {
     let mut mock = MockQuic::new().await;
 
     let _ = mock.client.open_stream().await.unwrap();
@@ -368,12 +358,10 @@ async fn test_client_stream_accept() -> io::Result<()> {
     assert!(!fin);
 
     assert_eq!(&buf[..read_size], server_send_data);
-
-    Ok(())
 }
 
 #[hala_test::test(io_test)]
-async fn test_stream_stopped() -> io::Result<()> {
+async fn test_stream_stopped() {
     let mut mock = MockQuic::new().await;
 
     let stream_id = mock.client.open_stream().await.unwrap();
@@ -403,12 +391,10 @@ async fn test_stream_stopped() -> io::Result<()> {
         .stream_send(stream_id, b"hello", true)
         .await
         .expect_err("Server shutdown stream");
-
-    Ok(())
 }
 
 #[hala_test::test(io_test)]
-async fn test_client_max_open_streams() -> io::Result<()> {
+async fn test_client_max_open_streams() {
     let mut mock = MockQuic::new().await;
 
     // stream 1 reserved for crypto handshake.
@@ -429,12 +415,10 @@ async fn test_client_max_open_streams() -> io::Result<()> {
         .stream_send(stream_id, b"hello", true)
         .await
         .expect_err("Stream limits");
-
-    Ok(())
 }
 
 #[hala_test::test(io_test)]
-async fn test_server_max_open_streams() -> io::Result<()> {
+async fn test_server_max_open_streams() {
     let mut mock = MockQuic::new().await;
 
     _ = mock.client.open_stream().await.unwrap();
@@ -464,12 +448,10 @@ async fn test_server_max_open_streams() -> io::Result<()> {
         .stream_send(stream_id, b"hello", true)
         .await
         .expect_err("Stream limits");
-
-    Ok(())
 }
 
 #[hala_test::test(io_test)]
-async fn test_multi_path() -> io::Result<()> {
+async fn test_multi_path() {
     let mut mock = MockQuic::new().await;
 
     let stream_id = mock.client.open_stream().await.unwrap();
@@ -523,12 +505,10 @@ async fn test_multi_path() -> io::Result<()> {
     assert!(!fin);
 
     assert_eq!(&read_buf[..recv_size], b"hello world");
-
-    Ok(())
 }
 
 #[hala_test::test(io_test)]
-async fn test_scids_left() -> io::Result<()> {
+async fn test_scids_left() {
     // pretty_env_logger::init_timed();
 
     // use config.set_active_connection_id_limit to change active_connection_id_limit parameter.
@@ -536,12 +516,10 @@ async fn test_scids_left() -> io::Result<()> {
     let mock = MockQuic::new().await;
 
     assert_eq!(mock.client.scids_left().await, 1);
-
-    Ok(())
 }
 
 #[hala_test::test(io_test)]
-async fn verify_client_cert() -> io::Result<()> {
+async fn verify_client_cert() {
     let mut mock = MockQuic::new().await;
 
     let stream_id = mock.client.open_stream().await.unwrap();
@@ -559,12 +537,10 @@ async fn verify_client_cert() -> io::Result<()> {
         .expect("Server connection established");
 
     assert!(server_conn.to_quiche_conn().await.peer_cert().is_some());
-
-    Ok(())
 }
 
 #[hala_test::test(io_test)]
-async fn stream_normal_closed() -> io::Result<()> {
+async fn stream_normal_closed() {
     let mut mock = MockQuic::new().await;
 
     let client_conn = mock.client.clone();
@@ -608,6 +584,4 @@ async fn stream_normal_closed() -> io::Result<()> {
         .to_quiche_conn()
         .await
         .stream_finished(server_stream_id));
-
-    Ok(())
 }

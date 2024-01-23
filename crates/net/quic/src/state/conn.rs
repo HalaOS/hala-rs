@@ -758,6 +758,13 @@ impl QuicConnState {
     pub async fn close_stream(&self, id: u64) -> io::Result<()> {
         let mut state = self.state.lock().await;
 
+        // the stream didn't sent any data.
+        if state.register_outgoing_stream_ids.contains(&id) {
+            state.register_outgoing_stream_ids.remove(&id);
+
+            return Ok(());
+        }
+
         self.handle_quic_conn_status(&mut state)?;
 
         state.dropping_stream_queue.push_back(id);
@@ -827,9 +834,18 @@ impl QuicConnState {
 
         let peer_streams_left_bidi = state.quiche_conn.peer_streams_left_bidi();
         let outgoing_cached = state.register_outgoing_stream_ids.len() as u64;
+        let initial_max_streams_bidi = state
+            .quiche_conn
+            .peer_transport_params()
+            .unwrap()
+            .initial_max_streams_bidi;
 
-        if peer_streams_left_bidi >= outgoing_cached {
-            peer_streams_left_bidi - outgoing_cached
+        if peer_streams_left_bidi > outgoing_cached {
+            if initial_max_streams_bidi == peer_streams_left_bidi {
+                peer_streams_left_bidi - outgoing_cached - 1
+            } else {
+                peer_streams_left_bidi - outgoing_cached
+            }
         } else {
             0
         }
