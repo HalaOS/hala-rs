@@ -24,10 +24,6 @@ pub type BoxHandshaker = Box<dyn Handshaker + Sync + Send + 'static>;
 pub struct HandshakeContext {
     /// The path information of gateway transfer data.
     pub path: PathInfo,
-    /// The max len for packet transfering with this tunnel.
-    pub max_packet_len: usize,
-    /// The max cache len of gateway transfer data.
-    pub max_cache_len: usize,
     /// Backward data sender.
     pub backward: Sender<BytesMut>,
     /// Forward data receiver.

@@ -9,13 +9,15 @@ use crate::{TransportConfig, Tunnel, TunnelFactory, TunnelOpenConfig};
 
 /// The tunnel factory for quic protocol.
 pub struct QuicTunnelFactory {
+    id: String,
     max_conns: usize,
     conn_pools: AsyncSpinMutex<HashMap<Vec<SocketAddr>, QuicConnPool>>,
 }
 
 impl QuicTunnelFactory {
-    pub fn new(max_conns: usize) -> Self {
+    pub fn new<ID: ToString>(id: ID, max_conns: usize) -> Self {
         Self {
+            id: id.to_string(),
             max_conns,
             conn_pools: AsyncSpinMutex::new(HashMap::default()),
         }
@@ -69,7 +71,7 @@ impl TunnelFactory for QuicTunnelFactory {
 
     /// Get tunnel service id.
     fn id(&self) -> &str {
-        todo!()
+        &self.id
     }
 }
 
@@ -159,7 +161,7 @@ mod tests {
 
         let raddr = *listener.local_addrs().next().unwrap();
 
-        let tunnel_factory = QuicTunnelFactory::new(1);
+        let tunnel_factory = QuicTunnelFactory::new("", 1);
 
         let config = TunnelOpenConfig {
             max_packet_len: 1370,
@@ -195,7 +197,7 @@ mod tests {
 
         let raddr = *listener.local_addrs().next().unwrap();
 
-        let tunnel_factory = QuicTunnelFactory::new(10);
+        let tunnel_factory = QuicTunnelFactory::new("", 10);
 
         let (sender, mut receiver) = mpsc::channel::<()>(0);
 
@@ -240,7 +242,7 @@ mod tests {
 
         let raddr = *listener.local_addrs().next().unwrap();
 
-        let tunnel_factory = QuicTunnelFactory::new(1);
+        let tunnel_factory = QuicTunnelFactory::new("", 1);
 
         let config = tunnel_open_flag("", raddr);
 
@@ -273,7 +275,7 @@ mod tests {
 
         let raddr = *listener.local_addrs().next().unwrap();
 
-        let tunnel_factory = QuicTunnelFactory::new(1);
+        let tunnel_factory = QuicTunnelFactory::new("", 1);
 
         let config = tunnel_open_flag("", raddr);
 
