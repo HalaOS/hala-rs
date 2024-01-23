@@ -4,6 +4,8 @@ use futures::AsyncWriteExt;
 use hala_future::executor::future_spawn;
 use hala_quic::{QuicConn, QuicListener, QuicStream};
 
+use crate::{TransportConfig, TunnelOpenConfig};
+
 pub(crate) fn mock_config(is_server: bool, max_datagram_size: usize) -> hala_quic::Config {
     use std::path::Path;
 
@@ -55,22 +57,22 @@ pub(crate) fn mock_config(is_server: bool, max_datagram_size: usize) -> hala_qui
     config
 }
 
-pub(crate) fn create_quic_echo_server(max_streams_bidi: u64) -> SocketAddr {
+pub(crate) fn create_quic_echo_server(max_streams_bidi: u64) -> QuicListener {
     let mut config = mock_config(true, 1370);
 
     config.set_initial_max_streams_bidi(max_streams_bidi);
 
     let listener = QuicListener::bind("127.0.0.1:0", config).unwrap();
 
-    let raddr = *listener.local_addrs().next().unwrap();
+    let listener_cloned = listener.clone();
 
     future_spawn(async move {
-        while let Some(conn) = listener.accept().await {
+        while let Some(conn) = listener_cloned.accept().await {
             future_spawn(echo_handle_quic_conn(conn));
         }
     });
 
-    raddr
+    listener
 }
 
 async fn echo_handle_quic_conn(conn: QuicConn) {
@@ -90,5 +92,14 @@ async fn echo_handle_quic_stream(mut stream: QuicStream) {
         if fin {
             return;
         }
+    }
+}
+
+pub(crate) fn tunnel_open_flag(tunnel_service_id: &str, raddr: SocketAddr) -> TunnelOpenConfig {
+    TunnelOpenConfig {
+        max_packet_len: 1370,
+        max_cache_len: 10,
+        tunnel_service_id: tunnel_service_id.into(),
+        transport_config: TransportConfig::Quic(vec![raddr], mock_config(false, 1370)),
     }
 }

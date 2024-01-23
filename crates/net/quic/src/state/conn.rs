@@ -778,12 +778,21 @@ impl QuicConnState {
     ///
     /// see quiche [`doc`](https://docs.rs/quiche/latest/quiche/struct.Connection.html#method.stream_shutdown) for more information.
     pub async fn stream_shutdown(&self, stream_id: u64, err: u64) -> io::Result<()> {
-        self.state
+        let result = self
+            .state
             .lock()
             .await
             .quiche_conn
             .stream_shutdown(stream_id, quiche::Shutdown::Read, err)
-            .map_err(into_io_error)
+            .map_err(into_io_error);
+
+        // notify blocking stream_recv ops.
+        self.mediator.notify_one(
+            QuicConnStateEvent::StreamReadable(self.scid.clone(), stream_id),
+            event_map::Reason::Cancel,
+        );
+
+        result
     }
 
     /// Closes the connection with the given error and reason.

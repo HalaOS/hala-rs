@@ -142,15 +142,22 @@ mod event_loops {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
 
-    use hala_io::test::io_test;
+    use bytes::BytesMut;
+    use futures::{SinkExt, StreamExt};
+    use hala_future::executor::future_spawn;
+    use hala_io::{sleep, test::io_test};
 
-    use crate::mock::{create_quic_echo_server, mock_config};
+    use crate::mock::{create_quic_echo_server, mock_config, tunnel_open_flag};
 
     #[hala_test::test(io_test)]
-    async fn test_quic_tunnel() {
-        let raddr = create_quic_echo_server(2);
+    async fn test_echo() {
+        let listener = create_quic_echo_server(2);
+
+        let raddr = *listener.local_addrs().next().unwrap();
 
         let tunnel_factory = QuicTunnelFactory::new(1);
 
@@ -161,6 +168,147 @@ mod tests {
             transport_config: TransportConfig::Quic(vec![raddr], mock_config(false, 1370)),
         };
 
-        let tunnel = tunnel_factory.open_tunnel(config).await.unwrap();
+        let mut tunnel = tunnel_factory.open_tunnel(config).await.unwrap();
+
+        for i in 0..1000 {
+            let send_data = format!("hello quic tunnel, id={}", i);
+
+            tunnel
+                .sender
+                .send(BytesMut::from(send_data.as_bytes()))
+                .await
+                .unwrap();
+
+            let recv_data = tunnel.receiver.next().await.unwrap();
+
+            assert_eq!(recv_data, send_data.as_bytes());
+        }
+
+        listener.close().await;
+    }
+
+    #[hala_test::test(io_test)]
+    async fn test_multi_tunnel_echo() {
+        // pretty_env_logger::init_timed();
+
+        let listener = create_quic_echo_server(100);
+
+        let raddr = *listener.local_addrs().next().unwrap();
+
+        let tunnel_factory = QuicTunnelFactory::new(10);
+
+        let (sender, mut receiver) = mpsc::channel::<()>(0);
+
+        let clients = 4;
+
+        for _ in 0..clients {
+            let config = tunnel_open_flag("", raddr);
+
+            let mut tunnel = tunnel_factory.open_tunnel(config).await.unwrap();
+
+            let mut sender = sender.clone();
+
+            future_spawn(async move {
+                for i in 0..1000 {
+                    let send_data = format!("hello quic tunnel, id={}", i);
+
+                    tunnel
+                        .sender
+                        .send(BytesMut::from(send_data.as_bytes()))
+                        .await
+                        .unwrap();
+
+                    let recv_data = tunnel.receiver.next().await.unwrap();
+
+                    assert_eq!(recv_data, send_data.as_bytes());
+                }
+
+                _ = sender.send(()).await;
+            });
+        }
+
+        for _ in 0..clients {
+            receiver.next().await;
+        }
+
+        listener.close().await;
+    }
+
+    #[hala_test::test(io_test)]
+    async fn test_drop_tunnel() {
+        let listener = create_quic_echo_server(2);
+
+        let raddr = *listener.local_addrs().next().unwrap();
+
+        let tunnel_factory = QuicTunnelFactory::new(1);
+
+        let config = tunnel_open_flag("", raddr);
+
+        {
+            let _tunnel = tunnel_factory.open_tunnel(config).await.unwrap();
+
+            let config = tunnel_open_flag("", raddr);
+
+            tunnel_factory
+                .open_tunnel(config)
+                .await
+                .expect_err("WouldBlock");
+        }
+
+        loop {
+            let config = tunnel_open_flag("", raddr);
+            if tunnel_factory.open_tunnel(config).await.is_ok() {
+                break;
+            }
+
+            sleep(Duration::from_secs(1)).await.unwrap();
+        }
+
+        listener.close().await;
+    }
+
+    #[hala_test::test(io_test)]
+    async fn test_send_drop_tunnel() {
+        let listener = create_quic_echo_server(2);
+
+        let raddr = *listener.local_addrs().next().unwrap();
+
+        let tunnel_factory = QuicTunnelFactory::new(1);
+
+        let config = tunnel_open_flag("", raddr);
+
+        {
+            let mut tunnel = tunnel_factory.open_tunnel(config).await.unwrap();
+
+            let send_data = format!("hello quic tunnel");
+
+            tunnel
+                .sender
+                .send(BytesMut::from(send_data.as_bytes()))
+                .await
+                .unwrap();
+
+            let recv_data = tunnel.receiver.next().await.unwrap();
+
+            assert_eq!(recv_data, send_data.as_bytes());
+
+            let config = tunnel_open_flag("", raddr);
+
+            tunnel_factory
+                .open_tunnel(config)
+                .await
+                .expect_err("WouldBlock");
+        }
+
+        loop {
+            let config = tunnel_open_flag("", raddr);
+            if tunnel_factory.open_tunnel(config).await.is_ok() {
+                break;
+            }
+
+            sleep(Duration::from_secs(1)).await.unwrap();
+        }
+
+        listener.close().await;
     }
 }
