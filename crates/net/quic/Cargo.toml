@@ -1,5 +1,5 @@
 [package]
-description = "Hala asynchronous network programming primitive type udp"
+description = "Hala quic protocol implementation."
 documentation = "https://docs.rs/hala-quic"
 edition.workspace = true
 license = "MIT"
