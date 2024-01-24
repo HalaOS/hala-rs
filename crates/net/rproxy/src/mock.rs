@@ -54,8 +54,8 @@ pub(crate) fn mock_config(is_server: bool, max_datagram_size: usize) -> hala_qui
     config.set_initial_max_data(10_000_000);
     config.set_initial_max_stream_data_bidi_local((max_datagram_size * 10) as u64);
     config.set_initial_max_stream_data_bidi_remote((max_datagram_size * 10) as u64);
-    config.set_initial_max_streams_bidi(9);
-    config.set_initial_max_streams_uni(9);
+    config.set_initial_max_streams_bidi(100);
+    config.set_initial_max_streams_uni(100);
     config.set_disable_active_migration(false);
 
     config

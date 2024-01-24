@@ -331,6 +331,56 @@ mod tests {
     }
 
     #[hala_test::test(io_test)]
+    async fn test_massive_channel_echo() {
+        let (gateway, mut tunnel_receiver) = setup().await;
+
+        future_spawn(async move {
+            while let Some((mut rhs_tunnel, _)) = tunnel_receiver.next().await {
+                future_spawn(async move {
+                    while let Some(buf) = rhs_tunnel.receiver.next().await {
+                        rhs_tunnel.sender.send(buf).await.unwrap();
+                    }
+                })
+            }
+        });
+
+        let raddrs = gateway.local_addrs()[0];
+
+        let conn = QuicConn::connect("127.0.0.1:0", raddrs, &mut mock_config(false, 1370))
+            .await
+            .unwrap();
+
+        let (join_sender, mut join_receiver) = mpsc::channel(0);
+
+        let clients = 40;
+
+        for i in 0..clients {
+            let mut stream = conn.open_stream().await.unwrap();
+
+            let mut join_sender = join_sender.clone();
+
+            future_spawn(async move {
+                for j in 0..100 {
+                    let send_data = format!("hello world {} {}", i, j);
+                    stream.write_all(send_data.as_bytes()).await.unwrap();
+
+                    let mut buf = vec![0; 1024];
+
+                    let read_size = stream.read(&mut buf).await.unwrap();
+
+                    assert_eq!(&buf[..read_size], send_data.as_bytes());
+                }
+
+                join_sender.send(()).await.unwrap();
+            });
+        }
+
+        for _ in 0..clients {
+            join_receiver.next().await.unwrap();
+        }
+    }
+
+    #[hala_test::test(io_test)]
     async fn test_server_broken_channel() {
         let (gateway, mut tunnel_receiver) = setup().await;
 
