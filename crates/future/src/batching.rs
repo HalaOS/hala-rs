@@ -4,10 +4,10 @@ use std::{
     pin::Pin,
     ptr::null_mut,
     sync::{
-        atomic::{AtomicPtr, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering},
         Arc,
     },
-    task::{Context, RawWaker, RawWakerVTable, Waker},
+    task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
 };
 
 use dashmap::DashMap;
@@ -162,8 +162,10 @@ pub struct FutureBatcher<R> {
     wakeup_futures: Arc<Queue<usize>>,
     /// Raw batch future waker
     raw_waker: Arc<WakerHost>,
-
+    /// poll thread counter.
     await_counter: Arc<AtomicUsize>,
+    /// closed flag.
+    closed: Arc<AtomicBool>,
 }
 
 unsafe impl<R> Send for FutureBatcher<R> {}
@@ -177,6 +179,7 @@ impl<R> Clone for FutureBatcher<R> {
             wakeup_futures: self.wakeup_futures.clone(),
             raw_waker: self.raw_waker.clone(),
             await_counter: self.await_counter.clone(),
+            closed: self.closed.clone(),
         }
     }
 }
@@ -195,6 +198,7 @@ impl<R> FutureBatcher<R> {
             wakeup_futures: Default::default(),
             raw_waker: Default::default(),
             await_counter: Default::default(),
+            closed: Default::default(),
         }
     }
 
@@ -228,6 +232,16 @@ impl<R> FutureBatcher<R> {
             batch: self.clone(),
         }
     }
+
+    pub fn close(&self) {
+        if self
+            .closed
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+            .is_ok()
+        {
+            self.raw_waker.wake();
+        }
+    }
 }
 
 pub struct Wait<R> {
@@ -242,7 +256,7 @@ impl<R> ops::Deref for Wait<R> {
 }
 
 impl<R> Future for Wait<R> {
-    type Output = R;
+    type Output = Option<R>;
 
     fn poll(
         self: Pin<&mut Self>,
@@ -254,10 +268,18 @@ impl<R> Future for Wait<R> {
             "Only one thread can call this batch poll"
         );
 
+        if self.closed.load(Ordering::Acquire) {
+            return Poll::Ready(None);
+        }
+
         // save system waker to prepare wakeup self again.
         self.raw_waker.add_waker(cx.waker().clone());
 
         while let Some(future_id) = self.wakeup_futures.pop() {
+            if self.closed.load(Ordering::Acquire) {
+                return Poll::Ready(None);
+            }
+
             // remove future from pending mapping.
             let future = self.pending_futures.remove(future_id);
 
@@ -282,12 +304,13 @@ impl<R> Future for Wait<R> {
                 }
                 std::task::Poll::Ready(r) => {
                     self.raw_waker.remove_waker();
+
                     assert_eq!(
                         self.await_counter.fetch_sub(1, Ordering::SeqCst),
                         1,
                         "Only one thread can call this batch poll"
                     );
-                    return std::task::Poll::Ready(r);
+                    return std::task::Poll::Ready(Some(r));
                 }
             }
         }
@@ -297,6 +320,10 @@ impl<R> Future for Wait<R> {
             1,
             "Only one thread can call this batch poll"
         );
+
+        if self.closed.load(Ordering::Acquire) {
+            return Poll::Ready(None);
+        }
 
         return std::task::Poll::Pending;
     }
@@ -321,9 +348,9 @@ mod tests {
             batch_future.push(async { Ok(()) });
             batch_future.push(async move { Ok(()) });
 
-            batch_future.wait().await.unwrap();
+            batch_future.wait().await.unwrap().unwrap();
 
-            batch_future.wait().await.unwrap();
+            batch_future.wait().await.unwrap().unwrap();
         }
     }
 
@@ -340,7 +367,7 @@ mod tests {
 
             let handle = pool
                 .spawn_with_handle(async move {
-                    batch_future_cloned.wait().await.unwrap();
+                    batch_future_cloned.wait().await.unwrap().unwrap();
                 })
                 .unwrap();
 
@@ -377,7 +404,7 @@ mod tests {
 
             let handle = pool
                 .spawn_with_handle(async move {
-                    batch_futre_cloned.wait().await.unwrap();
+                    batch_futre_cloned.wait().await.unwrap().unwrap();
                 })
                 .unwrap();
 

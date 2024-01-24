@@ -393,6 +393,8 @@ impl QuicConnState {
 
             let mut state = self.state.lock().await;
 
+            self.handle_quic_conn_status(&mut state)?;
+
             self.handle_dropping_streams(&mut state)?;
 
             match state.quiche_conn.send(buf) {
@@ -494,6 +496,8 @@ impl QuicConnState {
 
         let mut state = self.state.lock().await;
 
+        self.handle_quic_conn_status(&mut state)?;
+
         match state.quiche_conn.recv(buf, recv_info) {
             Ok(write_size) => {
                 log::trace!("{:?} write data success, len={}", self, write_size);
@@ -529,6 +533,8 @@ impl QuicConnState {
             );
             // Asynchronously lock the [`QuicConnState`]
             let mut state = self.state.lock().await;
+
+            self.handle_quic_conn_status(&mut state)?;
 
             match state.quiche_conn.stream_send(id, buf, fin) {
                 Ok(write_size) => {
@@ -646,6 +652,8 @@ impl QuicConnState {
 
             // Asynchronously lock the [`QuicConnState`]
             let mut state = self.state.lock().await;
+
+            self.handle_quic_conn_status(&mut state)?;
 
             match state.quiche_conn.stream_recv(id, buf) {
                 Ok((read_size, fin)) => {

@@ -300,7 +300,11 @@ impl UdpGroup {
             _ = unsafe { Box::from_raw(old_ptr) };
         }
 
-        let batch_read = self.batching_reader.wait().await;
+        let batch_read = self
+            .batching_reader
+            .wait()
+            .await
+            .expect("No one call closed");
 
         self.push_batch_read(batch_read.handle);
 
@@ -321,7 +325,11 @@ impl UdpGroup {
             _ = unsafe { Box::from_raw(old_ptr) };
         }
 
-        let batch_write = self.batching_writer.wait().await;
+        let batch_write = self
+            .batching_writer
+            .wait()
+            .await
+            .expect("No one call closed");
 
         self.push_batch_write(batch_write.handle);
 

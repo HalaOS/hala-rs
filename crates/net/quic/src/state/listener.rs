@@ -2,7 +2,10 @@ use std::{
     collections::{HashMap, VecDeque},
     io,
     net::SocketAddr,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     time::{Duration, Instant},
 };
 
@@ -345,6 +348,7 @@ enum QuicListnerConnRead {
 /// The state machine for quic server listener.
 #[derive(Clone)]
 pub struct QuicListenerState {
+    closed: Arc<AtomicBool>,
     /// the acceptor for incoming connections.
     acceptor: Arc<AsyncSpinMutex<QuicAcceptor>>,
     /// The set of activing [`QuicConnState`]s.
@@ -369,6 +373,7 @@ impl QuicListenerState {
             incoming: Arc::new(AsyncSpinMutex::new(Some(Default::default()))),
             mediator: Default::default(),
             conns_read: Default::default(),
+            closed: Default::default(),
         })
     }
 
@@ -379,6 +384,8 @@ impl QuicListenerState {
         write_size: usize,
         recv_info: RecvInfo,
     ) -> io::Result<QuicListenerWriteResult> {
+        self.handle_listener_statuts()?;
+
         let handshake = {
             let mut acceptor = self.acceptor.lock().await;
 
@@ -387,7 +394,7 @@ impl QuicListenerState {
 
         match handshake {
             QuicAcceptorHandshake::Unhandled(dcid) => {
-                let conn = self.conns.get_mut(&dcid).map(|conn| conn.clone());
+                let conn = self.conns.get(&dcid).map(|conn| conn.clone());
 
                 if let Some(conn) = conn {
                     log::trace!(
@@ -396,15 +403,17 @@ impl QuicListenerState {
                         conn.dcid
                     );
 
-                    return conn
-                        .write(&mut buf[..write_size], recv_info)
-                        .await
-                        .map(|write_size| QuicListenerWriteResult::WriteSize(write_size));
+                    if let Err(err) = conn.write(&mut buf[..write_size], recv_info).await {
+                        log::error!("{:?}, write data error, {}", conn, err);
+
+                        self.conns.remove(&dcid);
+                    }
+
+                    return Ok(QuicListenerWriteResult::WriteSize(write_size));
                 } else {
-                    return Err(io::Error::new(
-                        io::ErrorKind::NotFound,
-                        format!("Quic conn not found, scid={:?}", dcid),
-                    ));
+                    log::error!("Quic conn not found, scid={:?}", dcid);
+
+                    return Ok(QuicListenerWriteResult::WriteSize(write_size));
                 }
             }
             QuicAcceptorHandshake::Incoming {
@@ -462,8 +471,26 @@ impl QuicListenerState {
         }
     }
 
+    fn handle_listener_statuts(&self) -> io::Result<()> {
+        if self.closed.load(Ordering::Relaxed) {
+            return Err(io::Error::new(io::ErrorKind::BrokenPipe, "Listener closed"));
+        }
+
+        Ok(())
+    }
+
     /// Close this listener and drop the incoming queue.
     pub async fn close(&self) {
+        if self
+            .closed
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+            .is_err()
+        {
+            // try wakeup read future.
+            self.conns_read.close();
+            return;
+        }
+
         let mut incoming = self.incoming.lock().await;
 
         *incoming = None;
@@ -512,9 +539,11 @@ impl QuicListenerState {
     }
 
     pub async fn read(&self) -> io::Result<(BytesMut, SendInfo)> {
+        self.handle_listener_statuts()?;
+
         loop {
             match self.conns_read.wait().await {
-                QuicListnerConnRead::Err(conn, err) => {
+                Some(QuicListnerConnRead::Err(conn, err)) => {
                     log::trace!(
                         "QuicListener, read data from conn error. scid={:?}, dcid={:?}, err={}",
                         conn.scid,
@@ -522,16 +551,23 @@ impl QuicListenerState {
                         err
                     );
 
+                    self.handle_listener_statuts()?;
+
                     // remove broken conn
                     self.conns.remove(&conn.scid);
 
                     continue;
                 }
-                QuicListnerConnRead::Ok(conn, buf, send_info) => {
+                Some(QuicListnerConnRead::Ok(conn, buf, send_info)) => {
+                    self.handle_listener_statuts()?;
+
                     // push conn into batch poller again.
                     self.batch_read(conn);
 
                     return Ok((buf, send_info));
+                }
+                None => {
+                    self.handle_listener_statuts()?;
                 }
             }
         }

@@ -1,6 +1,6 @@
 use std::{io, time::Duration};
 
-use futures::{channel::mpsc, AsyncReadExt, AsyncWriteExt, SinkExt, StreamExt};
+use futures::{AsyncReadExt, AsyncWriteExt};
 use hala_future::executor::future_spawn;
 use hala_io::{sleep, test::io_test};
 use hala_quic::{Config, QuicConn, QuicConnPool, QuicListener};
@@ -41,7 +41,7 @@ fn mock_config(is_server: bool, max_datagram_size: usize) -> Config {
         .set_application_protos(&[b"hq-interop", b"hq-29", b"hq-28", b"hq-27", b"http/0.9"])
         .unwrap();
 
-    config.set_max_idle_timeout(5000);
+    config.set_max_idle_timeout(15000);
     config.set_max_recv_udp_payload_size(max_datagram_size);
     config.set_max_send_udp_payload_size(max_datagram_size);
     config.set_initial_max_data(10_000_000);
@@ -62,12 +62,33 @@ async fn test_establish() {
     let raddr = listener.local_addrs().next().unwrap().clone();
 
     future_spawn(async move {
-        let _ = listener.accept().await.unwrap();
+        let conn = listener.accept().await.unwrap();
+
+        future_spawn(async move {
+            if let Some(mut stream) = conn.accept_stream().await {
+                let mut buf = vec![0; 1370];
+                stream.read(&mut buf).await.unwrap();
+            }
+
+            conn.close().await.unwrap();
+        });
     });
 
-    let _ = QuicConn::connect("127.0.0.1:0", raddr, &mut mock_config(false, 1350))
-        .await
-        .unwrap();
+    let mut conns = vec![];
+
+    let mut config = mock_config(false, 1350);
+
+    for _ in 0..80 {
+        let conn = QuicConn::connect("127.0.0.1:0", raddr, &mut config)
+            .await
+            .unwrap();
+
+        let mut stream = conn.open_stream().await.unwrap();
+
+        stream.write(b"hello world").await.unwrap();
+
+        conns.push(conn);
+    }
 }
 
 #[hala_test::test(io_test)]
@@ -394,7 +415,7 @@ async fn test_conn_pool() {
 
 #[hala_test::test(io_test)]
 async fn test_conn_pool_reconnect() {
-    pretty_env_logger::init_timed();
+    // pretty_env_logger::init_timed();
 
     let mut config = mock_config(true, 1350);
 
@@ -404,37 +425,20 @@ async fn test_conn_pool_reconnect() {
 
     let raddr = listener.local_addrs().next().unwrap().clone();
 
-    let (mut drop_sender, mut drop_receiver) = mpsc::channel(0);
-
     future_spawn(async move {
         while let Some(conn) = listener.accept().await {
-            let stream = conn.accept_stream().await.unwrap();
-
-            let mut buf = vec![0; 1024];
-
-            stream.stream_recv(&mut buf).await.unwrap();
-
             conn.close().await.unwrap();
-
-            while !conn.is_closed().await {
-                sleep(Duration::from_millis(100)).await.unwrap();
-            }
-
-            println!("======");
-
-            drop_sender.send(()).await.unwrap();
         }
     });
 
     let conn_pool = QuicConnPool::new(1, raddr, mock_config(false, 1350)).unwrap();
 
     for i in 0..10 {
-        println!("{}", i);
+        log::trace!("open stream {}", i);
+
         let mut stream = conn_pool.open_stream().await.expect("Reconnect");
 
         stream.write(b"hello").await.unwrap();
-
-        drop_receiver.next().await.unwrap();
 
         loop {
             if let Err(err) = stream.write(b"hello").await {
@@ -442,7 +446,7 @@ async fn test_conn_pool_reconnect() {
                 break;
             }
 
-            sleep(Duration::from_secs(1)).await.unwrap();
+            sleep(Duration::from_millis(10)).await.unwrap();
         }
     }
 }
