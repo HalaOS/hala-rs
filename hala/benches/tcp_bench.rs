@@ -54,11 +54,11 @@ async fn handle_echo_stream(mut stream: SslStream<TcpStream>) {
 }
 
 fn main() {
-    let raddr = block_on(async { create_echo_server() }, 10);
+    let raddr = block_on(async { create_echo_server() });
 
     println!("tcp_bench");
 
-    block_on(test_echo(raddr, 10000), 10);
+    block_on(test_echo(raddr, 10000));
 }
 
 async fn test_echo(raddr: SocketAddr, times: u32) {

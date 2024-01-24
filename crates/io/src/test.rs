@@ -10,5 +10,5 @@ where
 {
     let fut = test();
 
-    block_on(fut, 10);
+    block_on(fut);
 }

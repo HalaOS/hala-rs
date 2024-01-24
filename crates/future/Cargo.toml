@@ -13,6 +13,7 @@ boxcar = {workspace = true}
 dashmap = {workspace = true}
 futures = {workspace = true}
 log = {workspace = true}
+num_cpus = {workspace = true}
 ring = {workspace = true}
 thiserror = {workspace = true}
 
@@ -22,3 +23,7 @@ hala-sync = {workspace = true}
 [dev-dependencies]
 futures-test = {workspace = true}
 pretty_env_logger = {workspace = true}
+
+[[bench]]
+harness = false
+name = "executor"

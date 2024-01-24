@@ -90,11 +90,11 @@ async fn handle_stream(mut stream: QuicStream) {
 fn main() {
     // pretty_env_logger::init_timed();
 
-    let raddr = block_on(async { create_echo_server() }, 10);
+    let raddr = block_on(async { create_echo_server() });
 
     println!("quic_bench");
 
-    block_on(test_echo(raddr, 10000), 10);
+    block_on(test_echo(raddr, 10000));
 }
 
 async fn test_echo(raddr: SocketAddr, times: u32) {

@@ -22,7 +22,16 @@ pub fn future_spawn<Fut>(fut: Fut)
 where
     Fut: Future<Output = ()> + Send + 'static,
 {
-    REGISTER.get().unwrap().spawn_boxed_future(fut.boxed())
+    let spawner = REGISTER.get_or_init(|| {
+        Box::new(
+            ThreadPool::builder()
+                .pool_size(num_cpus::get())
+                .create()
+                .unwrap(),
+        )
+    });
+
+    spawner.spawn_boxed_future(fut.boxed())
 }
 
 impl FutureSpawner for futures::executor::ThreadPool {
@@ -32,24 +41,17 @@ impl FutureSpawner for futures::executor::ThreadPool {
     }
 }
 
-pub fn block_on<Fut, R>(fut: Fut, pool_size: usize) -> R
+pub fn block_on<Fut, R>(fut: Fut) -> R
 where
     Fut: Future<Output = R> + Send + 'static,
     R: Send + 'static,
 {
-    static POOL: OnceLock<ThreadPool> = OnceLock::new();
+    let (sender, receiver) = futures::channel::oneshot::channel::<R>();
 
-    let pool = POOL.get_or_init(|| {
-        let pool = ThreadPool::builder().pool_size(pool_size).create().unwrap();
-
-        register_spawner(pool.clone());
-
-        pool
+    future_spawn(async move {
+        let r = fut.await;
+        _ = sender.send(r);
     });
 
-    let handle = pool
-        .spawn_with_handle(fut)
-        .expect("futures::executor::ThreadPool spawn enter future failed.");
-
-    futures::executor::block_on(handle)
+    futures::executor::block_on(async move { receiver.await.unwrap() })
 }
