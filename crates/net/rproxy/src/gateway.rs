@@ -1,4 +1,4 @@
-use std::{io, sync::Arc};
+use std::{io, net::SocketAddr, sync::Arc};
 
 use async_trait::async_trait;
 use dashmap::DashMap;
@@ -13,6 +13,8 @@ pub trait Gateway {
 
     /// stop the gateway.
     async fn stop(&self) -> io::Result<()>;
+
+    fn local_addrs(&self) -> &[SocketAddr];
 }
 
 /// The factory to create specific type gateway instance.

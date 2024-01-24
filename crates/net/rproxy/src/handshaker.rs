@@ -2,7 +2,10 @@ use std::io;
 
 use async_trait::async_trait;
 use bytes::BytesMut;
-use futures::channel::mpsc::{Receiver, Sender};
+use futures::{
+    channel::mpsc::{Receiver, Sender},
+    Future,
+};
 
 use crate::protocol::{PathInfo, TransportConfig};
 
@@ -39,4 +42,31 @@ pub struct TunnelOpenConfig {
     pub tunnel_service_id: String,
     /// The transport configuration for tunnel.
     pub transport_config: TransportConfig,
+}
+
+// #[async_trait]
+// impl<F> Handshaker for F
+// where
+//     F: Fn(HandshakeContext) -> io::Result<(HandshakeContext, TunnelOpenConfig)> + Send + Sync,
+// {
+//     async fn handshake(
+//         &self,
+//         cx: HandshakeContext,
+//     ) -> io::Result<(HandshakeContext, TunnelOpenConfig)> {
+//         self(cx)
+//     }
+// }
+
+#[async_trait]
+impl<F, Fut> Handshaker for F
+where
+    F: Fn(HandshakeContext) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = io::Result<(HandshakeContext, TunnelOpenConfig)>> + Send + Sync,
+{
+    async fn handshake(
+        &self,
+        cx: HandshakeContext,
+    ) -> io::Result<(HandshakeContext, TunnelOpenConfig)> {
+        self(cx).await
+    }
 }

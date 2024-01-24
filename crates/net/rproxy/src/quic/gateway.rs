@@ -1,4 +1,4 @@
-use std::io;
+use std::{io, net::SocketAddr};
 
 use async_trait::async_trait;
 use bytes::BytesMut;
@@ -75,13 +75,17 @@ impl GatewayFactory for QuicGatewayFactory {
 struct QuicGateway {
     id: String,
     listener: QuicListener,
+    laddrs: Vec<SocketAddr>,
 }
 
 impl QuicGateway {
     fn new(listener: QuicListener) -> Self {
+        let laddrs = listener.local_addrs().map(|addr| *addr).collect::<Vec<_>>();
+
         Self {
             id: Uuid::new_v4().to_string(),
             listener,
+            laddrs,
         }
     }
 }
@@ -98,6 +102,10 @@ impl Gateway for QuicGateway {
         self.listener.close().await;
 
         Ok(())
+    }
+
+    fn local_addrs(&self) -> &[SocketAddr] {
+        &self.laddrs
     }
 }
 
@@ -235,4 +243,99 @@ async fn gatway_send_loop(id: String, mut stream: QuicStream, mut receiver: Rece
     );
 
     _ = stream.stream_shutdown().await;
+}
+
+#[cfg(test)]
+mod tests {
+
+    use crate::{
+        mock::{mock_config, mock_tunnel_factory_manager},
+        TunnelFactoryReceiver,
+    };
+
+    use super::*;
+
+    use futures::AsyncReadExt;
+    use hala_io::test::io_test;
+
+    async fn setup() -> (Box<dyn Gateway + Send>, TunnelFactoryReceiver) {
+        let (tunnel_factory_manager, tunnel_receiver) = mock_tunnel_factory_manager();
+
+        let factory = QuicGatewayFactory::new("QuicGatewayFactory");
+
+        let gateway = factory
+            .create(
+                ProtocolConfig {
+                    max_cache_len: 1024,
+                    max_packet_len: 1370,
+                    transport_config: TransportConfig::Quic(
+                        vec!["127.0.0.1:0".parse().unwrap()],
+                        mock_config(true, 1370),
+                    ),
+                },
+                tunnel_factory_manager,
+            )
+            .await
+            .unwrap();
+
+        (gateway, tunnel_receiver)
+    }
+
+    #[hala_test::test(io_test)]
+    async fn test_echo() {
+        let (gateway, mut tunnel_receiver) = setup().await;
+
+        let raddrs = gateway.local_addrs()[0];
+
+        let conn = QuicConn::connect("127.0.0.1:0", raddrs, &mut mock_config(false, 1370))
+            .await
+            .unwrap();
+
+        let mut stream = conn.open_stream().await.unwrap();
+
+        let send_data = b"hello world".as_slice();
+
+        stream.write_all(send_data).await.unwrap();
+
+        let (mut rhs_tunnel, _) = tunnel_receiver.next().await.unwrap();
+
+        let buf = rhs_tunnel.receiver.next().await.unwrap();
+
+        assert_eq!(&buf, send_data);
+
+        rhs_tunnel.sender.send(buf).await.unwrap();
+
+        let mut buf = vec![0; 1024];
+
+        let read_size = stream.read(&mut buf).await.unwrap();
+
+        assert_eq!(&buf[..read_size], send_data);
+    }
+
+    #[hala_test::test(io_test)]
+    async fn test_broken_channel() {
+        let (gateway, mut tunnel_receiver) = setup().await;
+
+        let raddrs = gateway.local_addrs()[0];
+
+        let conn = QuicConn::connect("127.0.0.1:0", raddrs, &mut mock_config(false, 1370))
+            .await
+            .unwrap();
+
+        let mut stream = conn.open_stream().await.unwrap();
+
+        let send_data = b"hello world".as_slice();
+
+        stream.write_all(send_data).await.unwrap();
+
+        let (mut rhs_tunnel, _) = tunnel_receiver.next().await.unwrap();
+
+        let buf = rhs_tunnel.receiver.next().await.unwrap();
+
+        assert_eq!(&buf, send_data);
+
+        drop(rhs_tunnel);
+
+        stream.write_all(send_data).await.unwrap();
+    }
 }

@@ -1,11 +1,14 @@
-use std::{net::SocketAddr, time::Duration};
+use std::{io, net::SocketAddr, time::Duration};
 
 use futures::AsyncWriteExt;
 use hala_future::executor::future_spawn;
 use hala_io::sleep;
 use hala_quic::{QuicConn, QuicListener, QuicStream};
 
-use crate::{TransportConfig, TunnelOpenConfig};
+use crate::{
+    make_tunnel_factory_channel, HandshakeContext, TransportConfig, TunnelFactoryManager,
+    TunnelFactoryReceiver, TunnelOpenConfig,
+};
 
 pub(crate) fn mock_config(is_server: bool, max_datagram_size: usize) -> hala_quic::Config {
     use std::path::Path;
@@ -130,4 +133,28 @@ pub(crate) fn tunnel_open_flag(tunnel_service_id: &str, raddr: SocketAddr) -> Tu
         tunnel_service_id: tunnel_service_id.into(),
         transport_config: TransportConfig::Quic(vec![raddr], mock_config(false, 1370)),
     }
+}
+
+/// Create new mock manager.
+pub(crate) fn mock_tunnel_factory_manager() -> (TunnelFactoryManager, TunnelFactoryReceiver) {
+    let (sender, receiver) = make_tunnel_factory_channel("MockTunnelFactory", 1024);
+
+    let manager = TunnelFactoryManager::new(mock_handshaker);
+
+    manager.register(sender);
+
+    (manager, receiver)
+}
+
+pub(crate) async fn mock_handshaker(
+    cx: HandshakeContext,
+) -> io::Result<(HandshakeContext, TunnelOpenConfig)> {
+    let config = TunnelOpenConfig {
+        max_cache_len: 1024,
+        max_packet_len: 1370,
+        tunnel_service_id: "MockTunnelFactory".into(),
+        transport_config: TransportConfig::None,
+    };
+
+    Ok((cx, config))
 }

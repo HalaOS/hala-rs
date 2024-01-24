@@ -3,10 +3,16 @@ use std::{fmt::Debug, io, sync::Arc};
 use async_trait::async_trait;
 use bytes::BytesMut;
 use dashmap::DashMap;
-use futures::channel::mpsc::{Receiver, Sender};
+use futures::{
+    channel::mpsc::{self, Receiver, Sender},
+    SinkExt,
+};
 use uuid::Uuid;
 
-use crate::handshaker::{BoxHandshaker, HandshakeContext, Handshaker, TunnelOpenConfig};
+use crate::{
+    handshaker::{BoxHandshaker, HandshakeContext, Handshaker, TunnelOpenConfig},
+    TransportConfig,
+};
 
 /// Transport channel type create by [`open_channel`](Transport::open_channel) function
 pub struct Tunnel {
@@ -162,4 +168,55 @@ mod event_loop {
             path_info
         );
     }
+}
+
+/// The rhs tunnel sender.
+pub struct TunnelFactorySender {
+    name: String,
+    sender: mpsc::Sender<(Tunnel, TransportConfig)>,
+}
+
+/// The rhs tunnel receiver.
+pub type TunnelFactoryReceiver = mpsc::Receiver<(Tunnel, TransportConfig)>;
+
+#[async_trait]
+impl TunnelFactory for TunnelFactorySender {
+    /// Using [`config`](TunnelOpenConfiguration) to open new tunnel instance.
+    async fn open_tunnel(&self, config: TunnelOpenConfig) -> io::Result<Tunnel> {
+        let (forward_sender, forward_receiver) = mpsc::channel(config.max_cache_len);
+        let (backward_sender, backward_receiver) = mpsc::channel(config.max_cache_len);
+
+        let lhs_tunnel = Tunnel::new(config.max_packet_len, forward_sender, backward_receiver);
+
+        let rhs_tunnel = Tunnel::new(config.max_packet_len, backward_sender, forward_receiver);
+
+        self.sender
+            .clone()
+            .send((rhs_tunnel, config.transport_config))
+            .await
+            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "Send tunnel rhs error"))?;
+
+        Ok(lhs_tunnel)
+    }
+
+    /// Get tunnel service id.
+    fn id(&self) -> &str {
+        &self.name
+    }
+}
+
+/// Create an channel to receive rhs tunnel.
+pub fn make_tunnel_factory_channel<ID: ToString>(
+    name: ID,
+    buffer: usize,
+) -> (TunnelFactorySender, TunnelFactoryReceiver) {
+    let (sender, receiver) = mpsc::channel(buffer);
+
+    (
+        TunnelFactorySender {
+            name: name.to_string(),
+            sender,
+        },
+        receiver,
+    )
 }
