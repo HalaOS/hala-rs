@@ -1,10 +1,12 @@
 use std::{
+    collections::HashMap,
     io,
     net::{SocketAddr, ToSocketAddrs},
     sync::Arc,
 };
 
 use hala_sync::{AsyncLockable, AsyncSpinMutex};
+use quiche::ConnectionId;
 
 use crate::{Config, QuicConn, QuicStream};
 
@@ -16,7 +18,7 @@ struct RawConnPool {
     /// Peer addresses.
     raddrs: Vec<SocketAddr>,
     /// Aliving connections.
-    conns: Vec<QuicConn>,
+    conns: HashMap<ConnectionId<'static>, QuicConn>,
 }
 
 impl RawConnPool {
@@ -40,10 +42,20 @@ impl RawConnPool {
     }
 
     async fn find_avalid_conn(&mut self) -> io::Result<QuicConn> {
-        for conn in self.conns.iter() {
+        let mut closed = vec![];
+        for (id, conn) in self.conns.iter() {
+            if conn.is_closed().await {
+                closed.push(id.clone());
+                continue;
+            }
+
             if conn.peer_streams_left_bidi().await > 0 {
                 return Ok(conn.clone());
             }
+        }
+
+        for id in closed {
+            self.conns.remove(&id);
         }
 
         if self.conns.len() >= self.max_conns {
@@ -55,7 +67,7 @@ impl RawConnPool {
 
         let conn = QuicConn::connect("0.0.0.0:0", self.raddrs.as_slice(), &mut self.config).await?;
 
-        self.conns.push(conn.clone());
+        self.conns.insert(conn.source_id().clone(), conn.clone());
 
         Ok(conn)
     }

@@ -819,7 +819,8 @@ impl QuicConnState {
 
     /// Returns true if the connection is closed.
     pub async fn is_closed(&self) -> bool {
-        self.state.lock().await.quiche_conn.is_closed()
+        let state = self.state.lock().await;
+        state.quiche_conn.is_closed() || state.quiche_conn.is_draining()
     }
 
     /// Returns true if the connection is established.

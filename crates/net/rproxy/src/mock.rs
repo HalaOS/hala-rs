@@ -1,7 +1,8 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, time::Duration};
 
 use futures::AsyncWriteExt;
 use hala_future::executor::future_spawn;
+use hala_io::sleep;
 use hala_quic::{QuicConn, QuicListener, QuicStream};
 
 use crate::{TransportConfig, TunnelOpenConfig};
@@ -73,6 +74,33 @@ pub(crate) fn create_quic_echo_server(max_streams_bidi: u64) -> QuicListener {
     });
 
     listener
+}
+
+pub(crate) fn create_quic_conn_drop_server(
+    max_streams_bidi: u64,
+    timeout: Duration,
+) -> QuicListener {
+    let mut config = mock_config(true, 1370);
+
+    config.set_initial_max_streams_bidi(max_streams_bidi);
+
+    let listener = QuicListener::bind("127.0.0.1:0", config).unwrap();
+
+    let listener_cloned = listener.clone();
+
+    future_spawn(async move {
+        while let Some(conn) = listener_cloned.accept().await {
+            future_spawn(handle_quic_conn_timeout_drop(conn, timeout));
+        }
+    });
+
+    listener
+}
+
+async fn handle_quic_conn_timeout_drop(conn: QuicConn, duration: Duration) {
+    sleep(duration).await.unwrap();
+
+    drop(conn);
 }
 
 async fn echo_handle_quic_conn(conn: QuicConn) {

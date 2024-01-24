@@ -186,6 +186,16 @@ impl QuicConn {
     pub fn destination_id(&self) -> &ConnectionId<'static> {
         &self.state.dcid
     }
+
+    /// Manual close this connection.
+    pub async fn close(&self) -> io::Result<()> {
+        self.state.close(false, 0, b"User manual closed").await
+    }
+
+    /// Get the closed flag of this connection.
+    pub async fn is_closed(&self) -> bool {
+        self.state.is_closed().await
+    }
 }
 
 /// Stream socket type for quic protocol.

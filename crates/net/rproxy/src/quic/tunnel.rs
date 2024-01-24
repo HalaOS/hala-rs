@@ -153,7 +153,9 @@ mod tests {
     use hala_future::executor::future_spawn;
     use hala_io::{sleep, test::io_test};
 
-    use crate::mock::{create_quic_echo_server, mock_config, tunnel_open_flag};
+    use crate::mock::{
+        create_quic_conn_drop_server, create_quic_echo_server, mock_config, tunnel_open_flag,
+    };
 
     #[hala_test::test(io_test)]
     async fn test_echo() {
@@ -310,6 +312,28 @@ mod tests {
 
             sleep(Duration::from_secs(1)).await.unwrap();
         }
+
+        listener.close().await;
+    }
+
+    #[hala_test::test(io_test)]
+    async fn test_reconnect() {
+        let listener = create_quic_conn_drop_server(10, Duration::from_secs(1));
+
+        let raddr = *listener.local_addrs().next().unwrap();
+
+        let tunnel_factory = QuicTunnelFactory::new("", 1);
+
+        let config = tunnel_open_flag("", raddr);
+
+        let _ = tunnel_factory.open_tunnel(config).await.unwrap();
+
+        // wait connection closed.
+        sleep(Duration::from_secs(2)).await.unwrap();
+
+        let config = tunnel_open_flag("", raddr);
+
+        let _ = tunnel_factory.open_tunnel(config).await.unwrap();
 
         listener.close().await;
     }

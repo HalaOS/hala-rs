@@ -1,6 +1,6 @@
 use std::{io, time::Duration};
 
-use futures::{AsyncReadExt, AsyncWriteExt};
+use futures::{channel::mpsc, AsyncReadExt, AsyncWriteExt, SinkExt, StreamExt};
 use hala_future::executor::future_spawn;
 use hala_io::{sleep, test::io_test};
 use hala_quic::{Config, QuicConn, QuicConnPool, QuicListener};
@@ -50,6 +50,7 @@ fn mock_config(is_server: bool, max_datagram_size: usize) -> Config {
     config.set_initial_max_streams_bidi(9);
     config.set_initial_max_streams_uni(9);
     config.set_disable_active_migration(false);
+    config.set_active_connection_id_limit(100);
 
     config
 }
@@ -387,6 +388,61 @@ async fn test_conn_pool() {
 
         if conn_pool.open_stream().await.is_ok() {
             break;
+        }
+    }
+}
+
+#[hala_test::test(io_test)]
+async fn test_conn_pool_reconnect() {
+    pretty_env_logger::init_timed();
+
+    let mut config = mock_config(true, 1350);
+
+    config.set_initial_max_streams_bidi(2);
+
+    let listener = QuicListener::bind("127.0.0.1:0", config).unwrap();
+
+    let raddr = listener.local_addrs().next().unwrap().clone();
+
+    let (mut drop_sender, mut drop_receiver) = mpsc::channel(0);
+
+    future_spawn(async move {
+        while let Some(conn) = listener.accept().await {
+            let stream = conn.accept_stream().await.unwrap();
+
+            let mut buf = vec![0; 1024];
+
+            stream.stream_recv(&mut buf).await.unwrap();
+
+            conn.close().await.unwrap();
+
+            while !conn.is_closed().await {
+                sleep(Duration::from_millis(100)).await.unwrap();
+            }
+
+            println!("======");
+
+            drop_sender.send(()).await.unwrap();
+        }
+    });
+
+    let conn_pool = QuicConnPool::new(1, raddr, mock_config(false, 1350)).unwrap();
+
+    for i in 0..10 {
+        println!("{}", i);
+        let mut stream = conn_pool.open_stream().await.expect("Reconnect");
+
+        stream.write(b"hello").await.unwrap();
+
+        drop_receiver.next().await.unwrap();
+
+        loop {
+            if let Err(err) = stream.write(b"hello").await {
+                assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
+                break;
+            }
+
+            sleep(Duration::from_secs(1)).await.unwrap();
         }
     }
 }
