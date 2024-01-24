@@ -209,9 +209,25 @@ async fn gatway_recv_loop(
             }
         };
 
+        if fin {
+            log::error!(
+                "{:?}, gateway={}, stopped recv loop, stream send fin({}) or forwarding broken",
+                stream,
+                id,
+                fin,
+            );
+
+            _ = stream.stream_shutdown().await;
+            break;
+        }
+
+        if read_size == 0 {
+            continue;
+        }
+
         let buf = buf.into_bytes_mut(Some(read_size));
 
-        if sender.send(buf).await.is_err() || fin {
+        if sender.send(buf).await.is_err() {
             log::error!(
                 "{:?}, gateway={}, stopped recv loop, stream send fin({}) or forwarding broken",
                 stream,
@@ -248,6 +264,8 @@ async fn gatway_send_loop(id: String, mut stream: QuicStream, mut receiver: Rece
 #[cfg(test)]
 mod tests {
 
+    use std::time::Duration;
+
     use crate::{
         mock::{mock_config, mock_tunnel_factory_manager},
         TunnelFactoryReceiver,
@@ -256,7 +274,7 @@ mod tests {
     use super::*;
 
     use futures::AsyncReadExt;
-    use hala_io::test::io_test;
+    use hala_io::{sleep, test::io_test};
 
     async fn setup() -> (Box<dyn Gateway + Send>, TunnelFactoryReceiver) {
         let (tunnel_factory_manager, tunnel_receiver) = mock_tunnel_factory_manager();
@@ -313,7 +331,7 @@ mod tests {
     }
 
     #[hala_test::test(io_test)]
-    async fn test_broken_channel() {
+    async fn test_server_broken_channel() {
         let (gateway, mut tunnel_receiver) = setup().await;
 
         let raddrs = gateway.local_addrs()[0];
@@ -336,6 +354,42 @@ mod tests {
 
         drop(rhs_tunnel);
 
+        // wait gateway close channel
+        sleep(Duration::from_secs(1)).await.unwrap();
+
+        stream
+            .write_all(send_data)
+            .await
+            .expect_err("Stream closed");
+    }
+
+    #[hala_test::test(io_test)]
+    async fn test_client_broken_channel() {
+        let (gateway, mut tunnel_receiver) = setup().await;
+
+        let raddrs = gateway.local_addrs()[0];
+
+        let conn = QuicConn::connect("127.0.0.1:0", raddrs, &mut mock_config(false, 1370))
+            .await
+            .unwrap();
+
+        let mut stream = conn.open_stream().await.unwrap();
+
+        let send_data = b"hello world".as_slice();
+
         stream.write_all(send_data).await.unwrap();
+
+        let (mut rhs_tunnel, _) = tunnel_receiver.next().await.unwrap();
+
+        let buf = rhs_tunnel.receiver.next().await.unwrap();
+
+        assert_eq!(&buf, send_data);
+
+        drop(stream);
+
+        // wait gateway close channel
+        sleep(Duration::from_secs(1)).await.unwrap();
+
+        assert_eq!(rhs_tunnel.receiver.next().await, None);
     }
 }
