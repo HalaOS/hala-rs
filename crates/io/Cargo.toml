@@ -27,4 +27,9 @@ divan = {workspace = true}
 pretty_env_logger = {workspace = true}
 
 [features]
+default = ["mio-driver"]
 mio-driver = ["mio"]
+
+[[bench]]
+harness = false
+name = "timeout"

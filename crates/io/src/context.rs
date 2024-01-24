@@ -115,5 +115,8 @@ pub fn io_context() -> &'static IoContext {
     });
 
     #[cfg(not(feature = "mio-driver"))]
-    REGISTER.get().as_ref().expect("")
+    REGISTER
+        .get()
+        .as_ref()
+        .expect("Call register_io_context first")
 }
