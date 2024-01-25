@@ -1,9 +1,10 @@
-use std::{io, net::SocketAddr, time::Duration};
+use std::{io, net::SocketAddr, sync::Arc, time::Duration};
 
-use futures::AsyncWriteExt;
+use futures::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use hala_future::executor::future_spawn;
 use hala_io::sleep;
 use hala_quic::{QuicConn, QuicListener, QuicStream};
+use hala_tcp::{TcpListener, TcpStream};
 
 use crate::{
     make_tunnel_factory_channel, HandshakeContext, TransportConfig, TunnelFactoryManager,
@@ -93,17 +94,11 @@ pub(crate) fn create_quic_conn_drop_server(
 
     future_spawn(async move {
         while let Some(conn) = listener_cloned.accept().await {
-            future_spawn(handle_quic_conn_timeout_drop(conn, timeout));
+            future_spawn(handle_conn_timeout_drop(conn, timeout));
         }
     });
 
     listener
-}
-
-async fn handle_quic_conn_timeout_drop(conn: QuicConn, duration: Duration) {
-    sleep(duration).await.unwrap();
-
-    drop(conn);
 }
 
 async fn echo_handle_quic_conn(conn: QuicConn) {
@@ -135,6 +130,15 @@ pub(crate) fn tunnel_open_flag(tunnel_service_id: &str, raddr: SocketAddr) -> Tu
     }
 }
 
+pub(crate) fn tcp_open_flag(tunnel_service_id: &str, raddr: SocketAddr) -> TunnelOpenConfig {
+    TunnelOpenConfig {
+        max_packet_len: 1370,
+        max_cache_len: 10,
+        tunnel_service_id: tunnel_service_id.into(),
+        transport_config: TransportConfig::Tcp(vec![raddr]),
+    }
+}
+
 /// Create new mock manager.
 pub(crate) fn mock_tunnel_factory_manager() -> (TunnelFactoryManager, TunnelFactoryReceiver) {
     let (sender, receiver) = make_tunnel_factory_channel("MockTunnelFactory", 1024);
@@ -157,4 +161,55 @@ pub(crate) async fn mock_handshaker(
     };
 
     Ok((cx, config))
+}
+
+pub(crate) fn create_tcp_conn_drop_server(timeout: Duration) -> Arc<TcpListener> {
+    let listener = Arc::new(TcpListener::bind("127.0.0.1:0").unwrap());
+
+    let listener_cloned = listener.clone();
+
+    future_spawn(async move {
+        while let Ok((stream, _)) = listener_cloned.accept().await {
+            future_spawn(handle_conn_timeout_drop(stream, timeout));
+        }
+    });
+
+    listener
+}
+
+async fn handle_conn_timeout_drop<S>(conn: S, duration: Duration) {
+    sleep(duration).await.unwrap();
+
+    drop(conn);
+}
+
+pub(crate) fn create_tcp_echo_server() -> Arc<TcpListener> {
+    let listener = Arc::new(TcpListener::bind("127.0.0.1:0").unwrap());
+
+    let listener_cloned = listener.clone();
+
+    future_spawn(async move {
+        while let Ok((stream, _)) = listener_cloned.accept().await {
+            future_spawn(echo_handle_stream::<TcpStream>(stream));
+        }
+    });
+
+    listener
+}
+
+async fn echo_handle_stream<S>(mut stream: TcpStream)
+where
+    S: AsyncWrite + AsyncRead + Unpin,
+{
+    let mut buf = vec![0; 1370];
+
+    loop {
+        let read_size = stream.read(&mut buf).await.unwrap();
+
+        if read_size == 0 {
+            return;
+        }
+
+        stream.write_all(&buf[..read_size]).await.unwrap();
+    }
 }

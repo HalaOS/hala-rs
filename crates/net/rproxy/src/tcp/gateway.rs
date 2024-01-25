@@ -1,14 +1,15 @@
-use std::{io, net::SocketAddr};
+use std::{io, net::SocketAddr, sync::Arc};
 
 use async_trait::async_trait;
 use bytes::BytesMut;
 use futures::{
     channel::mpsc::{self, Receiver, Sender},
-    AsyncWriteExt, SinkExt, StreamExt,
+    AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, SinkExt, StreamExt,
 };
 use hala_future::executor::future_spawn;
 use hala_io::ReadBuf;
-use hala_quic::{QuicConn, QuicListener, QuicStream};
+use hala_tcp::TcpListener;
+use hala_tls::{accept, SslAcceptor};
 use uuid::Uuid;
 
 use crate::{
@@ -16,82 +17,26 @@ use crate::{
     TunnelFactoryManager,
 };
 
-/// The factory to create quic gateway.
-pub struct QuicGatewayFactory {
+struct TcpGateway {
     id: String,
-}
-
-impl QuicGatewayFactory {
-    pub fn new<ID: ToString>(id: ID) -> Self {
-        Self { id: id.to_string() }
-    }
-}
-
-#[async_trait]
-impl GatewayFactory for QuicGatewayFactory {
-    /// Factory id.
-    fn id(&self) -> &str {
-        &self.id
-    }
-
-    /// Return the variant of [`protocol`] (Protocol) supported by the gateway created by this factory.
-    fn support_protocol(&self) -> &[Protocol] {
-        &[Protocol::Quic]
-    }
-
-    /// Create new gateway instance.
-    async fn create(
-        &self,
-        protocol_config: ProtocolConfig,
-        tunnel_factory_manager: TunnelFactoryManager,
-    ) -> io::Result<Box<dyn Gateway + Send + 'static>> {
-        let (laddrs, config) =
-            if let TransportConfig::Quic(laddrs, config) = protocol_config.transport_config {
-                (laddrs, config)
-            } else {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "Expect TransportConfig::Quic",
-                ));
-            };
-
-        let listener = QuicListener::bind(laddrs.as_slice(), config)?;
-
-        let gateway = QuicGateway::new(listener.clone());
-        let id = gateway.id.clone();
-
-        future_spawn(run_gateway_loop(
-            id,
-            protocol_config.max_packet_len,
-            protocol_config.max_cache_len,
-            listener,
-            tunnel_factory_manager,
-        ));
-
-        Ok(Box::new(gateway))
-    }
-}
-
-struct QuicGateway {
-    id: String,
-    listener: QuicListener,
+    listener: Arc<TcpListener>,
     laddrs: Vec<SocketAddr>,
 }
 
-impl QuicGateway {
-    fn new(listener: QuicListener) -> Self {
-        let laddrs = listener.local_addrs().map(|addr| *addr).collect::<Vec<_>>();
+impl TcpGateway {
+    fn new(listener: Arc<TcpListener>) -> Self {
+        let laddr = listener.local_addr().unwrap();
 
         Self {
             id: Uuid::new_v4().to_string(),
             listener,
-            laddrs,
+            laddrs: vec![laddr],
         }
     }
 }
 
 #[async_trait]
-impl Gateway for QuicGateway {
+impl Gateway for TcpGateway {
     /// The unique ID of this gateway.
     fn id(&self) -> &str {
         &self.id
@@ -99,7 +44,7 @@ impl Gateway for QuicGateway {
 
     /// stop the gateway.
     async fn stop(&self) -> io::Result<()> {
-        self.listener.close().await;
+        self.listener.close().await?;
 
         Ok(())
     }
@@ -109,21 +54,136 @@ impl Gateway for QuicGateway {
     }
 }
 
-async fn run_gateway_loop(
+/// The factory to create quic gateway.
+pub struct TcpGatewayFactory {
+    id: String,
+}
+
+impl TcpGatewayFactory {
+    pub fn new<ID: ToString>(id: ID) -> Self {
+        Self { id: id.to_string() }
+    }
+}
+
+#[async_trait]
+impl GatewayFactory for TcpGatewayFactory {
+    /// Factory id.
+    fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// Return the variant of [`protocol`] (Protocol) supported by the gateway created by this factory.
+    fn support_protocol(&self) -> &[Protocol] {
+        &[Protocol::Tcp, Protocol::TcpSsl]
+    }
+
+    /// Create new gateway instance.
+    async fn create(
+        &self,
+        protocol_config: ProtocolConfig,
+        tunnel_factory_manager: TunnelFactoryManager,
+    ) -> io::Result<Box<dyn Gateway + Send + 'static>> {
+        match protocol_config.transport_config {
+            TransportConfig::Tcp(laddrs) => {
+                start_tcp_gateway(
+                    protocol_config.max_packet_len,
+                    protocol_config.max_cache_len,
+                    laddrs,
+                    tunnel_factory_manager,
+                )
+                .await
+            }
+            TransportConfig::SslServer(laddrs, ssl_acceptor) => {
+                start_tcp_ssl_gateway(
+                    protocol_config.max_packet_len,
+                    protocol_config.max_cache_len,
+                    laddrs,
+                    ssl_acceptor,
+                    tunnel_factory_manager,
+                )
+                .await
+            }
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "Expect TransportConfig::Tcp / TransportConfig::SslServer",
+                ));
+            }
+        }
+    }
+}
+
+async fn start_tcp_ssl_gateway(
+    max_packet_len: usize,
+    max_cache_len: usize,
+    laddrs: Vec<SocketAddr>,
+    ssl_acceptor: SslAcceptor,
+    tunnel_factory_manager: TunnelFactoryManager,
+) -> io::Result<Box<dyn Gateway + Send + 'static>> {
+    let listener = Arc::new(TcpListener::bind(laddrs.as_slice())?);
+
+    let gateway = TcpGateway::new(listener.clone());
+    let id = gateway.id.clone();
+
+    future_spawn(run_tcp_ssl_gateway_loop(
+        id,
+        max_packet_len,
+        max_cache_len,
+        listener,
+        ssl_acceptor,
+        tunnel_factory_manager,
+    ));
+
+    Ok(Box::new(gateway))
+}
+
+async fn start_tcp_gateway(
+    max_packet_len: usize,
+    max_cache_len: usize,
+    laddrs: Vec<SocketAddr>,
+    tunnel_factory_manager: TunnelFactoryManager,
+) -> io::Result<Box<dyn Gateway + Send + 'static>> {
+    let listener = Arc::new(TcpListener::bind(laddrs.as_slice())?);
+
+    let gateway = TcpGateway::new(listener.clone());
+    let id = gateway.id.clone();
+
+    future_spawn(run_tcp_gateway_loop(
+        id,
+        max_packet_len,
+        max_cache_len,
+        listener,
+        tunnel_factory_manager,
+    ));
+
+    Ok(Box::new(gateway))
+}
+
+async fn run_tcp_gateway_loop(
     id: String,
     max_packet_len: usize,
     max_cache_len: usize,
-    listener: QuicListener,
+    listener: Arc<TcpListener>,
     tunnel_factory_manager: TunnelFactoryManager,
 ) {
     log::trace!("quic gateway started, id={}", id);
 
-    while let Some(conn) = listener.accept().await {
-        future_spawn(gateway_handle_conn(
+    while let Ok((stream, raddr)) = listener.accept().await {
+        let laddr = match stream.local_addr() {
+            Ok(laddr) => laddr,
+            Err(err) => {
+                log::error!("Get incoming tcp stream laddr error,{}", err);
+                continue;
+            }
+        };
+
+        future_spawn(gateway_handle_stream(
             id.clone(),
             max_packet_len,
             max_cache_len,
-            conn,
+            stream,
+            laddr,
+            raddr,
             tunnel_factory_manager.clone(),
         ));
     }
@@ -131,134 +191,181 @@ async fn run_gateway_loop(
     log::trace!("quic gateway stopped, id={}", id);
 }
 
-async fn gateway_handle_conn(
+async fn run_tcp_ssl_gateway_loop(
     id: String,
     max_packet_len: usize,
     max_cache_len: usize,
-    conn: QuicConn,
+    listener: Arc<TcpListener>,
+    ssl_acceptor: SslAcceptor,
     tunnel_factory_manager: TunnelFactoryManager,
 ) {
-    while let Some(stream) = conn.accept_stream().await {
+    log::trace!("quic gateway started, id={}", id);
+
+    while let Ok((stream, raddr)) = listener.accept().await {
+        let laddr = match stream.local_addr() {
+            Ok(laddr) => laddr,
+            Err(err) => {
+                log::error!("Get incoming tcp stream laddr error,{}", err);
+                continue;
+            }
+        };
+
+        let stream = match accept(&ssl_acceptor, stream).await {
+            Ok(stream) => stream,
+            Err(err) => {
+                log::error!(
+                    "ssl handshake error, laddr={:?}, raddr={}, {}",
+                    laddr,
+                    raddr,
+                    err
+                );
+                continue;
+            }
+        };
+
         future_spawn(gateway_handle_stream(
             id.clone(),
             max_packet_len,
             max_cache_len,
             stream,
+            laddr,
+            raddr,
             tunnel_factory_manager.clone(),
         ));
     }
+
+    log::trace!("quic gateway stopped, id={}", id);
 }
 
-async fn gateway_handle_stream(
+async fn gateway_handle_stream<S>(
     id: String,
     max_packet_len: usize,
     max_cache_len: usize,
-    stream: QuicStream,
+    stream: S,
+    laddr: SocketAddr,
+    raddr: SocketAddr,
     tunnel_factory_manager: TunnelFactoryManager,
-) {
+) where
+    S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
+{
     let (forward_sender, forward_receiver) = mpsc::channel(max_cache_len);
     let (backward_sender, backward_receiver) = mpsc::channel(max_cache_len);
 
     let cx = HandshakeContext {
-        path: crate::PathInfo::Quic(
-            stream.conn.source_id().clone().into_owned(),
-            stream.conn.destination_id().clone().into_owned(),
-        ),
+        path: crate::PathInfo::Tcp(laddr, raddr),
         backward: backward_sender,
         forward: forward_receiver,
     };
 
+    let (read, write) = stream.split();
+
     future_spawn(gatway_recv_loop(
         id.clone(),
+        laddr,
+        raddr,
         max_packet_len,
-        stream.clone(),
+        read,
         forward_sender,
     ));
 
     future_spawn(gatway_send_loop(
         id.clone(),
-        stream.clone(),
+        laddr,
+        raddr,
+        write,
         backward_receiver,
     ));
 
     match tunnel_factory_manager.handshake(cx).await {
         Ok(_) => {
-            log::info!("{:?}, gateway={}, handshake succesfully", stream, id);
+            log::info!("gateway={}, handshake succesfully", id);
         }
         Err(err) => {
-            _ = stream.stream_shutdown().await;
-            log::error!("{:?}, gateway={}, handshake error, {}", stream, id, err);
+            log::error!("gateway={}, handshake error, {}", id, err);
         }
     }
 }
 
-async fn gatway_recv_loop(
+async fn gatway_recv_loop<S>(
     id: String,
+    laddr: SocketAddr,
+    raddr: SocketAddr,
     max_packet_len: usize,
-    stream: QuicStream,
+    mut stream: S,
     mut sender: Sender<BytesMut>,
-) {
+) where
+    S: AsyncRead + Unpin,
+{
     loop {
         let mut buf = ReadBuf::with_capacity(max_packet_len);
 
-        let (read_size, fin) = match stream.stream_recv(buf.as_mut()).await {
+        let read_size = match stream.read(buf.as_mut()).await {
             Ok(r) => r,
             Err(err) => {
-                log::error!("{:?}, stopped recv loop, {}", stream, err);
-                break;
+                log::error!("{:?}, stopped recv loop, {}", id, err);
+                return;
             }
         };
 
-        if fin {
+        if read_size == 0 {
             log::error!(
-                "{:?}, gateway={}, stopped recv loop, stream send fin({}) or forwarding broken",
-                stream,
+                "tcp_gateway={}, laddr={:?}, raddr={:?}, stopped recv loop, tcp stream broken",
                 id,
-                fin,
+                laddr,
+                raddr
             );
 
-            _ = stream.stream_shutdown().await;
-            break;
-        }
-
-        if read_size == 0 {
-            continue;
+            return;
         }
 
         let buf = buf.into_bytes_mut(Some(read_size));
 
         if sender.send(buf).await.is_err() {
             log::error!(
-                "{:?}, gateway={}, stopped recv loop, stream send fin({}) or forwarding broken",
-                stream,
+                "gateway={}, laddr={:?}, raddr={:?}, stopped recv loop, forward tunnel broken",
                 id,
-                fin,
+                laddr,
+                raddr
             );
 
-            _ = stream.stream_shutdown().await;
             break;
         }
     }
 }
 
-async fn gatway_send_loop(id: String, mut stream: QuicStream, mut receiver: Receiver<BytesMut>) {
+async fn gatway_send_loop<S>(
+    id: String,
+    laddr: SocketAddr,
+    raddr: SocketAddr,
+    mut stream: S,
+    mut receiver: Receiver<BytesMut>,
+) where
+    S: AsyncWrite + Unpin,
+{
     while let Some(buf) = receiver.next().await {
         match stream.write_all(&buf).await {
             Ok(_) => {}
             Err(err) => {
-                log::error!("{:?}, gateway={}, stopped send loop, {}", stream, id, err,);
+                log::error!(
+                    "gateway={}, laddr={:?}, raddr={:?} stopped send loop, {}",
+                    id,
+                    laddr,
+                    raddr,
+                    err,
+                );
                 return;
             }
         }
     }
 
     log::error!(
-        "{:?}, gateway={}, stopped send loop, backwarding broken",
-        stream,
-        id
+        "gateway={}, laddr={:?}, raddr={:?}, stopped send loop, backwarding broken",
+        id,
+        laddr,
+        raddr
     );
 
-    _ = stream.stream_shutdown().await;
+    _ = stream.close().await;
 }
 
 #[cfg(test)]
@@ -266,30 +373,25 @@ mod tests {
 
     use std::time::Duration;
 
-    use crate::{
-        mock::{mock_config, mock_tunnel_factory_manager},
-        TunnelFactoryReceiver,
-    };
+    use crate::{mock::mock_tunnel_factory_manager, TunnelFactoryReceiver};
 
     use super::*;
 
     use futures::AsyncReadExt;
     use hala_io::{sleep, test::io_test};
+    use hala_tcp::TcpStream;
 
     async fn setup() -> (Box<dyn Gateway + Send>, TunnelFactoryReceiver) {
         let (tunnel_factory_manager, tunnel_receiver) = mock_tunnel_factory_manager();
 
-        let factory = QuicGatewayFactory::new("QuicGatewayFactory");
+        let factory = TcpGatewayFactory::new("TcpGatewayFactory");
 
         let gateway = factory
             .create(
                 ProtocolConfig {
                     max_cache_len: 1024,
                     max_packet_len: 1370,
-                    transport_config: TransportConfig::Quic(
-                        vec!["127.0.0.1:0".parse().unwrap()],
-                        mock_config(true, 1370),
-                    ),
+                    transport_config: TransportConfig::Tcp(vec!["127.0.0.1:0".parse().unwrap()]),
                 },
                 tunnel_factory_manager,
             )
@@ -305,11 +407,7 @@ mod tests {
 
         let raddrs = gateway.local_addrs()[0];
 
-        let conn = QuicConn::connect("127.0.0.1:0", raddrs, &mut mock_config(false, 1370))
-            .await
-            .unwrap();
-
-        let mut stream = conn.open_stream().await.unwrap();
+        let mut stream = TcpStream::connect(raddrs).unwrap();
 
         let send_data = b"hello world".as_slice();
 
@@ -346,16 +444,12 @@ mod tests {
 
         let raddrs = gateway.local_addrs()[0];
 
-        let conn = QuicConn::connect("127.0.0.1:0", raddrs, &mut mock_config(false, 1370))
-            .await
-            .unwrap();
-
         let (join_sender, mut join_receiver) = mpsc::channel(0);
 
         let clients = 40;
 
         for i in 0..clients {
-            let mut stream = conn.open_stream().await.unwrap();
+            let mut stream = TcpStream::connect(raddrs).unwrap();
 
             let mut join_sender = join_sender.clone();
 
@@ -386,11 +480,7 @@ mod tests {
 
         let raddrs = gateway.local_addrs()[0];
 
-        let conn = QuicConn::connect("127.0.0.1:0", raddrs, &mut mock_config(false, 1370))
-            .await
-            .unwrap();
-
-        let mut stream = conn.open_stream().await.unwrap();
+        let mut stream = TcpStream::connect(raddrs).unwrap();
 
         let send_data = b"hello world".as_slice();
 
@@ -407,10 +497,15 @@ mod tests {
         // wait gateway close channel
         sleep(Duration::from_secs(1)).await.unwrap();
 
-        stream
-            .write_all(send_data)
-            .await
-            .expect_err("Stream closed");
+        log::trace!("Write stream again.");
+
+        // stream.write_all(send_data).await.unwrap();
+
+        let mut buf = vec![0; 1024];
+
+        let read_size = stream.read(&mut buf).await.unwrap();
+
+        assert_eq!(read_size, 0);
     }
 
     #[hala_test::test(io_test)]
@@ -419,11 +514,7 @@ mod tests {
 
         let raddrs = gateway.local_addrs()[0];
 
-        let conn = QuicConn::connect("127.0.0.1:0", raddrs, &mut mock_config(false, 1370))
-            .await
-            .unwrap();
-
-        let mut stream = conn.open_stream().await.unwrap();
+        let mut stream = TcpStream::connect(raddrs).unwrap();
 
         let send_data = b"hello world".as_slice();
 

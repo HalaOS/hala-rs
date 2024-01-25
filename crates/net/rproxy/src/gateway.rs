@@ -24,7 +24,7 @@ pub trait GatewayFactory {
     fn id(&self) -> &str;
 
     /// Return the variant of [`protocol`] (Protocol) supported by the gateway created by this factory.
-    fn support_protocol(&self) -> Protocol;
+    fn support_protocol(&self) -> &[Protocol];
 
     /// Create new gateway instance.
     async fn create(

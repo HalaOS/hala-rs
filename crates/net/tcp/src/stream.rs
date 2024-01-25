@@ -85,60 +85,6 @@ impl TcpStream {
     }
 }
 
-impl AsyncWrite for &TcpStream {
-    fn poll_write(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> std::task::Poll<io::Result<usize>> {
-        poll_would_block(|| {
-            self.driver
-                .fd_cntl(
-                    self.fd,
-                    Cmd::Write {
-                        waker: cx.waker().clone(),
-                        buf,
-                    },
-                )?
-                .try_into_datalen()
-        })
-    }
-
-    fn poll_flush(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<io::Result<()>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn poll_close(
-        self: std::pin::Pin<&mut Self>,
-        _cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<io::Result<()>> {
-        Poll::Ready(Ok(()))
-    }
-}
-
-impl AsyncRead for &TcpStream {
-    fn poll_read(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
-        poll_would_block(|| {
-            self.driver
-                .fd_cntl(
-                    self.fd,
-                    Cmd::Read {
-                        waker: cx.waker().clone(),
-                        buf,
-                    },
-                )?
-                .try_into_datalen()
-        })
-    }
-}
-
 impl AsyncWrite for TcpStream {
     fn poll_write(
         self: std::pin::Pin<&mut Self>,
@@ -169,6 +115,8 @@ impl AsyncWrite for TcpStream {
         self: std::pin::Pin<&mut Self>,
         _cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<io::Result<()>> {
+        self.shutdown(Shutdown::Both)?;
+
         Poll::Ready(Ok(()))
     }
 }

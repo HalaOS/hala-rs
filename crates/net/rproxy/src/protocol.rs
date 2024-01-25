@@ -2,6 +2,7 @@ use std::net::SocketAddr;
 
 use clap::ValueEnum;
 use hala_quic::{Config, QuicConnectionId};
+use hala_tls::{ConnectConfiguration, SslAcceptor};
 
 /// transport config data for reverse proxy.
 pub enum TransportConfig {
@@ -11,8 +12,17 @@ pub enum TransportConfig {
     Tcp(Vec<SocketAddr>),
     /// Quic transport with bind socket addresses and [`Config`].
     Quic(Vec<SocketAddr>, Config),
-    /// Tcp + SSL transport for client.
-    Ssl(Vec<SocketAddr>),
+    /// ssl client side transport config.
+    Ssl {
+        /// remote server address list.
+        raddrs: Vec<SocketAddr>,
+        /// remote peer domain
+        domain: String,
+        /// client connect config.
+        config: ConnectConfiguration,
+    },
+    /// Ssl server side transport config.
+    SslServer(Vec<SocketAddr>, SslAcceptor),
 }
 
 #[derive(ValueEnum, Clone, Debug)]
