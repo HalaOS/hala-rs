@@ -27,8 +27,8 @@ pub enum TransportConfig {
 
 #[derive(ValueEnum, Clone, Debug)]
 pub enum Protocol {
-    Http,
-    Https,
+    // Http,
+    // Https,
     TcpSsl,
     Tcp,
     Quic,

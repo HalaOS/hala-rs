@@ -80,7 +80,7 @@ impl WakerHost {
 
         if old != null_mut() {
             // TODO: check the data race!!!
-            log::warn!("Batching is awakened unintentionally !!!.");
+            log::trace!("Batching is awakened unintentionally !!!.");
         }
     }
 }
