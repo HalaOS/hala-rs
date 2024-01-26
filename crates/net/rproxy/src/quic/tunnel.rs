@@ -118,7 +118,7 @@ mod event_loops {
                     }
                 }
                 Err(err) => {
-                    log::error!("{:?}, stop recv loop, err={}", stream, err);
+                    log::trace!("{:?}, stop recv loop, err={}", stream, err);
                     return;
                 }
             }

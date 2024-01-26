@@ -629,7 +629,7 @@ impl QuicConnState {
                 return Ok(());
             }
             Err(err) => {
-                log::error!(
+                log::trace!(
                     "{:?} wakeup stream to read failed, stream_id={}, err={}",
                     self,
                     stream_id,

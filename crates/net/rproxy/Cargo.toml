@@ -24,6 +24,9 @@ futures = {workspace = true}
 log = {workspace = true}
 uuid = {workspace = true, features = ["v4", "fast-rng", "macro-diagnostics"]}
 
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+jemallocator = {workspace = true, features = ["profiling"]}
+
 [dev-dependencies]
 divan = {workspace = true}
 hala-io = {workspace = true, features = ["mio-driver"]}

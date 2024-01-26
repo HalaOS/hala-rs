@@ -72,7 +72,9 @@ impl Handle {
 
     /// Drop handle context data with special type.
     pub fn drop_as<T>(self) {
-        _ = unsafe { Box::from_raw(self.data as *mut T) };
+        let boxed: Box<T> = unsafe { Box::from_raw(self.data as *mut T) };
+
+        drop(boxed);
     }
 
     pub fn expect(&self, desc: Description) -> io::Result<()> {

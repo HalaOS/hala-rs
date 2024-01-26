@@ -278,10 +278,21 @@ async fn gateway_handle_stream<S>(
 
     match tunnel_factory_manager.handshake(cx).await {
         Ok(_) => {
-            log::info!("gateway={}, handshake succesfully", id);
+            log::info!(
+                "gateway={}, laddr={:?}, raddr={:?}, handshake succesfully",
+                id,
+                laddr,
+                raddr,
+            );
         }
         Err(err) => {
-            log::error!("gateway={}, handshake error, {}", id, err);
+            log::trace!(
+                "gateway={}, laddr={:?}, raddr={:?}, handshake error, {}",
+                id,
+                laddr,
+                raddr,
+                err
+            );
         }
     }
 }
@@ -302,13 +313,13 @@ async fn gatway_recv_loop<S>(
         let read_size = match stream.read(buf.as_mut()).await {
             Ok(r) => r,
             Err(err) => {
-                log::error!("{:?}, stopped recv loop, {}", id, err);
+                log::trace!("{:?}, stopped recv loop, {}", id, err);
                 return;
             }
         };
 
         if read_size == 0 {
-            log::error!(
+            log::trace!(
                 "tcp_gateway={}, laddr={:?}, raddr={:?}, stopped recv loop, tcp stream broken",
                 id,
                 laddr,
@@ -321,7 +332,7 @@ async fn gatway_recv_loop<S>(
         let buf = buf.into_bytes_mut(Some(read_size));
 
         if sender.send(buf).await.is_err() {
-            log::error!(
+            log::trace!(
                 "gateway={}, laddr={:?}, raddr={:?}, stopped recv loop, forward tunnel broken",
                 id,
                 laddr,
@@ -346,7 +357,7 @@ async fn gatway_send_loop<S>(
         match stream.write_all(&buf).await {
             Ok(_) => {}
             Err(err) => {
-                log::error!(
+                log::trace!(
                     "gateway={}, laddr={:?}, raddr={:?} stopped send loop, {}",
                     id,
                     laddr,
@@ -358,7 +369,7 @@ async fn gatway_send_loop<S>(
         }
     }
 
-    log::error!(
+    log::trace!(
         "gateway={}, laddr={:?}, raddr={:?}, stopped send loop, backwarding broken",
         id,
         laddr,

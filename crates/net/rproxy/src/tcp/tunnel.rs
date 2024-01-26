@@ -142,19 +142,19 @@ mod event_loops {
             match stream.read(buf.as_mut()).await {
                 Ok(read_size) => {
                     if read_size == 0 {
-                        log::info!("{:?}, stop recv loop", uuid);
+                        log::trace!("{:?}, stop recv loop", uuid);
                         return;
                     }
 
                     let buf = buf.into_bytes_mut(Some(read_size));
 
                     if sender.send(buf).await.is_err() {
-                        log::info!("{:?}, stop recv loop, broken backward", uuid);
+                        log::trace!("{:?}, stop recv loop, broken backward", uuid);
                         return;
                     }
                 }
                 Err(err) => {
-                    log::error!("{:?}, stop recv loop, err={}", uuid, err);
+                    log::trace!("{:?}, stop recv loop, err={}", uuid, err);
                     return;
                 }
             }

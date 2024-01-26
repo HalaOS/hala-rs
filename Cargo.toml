@@ -34,6 +34,7 @@ dashmap = "5.5.3"
 divan = "^0.1"
 futures = {version = "^0.3.29", features = ["executor", "thread-pool"]}
 futures-test = "^0.3"
+jemallocator = "0.5.4"
 lock_freedom = "0.1.0"
 log = {version = "^0.4"}
 mio = {version = "^0.8.9", features = ["os-poll", "net"]}

@@ -17,6 +17,13 @@ use hala_rproxy::{
 };
 use hala_tls::{SslAcceptor, SslConnector, SslFiletype, SslMethod};
 
+#[cfg(not(target_env = "msvc"))]
+use jemallocator::Jemalloc;
+
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
+
 /// parse
 fn port_range(s: &str) -> Result<Range<u16>, String> {
     let splites = s.split("-");

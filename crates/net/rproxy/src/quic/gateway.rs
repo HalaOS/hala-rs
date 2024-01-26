@@ -183,11 +183,11 @@ async fn gateway_handle_stream(
 
     match tunnel_factory_manager.handshake(cx).await {
         Ok(_) => {
-            log::info!("{:?}, gateway={}, handshake succesfully", stream, id);
+            log::trace!("{:?}, gateway={}, handshake succesfully", stream, id);
         }
         Err(err) => {
             _ = stream.stream_shutdown().await;
-            log::error!("{:?}, gateway={}, handshake error, {}", stream, id, err);
+            log::trace!("{:?}, gateway={}, handshake error, {}", stream, id, err);
         }
     }
 }
@@ -204,13 +204,13 @@ async fn gatway_recv_loop(
         let (read_size, fin) = match stream.stream_recv(buf.as_mut()).await {
             Ok(r) => r,
             Err(err) => {
-                log::error!("{:?}, stopped recv loop, {}", stream, err);
+                log::trace!("{:?}, stopped recv loop, {}", stream, err);
                 break;
             }
         };
 
         if fin {
-            log::error!(
+            log::trace!(
                 "{:?}, gateway={}, stopped recv loop, stream send fin({}) or forwarding broken",
                 stream,
                 id,
@@ -228,7 +228,7 @@ async fn gatway_recv_loop(
         let buf = buf.into_bytes_mut(Some(read_size));
 
         if sender.send(buf).await.is_err() {
-            log::error!(
+            log::trace!(
                 "{:?}, gateway={}, stopped recv loop, stream send fin({}) or forwarding broken",
                 stream,
                 id,
@@ -246,13 +246,13 @@ async fn gatway_send_loop(id: String, mut stream: QuicStream, mut receiver: Rece
         match stream.write_all(&buf).await {
             Ok(_) => {}
             Err(err) => {
-                log::error!("{:?}, gateway={}, stopped send loop, {}", stream, id, err,);
+                log::trace!("{:?}, gateway={}, stopped send loop, {}", stream, id, err,);
                 return;
             }
         }
     }
 
-    log::error!(
+    log::trace!(
         "{:?}, gateway={}, stopped send loop, backwarding broken",
         stream,
         id
