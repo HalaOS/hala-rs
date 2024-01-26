@@ -2,7 +2,7 @@ use std::{
     net::SocketAddr,
     sync::{
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
-        Arc,
+        Arc, OnceLock,
     },
     time::Instant,
 };
@@ -79,11 +79,193 @@ pub struct ProfileTransport {
     pub at: Instant,
 }
 
+/// Profile config instance.
+pub struct ProfileConfig {
+    on: AtomicBool,
+    max_cached_event_len: AtomicUsize,
+}
+
+impl Default for ProfileConfig {
+    fn default() -> Self {
+        Self {
+            on: AtomicBool::new(false),
+            max_cached_event_len: AtomicUsize::new(1024),
+        }
+    }
+}
+
+impl ProfileConfig {
+    /// Update config on flag.
+    pub fn on(&self, flag: bool) {
+        self.on.store(flag, Ordering::Relaxed);
+    }
+
+    /// Return true if profile is on.
+    pub fn is_on(&self) -> bool {
+        self.on.load(Ordering::Relaxed)
+    }
+
+    /// set `max_cached_event_len`
+    pub fn set_max_cached_event_len(&self, value: usize) {
+        self.max_cached_event_len.store(value, Ordering::Relaxed);
+    }
+
+    /// get `max_cached_event_len`
+    pub fn get_max_cached_event_len(&self) -> usize {
+        self.max_cached_event_len.load(Ordering::Relaxed)
+    }
+}
+
+static GLOBAL_PROFILE_CONFIG: OnceLock<ProfileConfig> = OnceLock::new();
+
+/// Get profile config.
+pub fn get_config() -> &'static ProfileConfig {
+    GLOBAL_PROFILE_CONFIG.get_or_init(|| ProfileConfig::default())
+}
+
 /// Builder for profile information.
 ///
 /// The sample source should use this structure to generate profile data.
 pub struct ProfileBuilder {
+    /// Sample source id.
+    id: String,
+    /// support protocols of sample source.
+    protocols: Vec<Protocol>,
+    /// True for gateway source, otherwise for tunnel source.
+    is_gateway: bool,
+    /// transport builders
     transport_builders: DashMap<Uuid, ProfileTransportBuilder>,
+    /// event update queue.
+    event_update: hala_lockfree::queue::Queue<ProfileEvent>,
+    /// config
+    config: &'static ProfileConfig,
+}
+
+impl ProfileBuilder {
+    /// Create profile builder with default config.
+    pub fn new(id: String, protocols: Vec<Protocol>, is_gateway: bool) -> Self {
+        Self {
+            id,
+            protocols,
+            is_gateway,
+            transport_builders: Default::default(),
+            event_update: Default::default(),
+            config: get_config(),
+        }
+    }
+
+    /// Open connection profile builder
+    pub fn open_conn(
+        &self,
+        uuid: Uuid,
+        laddr: SocketAddr,
+        raddr: SocketAddr,
+    ) -> ProfileTransportBuilder {
+        let transport_builder = ProfileTransportBuilder::new(uuid.clone(), true);
+
+        let event = ProfileConnect {
+            uuid: uuid.clone(),
+            laddr,
+            raddr,
+            at: Instant::now(),
+        };
+
+        if self.config.is_on() {
+            self.check_event_queue();
+
+            self.event_update
+                .push(ProfileEvent::Connect(Box::new(event)));
+
+            self.transport_builders
+                .insert(uuid, transport_builder.clone());
+        }
+
+        transport_builder
+    }
+
+    fn check_event_queue(&self) {
+        while self.event_update.len() > self.config.get_max_cached_event_len() {
+            log::trace!("profile event queue is full.");
+            self.event_update.pop();
+        }
+    }
+
+    /// Open new stream.
+    pub fn open_stream(
+        &self,
+        uuid: Uuid,
+        scid: QuicConnectionId<'static>,
+        dcid: QuicConnectionId<'static>,
+    ) -> ProfileTransportBuilder {
+        let transport_builder = ProfileTransportBuilder::new(uuid.clone(), false);
+
+        let event = ProfileOpenStream {
+            uuid: uuid.clone(),
+            scid,
+            dcid,
+            at: Instant::now(),
+        };
+
+        let config = get_config();
+
+        if config.is_on() {
+            self.check_event_queue();
+
+            self.event_update
+                .push(ProfileEvent::OpenStream(Box::new(event)));
+
+            self.transport_builders
+                .insert(uuid, transport_builder.clone());
+        }
+
+        transport_builder
+    }
+
+    /// Handshake failed.
+    pub fn prohibited(&self, uuid: Uuid) {
+        if get_config().is_on() {
+            self.check_event_queue();
+            self.event_update.push(ProfileEvent::Prohibited(uuid));
+        }
+    }
+
+    pub fn sample(&self) -> Sample {
+        let mut events_update = vec![];
+
+        while let Some(event) = self.event_update.pop() {
+            events_update.push(event);
+        }
+
+        let mut removed = vec![];
+
+        for it in self.transport_builders.iter() {
+            let profile_transport = it.sample();
+
+            if profile_transport.is_final_update {
+                removed.push(it.key().clone());
+                events_update.push(ProfileEvent::Transport(Box::new(profile_transport)));
+
+                let event = if it.is_conn {
+                    ProfileEvent::Disconnect(it.key().clone())
+                } else {
+                    ProfileEvent::CloseStream(it.key().clone())
+                };
+
+                events_update.push(event);
+            }
+        }
+
+        for id in removed {
+            self.transport_builders.remove(&id);
+        }
+
+        Sample {
+            id: self.id.clone(),
+            protocols: self.protocols.clone(),
+            is_gateway: self.is_gateway,
+            events_update,
+        }
+    }
 }
 
 /// The builder to generate profile transmission data.
@@ -91,6 +273,8 @@ pub struct ProfileBuilder {
 pub struct ProfileTransportBuilder {
     /// uuid of connection / mux stream.
     pub uuid: Uuid,
+    /// true if is connection, otherwise false for stream.
+    pub is_conn: bool,
     /// forwarding data in bytes.
     pub forwarding_data: Arc<AtomicU64>,
     /// backwarding data in bytes
@@ -101,9 +285,10 @@ pub struct ProfileTransportBuilder {
 
 impl ProfileTransportBuilder {
     /// Create new transport profile builder.
-    pub fn new(uuid: Uuid) -> Self {
+    pub fn new(uuid: Uuid, is_conn: bool) -> Self {
         Self {
             uuid,
+            is_conn,
             forwarding_data: Default::default(),
             backwarding_data: Default::default(),
             is_final_update: Default::default(),

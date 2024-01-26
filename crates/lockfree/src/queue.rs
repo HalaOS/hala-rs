@@ -4,7 +4,7 @@ use dashmap::DashMap;
 
 /// A lokfree `FIFO` queue implementation.
 pub struct Queue<T> {
-    header: AtomicUsize,
+    head: AtomicUsize,
     tail: AtomicUsize,
     slots: DashMap<usize, T>,
 }
@@ -15,7 +15,7 @@ unsafe impl<T: Send> Sync for Queue<T> {}
 impl<T> Default for Queue<T> {
     fn default() -> Self {
         Self {
-            header: Default::default(),
+            head: Default::default(),
             tail: Default::default(),
             slots: DashMap::new(),
         }
@@ -28,6 +28,11 @@ impl<T> Queue<T> {
         Self::default()
     }
 
+    /// Get queue len.
+    pub fn len(&self) -> usize {
+        self.tail.load(Ordering::Relaxed) - self.head.load(Ordering::Relaxed)
+    }
+
     /// Push one value into queue tail
     pub fn push(&self, value: T) {
         let offset = self.tail.fetch_add(1, Ordering::AcqRel);
@@ -38,7 +43,7 @@ impl<T> Queue<T> {
     /// Pop one value from the queue's header. returns [`None`] if this queue is empty.
     pub fn pop(&self) -> Option<T> {
         loop {
-            let header = self.header.load(Ordering::Acquire);
+            let header = self.head.load(Ordering::Acquire);
             let tail = self.tail.load(Ordering::Acquire);
 
             if header == tail {
@@ -46,7 +51,7 @@ impl<T> Queue<T> {
             }
 
             if self
-                .header
+                .head
                 .compare_exchange(header, header + 1, Ordering::AcqRel, Ordering::Relaxed)
                 .is_ok()
             {
@@ -136,7 +141,7 @@ mod tests {
             let queue = queue.clone();
             let pop_counter = pop_counter.clone();
             handles.push(std::thread::spawn(move || {
-                while queue.header.load(Ordering::Acquire) < push_threads * loops {
+                while queue.head.load(Ordering::Acquire) < push_threads * loops {
                     if let Some(_) = queue.pop() {
                         pop_counter.fetch_add(1, Ordering::AcqRel);
                     }
