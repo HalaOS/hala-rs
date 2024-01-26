@@ -1,19 +1,30 @@
-use std::io;
+use std::{io, sync::Arc};
 
 use async_trait::async_trait;
 use futures::channel::mpsc;
 
-use crate::{profile::Sample, Tunnel, TunnelFactory, TunnelOpenConfig};
+use crate::{
+    profile::{ProfileBuilder, Sample},
+    Protocol, Tunnel, TunnelFactory, TunnelOpenConfig,
+};
 
 /// Factory for tcp tunnel.
 pub struct TcpTunnelFactory {
     id: String,
+    profile_builder: Arc<ProfileBuilder>,
 }
 
 impl TcpTunnelFactory {
     /// Create new tcp tunnel factory with id.
     pub fn new<ID: ToString>(id: ID) -> Self {
-        Self { id: id.to_string() }
+        Self {
+            id: id.to_string(),
+            profile_builder: Arc::new(ProfileBuilder::new(
+                id.to_string(),
+                vec![Protocol::Tcp, Protocol::TcpSsl],
+                false,
+            )),
+        }
     }
 }
 
@@ -28,7 +39,12 @@ impl TunnelFactory for TcpTunnelFactory {
 
         let rhs_tunnel = Tunnel::new(config.max_packet_len, backward_sender, forward_receiver);
 
-        event_loops::start(rhs_tunnel, config.transport_config).await?;
+        event_loops::start(
+            self.profile_builder.clone(),
+            rhs_tunnel,
+            config.transport_config,
+        )
+        .await?;
 
         Ok(lhs_tunnel)
     }
@@ -44,7 +60,7 @@ impl TunnelFactory for TcpTunnelFactory {
 }
 
 mod event_loops {
-    use std::{io, net::SocketAddr};
+    use std::{io, net::SocketAddr, sync::Arc};
 
     use bytes::BytesMut;
     use futures::{
@@ -57,16 +73,23 @@ mod event_loops {
     use hala_tls::{connect, ConnectConfiguration};
     use uuid::Uuid;
 
-    use crate::{TransportConfig, Tunnel};
+    use crate::{
+        profile::{ProfileBuilder, ProfileTransportBuilder},
+        TransportConfig, Tunnel,
+    };
 
-    pub(super) async fn start(tunnel: Tunnel, transport_config: TransportConfig) -> io::Result<()> {
+    pub(super) async fn start(
+        profile_builder: Arc<ProfileBuilder>,
+        tunnel: Tunnel,
+        transport_config: TransportConfig,
+    ) -> io::Result<()> {
         match transport_config {
-            TransportConfig::Tcp(raddrs) => start_tcp(tunnel, raddrs).await,
+            TransportConfig::Tcp(raddrs) => start_tcp(profile_builder, tunnel, raddrs).await,
             TransportConfig::Ssl {
                 raddrs,
                 domain,
                 config,
-            } => start_ssl(tunnel, raddrs, domain, config).await,
+            } => start_ssl(profile_builder, tunnel, raddrs, domain, config).await,
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
@@ -76,8 +99,17 @@ mod event_loops {
         }
     }
 
-    async fn start_tcp(tunnel: Tunnel, raddrs: Vec<SocketAddr>) -> io::Result<()> {
+    async fn start_tcp(
+        profile_builder: Arc<ProfileBuilder>,
+        tunnel: Tunnel,
+        raddrs: Vec<SocketAddr>,
+    ) -> io::Result<()> {
         let stream = TcpStream::connect(raddrs.as_slice())?;
+
+        let laddr = stream.local_addr()?;
+        let raddr = stream.remote_addr()?;
+
+        let profile_transport_builder = profile_builder.open_conn(Uuid::new_v4(), laddr, raddr);
 
         let (read, write) = stream.split();
 
@@ -86,24 +118,32 @@ mod event_loops {
             tunnel.max_packet_len,
             read,
             tunnel.sender,
+            profile_transport_builder.clone(),
         ));
 
         future_spawn(stream_send_loop(
             tunnel.uuid.clone(),
             write,
             tunnel.receiver,
+            profile_transport_builder,
         ));
 
         Ok(())
     }
 
     async fn start_ssl(
+        profile_builder: Arc<ProfileBuilder>,
         tunnel: Tunnel,
         raddrs: Vec<SocketAddr>,
         domain: String,
         config: ConnectConfiguration,
     ) -> io::Result<()> {
         let stream = TcpStream::connect(raddrs.as_slice())?;
+
+        let laddr = stream.local_addr()?;
+        let raddr = stream.remote_addr()?;
+
+        let profile_transport_builder = profile_builder.open_conn(Uuid::new_v4(), laddr, raddr);
 
         let stream = connect(config, &domain, stream).await.map_err(|err| {
             io::Error::new(
@@ -119,12 +159,14 @@ mod event_loops {
             tunnel.max_packet_len,
             read,
             tunnel.sender,
+            profile_transport_builder.clone(),
         ));
 
         future_spawn(stream_send_loop(
             tunnel.uuid.clone(),
             write,
             tunnel.receiver,
+            profile_transport_builder,
         ));
 
         Ok(())
@@ -135,6 +177,7 @@ mod event_loops {
         max_packet_len: usize,
         mut stream: S,
         mut sender: Sender<BytesMut>,
+        profile_transport_builder: ProfileTransportBuilder,
     ) where
         S: AsyncRead + Unpin,
     {
@@ -156,6 +199,8 @@ mod event_loops {
                         log::trace!("{:?}, stop recv loop, broken backward", uuid);
                         return;
                     }
+
+                    profile_transport_builder.update_backwarding_data(read_size as u64);
                 }
                 Err(err) => {
                     log::trace!("{:?}, stop recv loop, err={}", uuid, err);
@@ -165,8 +210,12 @@ mod event_loops {
         }
     }
 
-    async fn stream_send_loop<S>(uuid: Uuid, mut stream: S, mut receiver: Receiver<BytesMut>)
-    where
+    async fn stream_send_loop<S>(
+        uuid: Uuid,
+        mut stream: S,
+        mut receiver: Receiver<BytesMut>,
+        profile_transport_builder: ProfileTransportBuilder,
+    ) where
         S: AsyncWrite + Unpin,
     {
         log::trace!("{:?}, start send loop", uuid);
@@ -176,6 +225,8 @@ mod event_loops {
                 log::trace!("{:?}, stop send loop, err={}", uuid, err);
                 return;
             }
+
+            profile_transport_builder.update_forwarding_data(buf.len() as u64);
         }
 
         // stop stream read loop
