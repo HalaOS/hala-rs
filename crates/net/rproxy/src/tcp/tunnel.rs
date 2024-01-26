@@ -3,7 +3,7 @@ use std::io;
 use async_trait::async_trait;
 use futures::channel::mpsc;
 
-use crate::{Tunnel, TunnelFactory, TunnelOpenConfig};
+use crate::{profile::Sample, Tunnel, TunnelFactory, TunnelOpenConfig};
 
 /// Factory for tcp tunnel.
 pub struct TcpTunnelFactory {
@@ -36,6 +36,10 @@ impl TunnelFactory for TcpTunnelFactory {
     /// Get tunnel service id.
     fn id(&self) -> &str {
         &self.id
+    }
+
+    fn sample(&self) -> Sample {
+        todo!()
     }
 }
 

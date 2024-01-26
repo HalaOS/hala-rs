@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use crate::{
     handshaker::{BoxHandshaker, HandshakeContext, Handshaker, TunnelOpenConfig},
+    profile::Sample,
     TransportConfig,
 };
 
@@ -51,6 +52,9 @@ pub trait TunnelFactory {
 
     /// Get tunnel service id.
     fn id(&self) -> &str;
+
+    /// generate sample data.
+    fn sample(&self) -> Sample;
 }
 
 type BoxTunnelFactory = Box<dyn TunnelFactory + Sync + Send + 'static>;
@@ -103,6 +107,16 @@ impl TunnelFactoryManager {
         event_loop::run_event_loop(context, channel);
 
         Ok(())
+    }
+
+    pub fn sample(&self) -> Vec<Sample> {
+        let mut samples = vec![];
+
+        for tunnel_factory in self.transports.iter() {
+            samples.push(tunnel_factory.sample());
+        }
+
+        samples
     }
 }
 
@@ -202,6 +216,10 @@ impl TunnelFactory for TunnelFactorySender {
     /// Get tunnel service id.
     fn id(&self) -> &str {
         &self.name
+    }
+
+    fn sample(&self) -> Sample {
+        panic!("Unsupport sample")
     }
 }
 

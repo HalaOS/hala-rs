@@ -13,8 +13,8 @@ use hala_tls::{accept, SslAcceptor};
 use uuid::Uuid;
 
 use crate::{
-    Gateway, GatewayFactory, HandshakeContext, Protocol, ProtocolConfig, TransportConfig,
-    TunnelFactoryManager,
+    profile::Sample, Gateway, GatewayFactory, HandshakeContext, Protocol, ProtocolConfig,
+    TransportConfig, TunnelFactoryManager,
 };
 
 struct TcpGateway {
@@ -110,6 +110,10 @@ impl GatewayFactory for TcpGatewayFactory {
                 ));
             }
         }
+    }
+
+    fn sample(&self) -> Sample {
+        todo!()
     }
 }
 

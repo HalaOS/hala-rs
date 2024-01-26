@@ -1,4 +1,4 @@
-use std::{io, net::SocketAddr};
+use std::{io, net::SocketAddr, sync::Arc};
 
 use async_trait::async_trait;
 use bytes::BytesMut;
@@ -12,6 +12,7 @@ use hala_quic::{QuicConn, QuicListener, QuicStream};
 use uuid::Uuid;
 
 use crate::{
+    profile::{ProfileBuilder, ProfileTransportBuilder, Sample},
     Gateway, GatewayFactory, HandshakeContext, Protocol, ProtocolConfig, TransportConfig,
     TunnelFactoryManager,
 };
@@ -19,11 +20,19 @@ use crate::{
 /// The factory to create quic gateway.
 pub struct QuicGatewayFactory {
     id: String,
+    profile_builder: Arc<ProfileBuilder>,
 }
 
 impl QuicGatewayFactory {
     pub fn new<ID: ToString>(id: ID) -> Self {
-        Self { id: id.to_string() }
+        Self {
+            id: id.to_string(),
+            profile_builder: Arc::new(ProfileBuilder::new(
+                id.to_string(),
+                vec![Protocol::Quic],
+                true,
+            )),
+        }
     }
 }
 
@@ -66,9 +75,14 @@ impl GatewayFactory for QuicGatewayFactory {
             protocol_config.max_cache_len,
             listener,
             tunnel_factory_manager,
+            self.profile_builder.clone(),
         ));
 
         Ok(Box::new(gateway))
+    }
+
+    fn sample(&self) -> Sample {
+        self.profile_builder.sample()
     }
 }
 
@@ -115,6 +129,7 @@ async fn run_gateway_loop(
     max_cache_len: usize,
     listener: QuicListener,
     tunnel_factory_manager: TunnelFactoryManager,
+    profile_builder: Arc<ProfileBuilder>,
 ) {
     log::trace!("quic gateway started, id={}", id);
 
@@ -125,6 +140,7 @@ async fn run_gateway_loop(
             max_cache_len,
             conn,
             tunnel_factory_manager.clone(),
+            profile_builder.clone(),
         ));
     }
 
@@ -137,14 +153,25 @@ async fn gateway_handle_conn(
     max_cache_len: usize,
     conn: QuicConn,
     tunnel_factory_manager: TunnelFactoryManager,
+    profile_builder: Arc<ProfileBuilder>,
 ) {
     while let Some(stream) = conn.accept_stream().await {
+        let uuid = Uuid::new_v4();
+        let builder = profile_builder.open_stream(
+            uuid,
+            stream.conn.source_id().clone(),
+            stream.conn.destination_id().clone(),
+            stream.stream_id,
+        );
+
         future_spawn(gateway_handle_stream(
             id.clone(),
             max_packet_len,
             max_cache_len,
             stream,
             tunnel_factory_manager.clone(),
+            profile_builder.clone(),
+            builder,
         ));
     }
 }
@@ -155,7 +182,11 @@ async fn gateway_handle_stream(
     max_cache_len: usize,
     stream: QuicStream,
     tunnel_factory_manager: TunnelFactoryManager,
+    profile_builder: Arc<ProfileBuilder>,
+    profile_transport_builder: ProfileTransportBuilder,
 ) {
+    let uuid = profile_transport_builder.uuid;
+
     let (forward_sender, forward_receiver) = mpsc::channel(max_cache_len);
     let (backward_sender, backward_receiver) = mpsc::channel(max_cache_len);
 
@@ -173,12 +204,14 @@ async fn gateway_handle_stream(
         max_packet_len,
         stream.clone(),
         forward_sender,
+        profile_transport_builder.clone(),
     ));
 
     future_spawn(gatway_send_loop(
         id.clone(),
         stream.clone(),
         backward_receiver,
+        profile_transport_builder,
     ));
 
     match tunnel_factory_manager.handshake(cx).await {
@@ -186,6 +219,8 @@ async fn gateway_handle_stream(
             log::trace!("{:?}, gateway={}, handshake succesfully", stream, id);
         }
         Err(err) => {
+            profile_builder.prohibited(uuid);
+
             _ = stream.stream_shutdown().await;
             log::trace!("{:?}, gateway={}, handshake error, {}", stream, id, err);
         }
@@ -197,6 +232,7 @@ async fn gatway_recv_loop(
     max_packet_len: usize,
     stream: QuicStream,
     mut sender: Sender<BytesMut>,
+    profile_transport_builder: ProfileTransportBuilder,
 ) {
     loop {
         let mut buf = ReadBuf::with_capacity(max_packet_len);
@@ -236,15 +272,25 @@ async fn gatway_recv_loop(
             );
 
             _ = stream.stream_shutdown().await;
+
             break;
         }
+
+        profile_transport_builder.update_forwarding_data(read_size as u64);
     }
 }
 
-async fn gatway_send_loop(id: String, mut stream: QuicStream, mut receiver: Receiver<BytesMut>) {
+async fn gatway_send_loop(
+    id: String,
+    mut stream: QuicStream,
+    mut receiver: Receiver<BytesMut>,
+    profile_transport_builder: ProfileTransportBuilder,
+) {
     while let Some(buf) = receiver.next().await {
         match stream.write_all(&buf).await {
-            Ok(_) => {}
+            Ok(_) => {
+                profile_transport_builder.update_backwarding_data(buf.len() as u64);
+            }
             Err(err) => {
                 log::trace!("{:?}, gateway={}, stopped send loop, {}", stream, id, err,);
                 return;
@@ -259,6 +305,8 @@ async fn gatway_send_loop(id: String, mut stream: QuicStream, mut receiver: Rece
     );
 
     _ = stream.stream_shutdown().await;
+
+    profile_transport_builder.close();
 }
 
 #[cfg(test)]

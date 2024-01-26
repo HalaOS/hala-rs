@@ -61,6 +61,8 @@ pub struct ProfileOpenStream {
     pub scid: QuicConnectionId<'static>,
     /// Stream destination id.
     pub dcid: QuicConnectionId<'static>,
+    /// Stream id .
+    pub stream_id: u64,
     /// Timestamp of this event.
     pub at: Instant,
 }
@@ -196,6 +198,7 @@ impl ProfileBuilder {
         uuid: Uuid,
         scid: QuicConnectionId<'static>,
         dcid: QuicConnectionId<'static>,
+        stream_id: u64,
     ) -> ProfileTransportBuilder {
         let transport_builder = ProfileTransportBuilder::new(uuid.clone(), false);
 
@@ -203,6 +206,7 @@ impl ProfileBuilder {
             uuid: uuid.clone(),
             scid,
             dcid,
+            stream_id,
             at: Instant::now(),
         };
 
