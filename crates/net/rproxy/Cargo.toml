@@ -25,7 +25,8 @@ log = {workspace = true}
 uuid = {workspace = true, features = ["v4", "fast-rng", "macro-diagnostics"]}
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
-jemallocator = {workspace = true, features = ["profiling"]}
+tikv-jemalloc-ctl = {workspace = true}
+tikv-jemallocator = {workspace = true}
 
 [dev-dependencies]
 divan = {workspace = true}

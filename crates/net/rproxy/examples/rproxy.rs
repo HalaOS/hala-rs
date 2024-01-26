@@ -4,10 +4,12 @@ use std::{
     net::{SocketAddr, ToSocketAddrs},
     ops::Range,
     path::PathBuf,
+    time::Duration,
 };
 
 use clap::Parser;
 use hala_future::executor::block_on;
+use hala_io::sleep;
 use hala_quic::Config;
 use hala_rproxy::{
     quic::{QuicGatewayFactory, QuicTunnelFactory},
@@ -16,13 +18,15 @@ use hala_rproxy::{
     TunnelOpenConfig,
 };
 use hala_tls::{SslAcceptor, SslConnector, SslFiletype, SslMethod};
-
-#[cfg(not(target_env = "msvc"))]
-use jemallocator::Jemalloc;
+use tikv_jemalloc_ctl::{epoch, stats};
 
 #[cfg(not(target_env = "msvc"))]
 #[global_allocator]
-static GLOBAL: Jemalloc = Jemalloc;
+static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
+#[allow(non_upper_case_globals)]
+#[export_name = "malloc_conf"]
+pub static malloc_conf: &[u8] = b"prof:true,prof_active:true,lg_prof_sample:19\0";
 
 /// parse
 fn port_range(s: &str) -> Result<Range<u16>, String> {
@@ -156,9 +160,19 @@ async fn rproxy_main(config: ReverseProxy) -> io::Result<()> {
 
     log::info!("Gateway {} created", gateway.id());
 
-    pending::<()>().await;
+    let e = epoch::mib().unwrap();
+    let allocated = stats::allocated::mib().unwrap();
+    let resident = stats::resident::mib().unwrap();
 
-    Ok(())
+    loop {
+        // many statistics are cached and only updated when the epoch is advanced.
+        e.advance().unwrap();
+
+        let allocated = allocated.read().unwrap();
+        let resident = resident.read().unwrap();
+        log::info!("{} bytes allocated/{} bytes resident", allocated, resident);
+        sleep(Duration::from_secs(10)).await.unwrap();
+    }
 }
 
 fn create_protocol_config(rproxy_config: ReverseProxy) -> io::Result<ProtocolConfig> {
