@@ -53,14 +53,14 @@ pub trait TunnelFactory {
     fn id(&self) -> &str;
 }
 
-pub type BoxTunnelService = Box<dyn TunnelFactory + Sync + Send + 'static>;
+type BoxTunnelFactory = Box<dyn TunnelFactory + Sync + Send + 'static>;
 
 /// The manager of [`Transport`] instance.
 ///
 #[derive(Clone)]
 pub struct TunnelFactoryManager {
     handshaker: Arc<BoxHandshaker>,
-    transports: Arc<DashMap<String, BoxTunnelService>>,
+    transports: Arc<DashMap<String, BoxTunnelFactory>>,
 }
 
 impl TunnelFactoryManager {

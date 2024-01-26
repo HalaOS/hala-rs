@@ -8,6 +8,7 @@ pub use handshaker::*;
 pub use protocol::*;
 pub use tunnel::*;
 
+pub mod profile;
 pub mod quic;
 pub mod tcp;
 
