@@ -64,3 +64,6 @@ hala-tcp = {path = "crates/net/tcp", version = "^0.1"}
 hala-test = {path = "crates/test", version = "^0.1"}
 hala-tls = {path = "crates/net/tls", version = "^0.1"}
 hala-udp = {path = "crates/net/udp", version = "^0.1"}
+
+[profile.release]
+debug = 1

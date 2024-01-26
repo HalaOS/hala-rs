@@ -21,6 +21,6 @@ futures-test = {workspace = true}
 pretty_env_logger = {workspace = true}
 
 [features]
-default = ["trace_lock"]
+default = ["use_parking_lot", "trace_lock"]
 trace_lock = []
 use_parking_lot = ["parking_lot"]
