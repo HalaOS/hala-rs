@@ -423,7 +423,7 @@ impl QuicListenerState {
                 read_size,
                 send_info,
             } => {
-                log::info!(
+                log::trace!(
                     "accept incoming conn, scid={:?}, dcid={:?}",
                     conn.source_id(),
                     conn.destination_id()
