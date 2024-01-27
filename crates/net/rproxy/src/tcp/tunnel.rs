@@ -223,6 +223,7 @@ mod event_loops {
         while let Some(buf) = receiver.next().await {
             if let Err(err) = stream.write_all(&buf).await {
                 log::trace!("{:?}, stop send loop, err={}", uuid, err);
+                profile_transport_builder.close();
                 return;
             }
 
@@ -231,6 +232,8 @@ mod event_loops {
 
         // stop stream read loop
         _ = stream.close().await;
+
+        profile_transport_builder.close();
 
         log::trace!("{:?}, stop send loop, forward tunnel broken.", uuid);
     }

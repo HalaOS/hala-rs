@@ -398,6 +398,8 @@ async fn gatway_send_loop<S>(
                     raddr,
                     err,
                 );
+
+                builder.close();
                 return;
             }
         }

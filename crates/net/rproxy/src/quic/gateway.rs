@@ -293,6 +293,7 @@ async fn gatway_send_loop(
             }
             Err(err) => {
                 log::trace!("{:?}, gateway={}, stopped send loop, {}", stream, id, err,);
+                profile_transport_builder.close();
                 return;
             }
         }

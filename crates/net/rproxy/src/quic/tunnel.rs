@@ -171,6 +171,7 @@ mod event_loops {
         while let Some(buf) = receiver.next().await {
             if let Err(err) = stream.write_all(&buf).await {
                 log::trace!("{:?}, stop send loop, err={}", stream, err);
+                profile_transport_builder.close();
                 return;
             }
 
