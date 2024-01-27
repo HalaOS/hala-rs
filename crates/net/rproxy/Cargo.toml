@@ -21,6 +21,7 @@ async-trait = {workspace = true}
 bytes = {workspace = true}
 clap = {workspace = true}
 dashmap = {workspace = true}
+duration-str = {workspace = true}
 futures = {workspace = true}
 log = {workspace = true}
 uuid = {workspace = true, features = ["v4", "fast-rng", "macro-diagnostics"]}

@@ -49,6 +49,12 @@ fn port_range(s: &str) -> Result<Range<u16>, String> {
     }
 }
 
+fn parse_duration(s: &str) -> Result<Duration, String> {
+    let duration = duration_str::parse(s).map_err(|err| format!("{}", err))?;
+
+    Ok(duration)
+}
+
 /// reverse proxy server program for `HalaOS`
 #[derive(Parser, Debug, Clone)]
 #[command(author, version, about, long_about = None)]
@@ -132,6 +138,12 @@ struct ReverseProxy {
     /// The default value equals `1024`. the larger the value, the more memory is used.
     #[arg(long, default_value_t = 1024)]
     max_cache_len: usize,
+
+    /// Specifies the max lenght of tunnel forwarding cache.
+    ///
+    /// The default value equals `1024`. the larger the value, the more memory is used.
+    #[arg(long,value_parser = parse_duration, default_value="60s")]
+    profile_interval: Duration,
 }
 
 #[derive(Default)]
@@ -203,6 +215,8 @@ fn main() {
 async fn rproxy_main(config: ReverseProxy) -> io::Result<()> {
     get_profile_config().on(true);
 
+    let profile_interval = config.profile_interval.clone();
+
     let tunnel_factory_manager = create_tunnel_factory_manager(&config);
 
     let gateway_factory_manager = GatewayFactoryManager::new(tunnel_factory_manager.clone());
@@ -220,7 +234,7 @@ async fn rproxy_main(config: ReverseProxy) -> io::Result<()> {
     let mut tunnel_profile = ReverseProxyProfile::default();
 
     loop {
-        sleep(Duration::from_secs(10)).await.unwrap();
+        sleep(profile_interval).await.unwrap();
 
         let samples = gateway_factory_manager.sample();
 
