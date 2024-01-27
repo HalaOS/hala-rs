@@ -16,4 +16,7 @@ Cargo.lock
 
 .DS_Store
 *.svg
+
+
 mac.sh
+linux.sh
