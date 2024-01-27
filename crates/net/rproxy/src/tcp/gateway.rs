@@ -308,7 +308,7 @@ async fn gateway_handle_stream<S>(
 
     match tunnel_factory_manager.handshake(cx).await {
         Ok(_) => {
-            log::info!(
+            log::trace!(
                 "gateway={}, laddr={:?}, raddr={:?}, handshake succesfully",
                 id,
                 laddr,
