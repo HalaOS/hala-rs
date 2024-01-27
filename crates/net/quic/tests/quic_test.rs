@@ -101,7 +101,11 @@ async fn test_connect_timeout() {
         .await
         .unwrap_err();
 
+    #[cfg(not(target_env = "msvc"))]
     assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+
+    #[cfg(target_env = "msvc")]
+    assert_eq!(error.kind(), io::ErrorKind::ConnectionReset);
 }
 
 #[hala_test::test(io_test)]
