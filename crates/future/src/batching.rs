@@ -79,6 +79,10 @@ impl WakerHost {
         let old = self.waker.swap(waker_ptr, Ordering::AcqRel);
 
         if old != null_mut() {
+            let waker = unsafe { Box::from_raw(old) };
+
+            drop(waker);
+
             // TODO: check the data race!!!
             log::trace!("Batching is awakened unintentionally !!!.");
         }
