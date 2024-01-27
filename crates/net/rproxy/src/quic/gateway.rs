@@ -222,7 +222,7 @@ async fn gateway_handle_stream(
             profile_builder.prohibited(uuid);
 
             _ = stream.stream_shutdown().await;
-            log::error!("{:?}, gateway={}, handshake error, {}", stream, id, err);
+            log::trace!("{:?}, gateway={}, handshake error, {}", stream, id, err);
         }
     }
 }

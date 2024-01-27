@@ -192,7 +192,7 @@ async fn run_tcp_gateway_loop(
         let laddr = match stream.local_addr() {
             Ok(laddr) => laddr,
             Err(err) => {
-                log::error!("Get incoming tcp stream laddr error,{}", err);
+                log::trace!("Get incoming tcp stream laddr error,{}", err);
                 continue;
             }
         };
@@ -230,7 +230,7 @@ async fn run_tcp_ssl_gateway_loop(
         let laddr = match stream.local_addr() {
             Ok(laddr) => laddr,
             Err(err) => {
-                log::error!("Get incoming tcp stream laddr error,{}", err);
+                log::trace!("Get incoming tcp stream laddr error,{}", err);
                 continue;
             }
         };
@@ -240,7 +240,7 @@ async fn run_tcp_ssl_gateway_loop(
         let stream = match accept(&ssl_acceptor, stream).await {
             Ok(stream) => stream,
             Err(err) => {
-                log::error!(
+                log::trace!(
                     "ssl handshake error, laddr={:?}, raddr={}, {}",
                     laddr,
                     raddr,
@@ -325,7 +325,7 @@ async fn gateway_handle_stream<S>(
 
             // TODO: close
 
-            log::error!(
+            log::trace!(
                 "gateway={}, laddr={:?}, raddr={:?}, handshake error, {}",
                 id,
                 laddr,
@@ -353,13 +353,13 @@ async fn gatway_recv_loop<S>(
         let read_size = match stream.read(buf.as_mut()).await {
             Ok(r) => r,
             Err(err) => {
-                log::error!("{:?}, stopped recv loop, {}", id, err);
+                log::trace!("{:?}, stopped recv loop, {}", id, err);
                 return;
             }
         };
 
         if read_size == 0 {
-            log::error!(
+            log::trace!(
                 "tcp_gateway={}, laddr={:?}, raddr={:?}, stopped recv loop, tcp stream broken",
                 id,
                 laddr,
@@ -416,7 +416,7 @@ async fn gatway_send_loop<S>(
         builder.update_backwarding_data(buf.len() as u64);
     }
 
-    log::error!(
+    log::trace!(
         "gateway={}, laddr={:?}, raddr={:?}, stopped send loop, backwarding broken",
         id,
         laddr,
