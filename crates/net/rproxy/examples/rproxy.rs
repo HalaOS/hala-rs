@@ -1,4 +1,5 @@
 use std::{
+    fmt::Debug,
     io,
     net::{SocketAddr, ToSocketAddrs},
     ops::Range,
@@ -12,7 +13,7 @@ use hala_future::executor::block_on;
 use hala_io::sleep;
 use hala_quic::Config;
 use hala_rproxy::{
-    profile::get_profile_config,
+    profile::{get_profile_config, Sample},
     quic::{QuicGatewayFactory, QuicTunnelFactory},
     tcp::{TcpGatewayFactory, TcpTunnelFactory},
     GatewayFactoryManager, Handshaker, Protocol, ProtocolConfig, TransportConfig,
@@ -133,6 +134,60 @@ struct ReverseProxy {
     max_cache_len: usize,
 }
 
+#[derive(Default)]
+struct ReverseProxyProfile {
+    active_conns: u64,
+    closed_conns: u64,
+    prohibited_conns: u64,
+    forwarding_datas: u64,
+    backwarding_datas: u64,
+}
+
+impl ReverseProxyProfile {
+    fn update(&mut self, sample: Sample) {
+        for event in sample.events_update {
+            match event {
+                hala_rproxy::profile::ProfileEvent::Connect(_) => {
+                    self.active_conns += 1;
+                }
+                hala_rproxy::profile::ProfileEvent::Disconnect(_) => {
+                    self.active_conns -= 1;
+                    self.closed_conns += 1;
+                }
+                hala_rproxy::profile::ProfileEvent::Prohibited(_) => {
+                    self.active_conns -= 1;
+                    self.prohibited_conns -= 1;
+                }
+                hala_rproxy::profile::ProfileEvent::OpenStream(_) => {
+                    self.active_conns += 1;
+                }
+                hala_rproxy::profile::ProfileEvent::CloseStream(_) => {
+                    self.active_conns -= 1;
+                    self.closed_conns += 1;
+                }
+                hala_rproxy::profile::ProfileEvent::Transport(transport) => {
+                    self.backwarding_datas += transport.backwarding_data;
+                    self.forwarding_datas += transport.forwarding_data;
+                }
+            }
+        }
+    }
+}
+
+impl Debug for ReverseProxyProfile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "ac={}, cc={}, pc={}, fd={}, bd={}",
+            self.active_conns,
+            self.closed_conns,
+            self.prohibited_conns,
+            self.forwarding_datas,
+            self.backwarding_datas
+        )
+    }
+}
+
 fn main() {
     pretty_env_logger::init_timed();
 
@@ -160,14 +215,25 @@ async fn rproxy_main(config: ReverseProxy) -> io::Result<()> {
 
     log::info!("Gateway {} created", gateway_id);
 
+    let mut gateway_profile = ReverseProxyProfile::default();
+
+    let mut tunnel_profile = ReverseProxyProfile::default();
+
     loop {
         sleep(Duration::from_secs(10)).await.unwrap();
 
         let samples = gateway_factory_manager.sample();
 
         for sample in samples {
-            log::info!("{:?}", sample);
+            if sample.is_gateway {
+                gateway_profile.update(sample);
+            } else {
+                tunnel_profile.update(sample);
+            }
         }
+
+        log::info!("gateway: {:?}", gateway_profile);
+        log::info!("tunnel: {:?}", tunnel_profile);
     }
 }
 
