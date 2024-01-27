@@ -143,18 +143,25 @@ mod event_loops {
 
             match stream.stream_recv(buf.as_mut()).await {
                 Ok((read_size, fin)) => {
+                    if fin {
+                        _ = stream.stream_send(b"", true).await;
+                        log::error!("{:?}, stop recv loop, peer sent fin", stream);
+                        return;
+                    }
+
                     let buf = buf.into_bytes_mut(Some(read_size));
 
-                    if sender.send(buf).await.is_err() || fin {
+                    if sender.send(buf).await.is_err() {
                         _ = stream.stream_send(b"", true).await;
-                        log::info!("{:?}, stop recv loop, fin={}", stream, fin);
+                        log::error!("{:?}, stop recv loop, backward tunnel broken", stream);
+
                         return;
                     }
 
                     profile_transport_builder.update_forwarding_data(read_size as u64);
                 }
                 Err(err) => {
-                    log::trace!("{:?}, stop recv loop, err={}", stream, err);
+                    log::error!("{:?}, stop recv loop, err={}", stream, err);
                     return;
                 }
             }
@@ -179,11 +186,11 @@ mod event_loops {
         }
 
         // stop stream read loop
-        _ = stream.stream_shutdown().await;
+        _ = stream.close().await;
 
         profile_transport_builder.close();
 
-        log::trace!("{:?}, stop send loop, forward tunnel broken.", stream);
+        log::error!("{:?}, stop send loop, forward tunnel broken.", stream);
     }
 }
 

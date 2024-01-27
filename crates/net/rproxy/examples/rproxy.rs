@@ -461,8 +461,8 @@ fn quic_handshake(rproxy_config: ReverseProxy) -> impl Handshaker {
             let config = create_quic_config(false, rproxy_config)?;
 
             let config = TunnelOpenConfig {
-                max_cache_len: max_cache_len,
-                max_packet_len: max_packet_len,
+                max_cache_len,
+                max_packet_len,
                 tunnel_service_id: "QuicTunnel".into(),
                 transport_config: TransportConfig::Quic(raddrs, config),
             };

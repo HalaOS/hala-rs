@@ -146,7 +146,7 @@ mod event_loop {
     ) {
         while let Some(data) = receiver.next().await {
             if sender.send(data).await.is_err() {
-                log::trace!(
+                log::error!(
                     "{:?}, stop forward channel, transport sender broken.",
                     path_info
                 );
@@ -155,7 +155,7 @@ mod event_loop {
             }
         }
 
-        log::trace!(
+        log::error!(
             "{:?}, stop forward channel, gateway receiver broken.",
             path_info
         );
