@@ -1,4 +1,5 @@
 use std::{
+    fmt::Debug,
     net::SocketAddr,
     sync::{
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
@@ -25,7 +26,26 @@ pub struct Sample {
     pub events_update: Vec<ProfileEvent>,
 }
 
+impl Debug for Sample {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(
+            f,
+            "source={}, protocols={:?}, is_gateway={}",
+            self.id, self.protocols, self.is_gateway
+        )?;
+
+        writeln!(f, "\tevent list:")?;
+
+        for event in self.events_update.iter() {
+            writeln!(f, "\t\t{:?}", event)?;
+        }
+
+        Ok(())
+    }
+}
+
 /// Profile event variant.
+#[derive(Debug)]
 pub enum ProfileEvent {
     /// Connection connected.
     Connect(Box<ProfileConnect>),
@@ -42,6 +62,7 @@ pub enum ProfileEvent {
 }
 
 /// Profile event `Connect` content
+#[derive(Debug)]
 pub struct ProfileConnect {
     /// The unique id of this connection.
     pub uuid: Uuid,
@@ -54,6 +75,7 @@ pub struct ProfileConnect {
 }
 
 /// Profile event `OpenStream` content.
+#[derive(Debug)]
 pub struct ProfileOpenStream {
     /// The unique id of quic stream.
     pub uuid: Uuid,
@@ -68,6 +90,7 @@ pub struct ProfileOpenStream {
 }
 
 /// Transmission statistics
+#[derive(Debug)]
 pub struct ProfileTransport {
     /// The unique id of this connection / stream.
     pub uuid: Uuid,
@@ -121,7 +144,7 @@ impl ProfileConfig {
 static GLOBAL_PROFILE_CONFIG: OnceLock<ProfileConfig> = OnceLock::new();
 
 /// Get profile config.
-pub fn get_config() -> &'static ProfileConfig {
+pub fn get_profile_config() -> &'static ProfileConfig {
     GLOBAL_PROFILE_CONFIG.get_or_init(|| ProfileConfig::default())
 }
 
@@ -152,7 +175,7 @@ impl ProfileBuilder {
             is_gateway,
             transport_builders: Default::default(),
             event_update: Default::default(),
-            config: get_config(),
+            config: get_profile_config(),
         }
     }
 
@@ -210,7 +233,7 @@ impl ProfileBuilder {
             at: Instant::now(),
         };
 
-        let config = get_config();
+        let config = get_profile_config();
 
         if config.is_on() {
             self.check_event_queue();
@@ -227,7 +250,7 @@ impl ProfileBuilder {
 
     /// Handshake failed.
     pub fn prohibited(&self, uuid: Uuid) {
-        if get_config().is_on() {
+        if get_profile_config().is_on() {
             self.check_event_queue();
             self.event_update.push(ProfileEvent::Prohibited(uuid));
         }
@@ -247,7 +270,6 @@ impl ProfileBuilder {
 
             if profile_transport.is_final_update {
                 removed.push(it.key().clone());
-                events_update.push(ProfileEvent::Transport(Box::new(profile_transport)));
 
                 let event = if it.is_conn {
                     ProfileEvent::Disconnect(it.key().clone())
@@ -257,6 +279,8 @@ impl ProfileBuilder {
 
                 events_update.push(event);
             }
+
+            events_update.push(ProfileEvent::Transport(Box::new(profile_transport)));
         }
 
         for id in removed {

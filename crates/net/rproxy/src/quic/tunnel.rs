@@ -94,7 +94,7 @@ impl TunnelFactory for QuicTunnelFactory {
     }
 
     fn sample(&self) -> Sample {
-        todo!()
+        self.profile_builder.sample()
     }
 }
 

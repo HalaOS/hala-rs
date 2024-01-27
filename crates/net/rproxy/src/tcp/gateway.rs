@@ -91,7 +91,7 @@ impl GatewayFactory for TcpGatewayFactory {
         &self,
         protocol_config: ProtocolConfig,
         tunnel_factory_manager: TunnelFactoryManager,
-    ) -> io::Result<Box<dyn Gateway + Send + 'static>> {
+    ) -> io::Result<Box<dyn Gateway + Send + Sync + 'static>> {
         match protocol_config.transport_config {
             TransportConfig::Tcp(laddrs) => {
                 start_tcp_gateway(
@@ -124,7 +124,7 @@ impl GatewayFactory for TcpGatewayFactory {
     }
 
     fn sample(&self) -> Sample {
-        todo!()
+        self.profile_builder.sample()
     }
 }
 
@@ -135,7 +135,7 @@ async fn start_tcp_ssl_gateway(
     ssl_acceptor: SslAcceptor,
     tunnel_factory_manager: TunnelFactoryManager,
     profile_builder: Arc<ProfileBuilder>,
-) -> io::Result<Box<dyn Gateway + Send + 'static>> {
+) -> io::Result<Box<dyn Gateway + Send + Sync + 'static>> {
     let listener = Arc::new(TcpListener::bind(laddrs.as_slice())?);
 
     let gateway = TcpGateway::new(listener.clone());
@@ -160,7 +160,7 @@ async fn start_tcp_gateway(
     laddrs: Vec<SocketAddr>,
     tunnel_factory_manager: TunnelFactoryManager,
     profile_builder: Arc<ProfileBuilder>,
-) -> io::Result<Box<dyn Gateway + Send + 'static>> {
+) -> io::Result<Box<dyn Gateway + Send + Sync + 'static>> {
     let listener = Arc::new(TcpListener::bind(laddrs.as_slice())?);
 
     let gateway = TcpGateway::new(listener.clone());

@@ -53,7 +53,7 @@ impl GatewayFactory for QuicGatewayFactory {
         &self,
         protocol_config: ProtocolConfig,
         tunnel_factory_manager: TunnelFactoryManager,
-    ) -> io::Result<Box<dyn Gateway + Send + 'static>> {
+    ) -> io::Result<Box<dyn Gateway + Send + Sync + 'static>> {
         let (laddrs, config) =
             if let TransportConfig::Quic(laddrs, config) = protocol_config.transport_config {
                 (laddrs, config)

@@ -55,7 +55,7 @@ impl TunnelFactory for TcpTunnelFactory {
     }
 
     fn sample(&self) -> Sample {
-        todo!()
+        self.profile_builder.sample()
     }
 }
 

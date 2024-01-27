@@ -1,20 +1,22 @@
 use std::{
-    future::pending,
     io,
     net::{SocketAddr, ToSocketAddrs},
     ops::Range,
     path::PathBuf,
+    time::Duration,
 };
 
 use clap::Parser;
 use hala_future::executor::block_on;
 
+use hala_io::sleep;
 use hala_quic::Config;
 use hala_rproxy::{
+    profile::get_profile_config,
     quic::{QuicGatewayFactory, QuicTunnelFactory},
     tcp::{TcpGatewayFactory, TcpTunnelFactory},
-    GatewayFactory, Handshaker, Protocol, ProtocolConfig, TransportConfig, TunnelFactoryManager,
-    TunnelOpenConfig,
+    GatewayFactoryManager, Handshaker, Protocol, ProtocolConfig, TransportConfig,
+    TunnelFactoryManager, TunnelOpenConfig,
 };
 use hala_tls::{SslAcceptor, SslConnector, SslFiletype, SslMethod};
 
@@ -144,19 +146,29 @@ fn main() {
 }
 
 async fn rproxy_main(config: ReverseProxy) -> io::Result<()> {
-    let gateway_factory = create_gateway_factory(&config);
+    get_profile_config().on(true);
 
     let tunnel_factory_manager = create_tunnel_factory_manager(&config);
 
-    let gateway = gateway_factory
-        .create(create_protocol_config(config)?, tunnel_factory_manager)
+    let gateway_factory_manager = GatewayFactoryManager::new(tunnel_factory_manager.clone());
+
+    let gateway_factory_id = create_gateway_factory(&gateway_factory_manager, &config);
+
+    let gateway_id = gateway_factory_manager
+        .start(&gateway_factory_id, create_protocol_config(config)?)
         .await?;
 
-    log::info!("Gateway {} created", gateway.id());
+    log::info!("Gateway {} created", gateway_id);
 
-    pending::<()>().await;
+    loop {
+        sleep(Duration::from_secs(10)).await.unwrap();
 
-    Ok(())
+        let samples = gateway_factory_manager.sample();
+
+        for sample in samples {
+            log::info!("{:?}", sample);
+        }
+    }
 }
 
 fn create_protocol_config(rproxy_config: ReverseProxy) -> io::Result<ProtocolConfig> {
@@ -316,11 +328,14 @@ fn create_quic_config(is_gateway: bool, rproxy_config: ReverseProxy) -> io::Resu
 
 /// Create gateway factory instance.
 fn create_gateway_factory(
+    gateway_factory_manager: &GatewayFactoryManager,
     config: &ReverseProxy,
-) -> Box<dyn GatewayFactory + Send + Sync + 'static> {
+) -> String {
     match config.gateway {
-        Protocol::TcpSsl | Protocol::Tcp => Box::new(TcpGatewayFactory::new("TcpGateway")),
-        Protocol::Quic => Box::new(QuicGatewayFactory::new("QuicGateway")),
+        Protocol::TcpSsl | Protocol::Tcp => {
+            gateway_factory_manager.register(TcpGatewayFactory::new("TcpGateway"))
+        }
+        Protocol::Quic => gateway_factory_manager.register(QuicGatewayFactory::new("QuicGateway")),
     }
 }
 

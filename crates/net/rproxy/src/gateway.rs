@@ -3,7 +3,11 @@ use std::{io, net::SocketAddr, sync::Arc};
 use async_trait::async_trait;
 use dashmap::DashMap;
 
-use crate::{profile::Sample, tunnel::TunnelFactoryManager, Protocol, ProtocolConfig};
+use crate::{
+    profile::{get_profile_config, Sample},
+    tunnel::TunnelFactoryManager,
+    Protocol, ProtocolConfig,
+};
 
 /// The gateway is responsible for accepting new connections and forwarding data.
 #[async_trait]
@@ -31,7 +35,7 @@ pub trait GatewayFactory {
         &self,
         protocol_config: ProtocolConfig,
         tunnel_factory_manager: TunnelFactoryManager,
-    ) -> io::Result<Box<dyn Gateway + Send + 'static>>;
+    ) -> io::Result<Box<dyn Gateway + Send + Sync + 'static>>;
 
     /// generate sample data.
     fn sample(&self) -> Sample;
@@ -41,8 +45,8 @@ pub trait GatewayFactory {
 #[derive(Clone)]
 pub struct GatewayFactoryManager {
     tunnel_factory_manager: TunnelFactoryManager,
-    gateway_factories: Arc<DashMap<String, Box<dyn GatewayFactory + Send + 'static>>>,
-    gateways: Arc<DashMap<String, Box<dyn Gateway + Send + 'static>>>,
+    gateway_factories: Arc<DashMap<String, Box<dyn GatewayFactory + Sync + Send + 'static>>>,
+    gateways: Arc<DashMap<String, Box<dyn Gateway + Send + Sync + 'static>>>,
 }
 
 impl GatewayFactoryManager {
@@ -58,7 +62,7 @@ impl GatewayFactoryManager {
     /// Register gateway factory.
     ///
     /// If the same ID is used to register the transport twice, the function will panic.
-    pub fn register<G: GatewayFactory + Send + 'static>(&self, gateway: G) {
+    pub fn register<G: GatewayFactory + Sync + Send + 'static>(&self, gateway: G) -> String {
         let id = gateway.id().to_string();
         assert!(
             self.gateway_factories
@@ -66,14 +70,24 @@ impl GatewayFactoryManager {
                 .is_none(),
             "Register gateway {id} twice."
         );
+
+        id
     }
 
     /// Create a new gateway instance using provided [`ProtocolConfig`]
-    pub async fn start(&self, id: &str, protocol_config: ProtocolConfig) -> io::Result<String> {
-        let factory = self.gateway_factories.get_mut(id).ok_or(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("gateway factory not found, id={}", id),
-        ))?;
+    pub async fn start<ID: ToString>(
+        &self,
+        factory_id: ID,
+        protocol_config: ProtocolConfig,
+    ) -> io::Result<String> {
+        let factory_id = factory_id.to_string();
+        let factory = self
+            .gateway_factories
+            .get_mut(&factory_id)
+            .ok_or(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("gateway factory not found, id={}", factory_id),
+            ))?;
 
         let gateway = factory
             .create(protocol_config, self.tunnel_factory_manager.clone())
@@ -103,6 +117,10 @@ impl GatewayFactoryManager {
     /// Generate sample datas.
     pub fn sample(&self) -> Vec<Sample> {
         let mut samples = vec![];
+
+        if !get_profile_config().is_on() {
+            return samples;
+        }
 
         for factory in self.gateway_factories.iter() {
             samples.push(factory.sample());
