@@ -151,7 +151,7 @@ mod event_loops {
                         return;
                     }
 
-                    profile_transport_builder.update_backwarding_data(read_size as u64);
+                    profile_transport_builder.update_forwarding_data(read_size as u64);
                 }
                 Err(err) => {
                     log::trace!("{:?}, stop recv loop, err={}", stream, err);

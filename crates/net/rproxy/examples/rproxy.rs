@@ -167,7 +167,6 @@ impl ReverseProxyProfile {
                     self.closed_conns += 1;
                 }
                 hala_rproxy::profile::ProfileEvent::Prohibited(_) => {
-                    self.active_conns -= 1;
                     self.prohibited_conns += 1;
                 }
                 hala_rproxy::profile::ProfileEvent::OpenStream(_) => {

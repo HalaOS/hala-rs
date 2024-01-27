@@ -207,6 +207,7 @@ async fn run_tcp_gateway_loop(
             laddr,
             raddr,
             tunnel_factory_manager.clone(),
+            profile_builder.clone(),
             builder,
         ));
     }
@@ -257,6 +258,7 @@ async fn run_tcp_ssl_gateway_loop(
             laddr,
             raddr,
             tunnel_factory_manager.clone(),
+            profile_builder.clone(),
             builder,
         ));
     }
@@ -272,10 +274,13 @@ async fn gateway_handle_stream<S>(
     laddr: SocketAddr,
     raddr: SocketAddr,
     tunnel_factory_manager: TunnelFactoryManager,
+    profile_builder: Arc<ProfileBuilder>,
     builder: ProfileTransportBuilder,
 ) where
     S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
 {
+    let uuid = builder.uuid.clone();
+
     let (forward_sender, forward_receiver) = mpsc::channel(max_cache_len);
     let (backward_sender, backward_receiver) = mpsc::channel(max_cache_len);
 
@@ -316,7 +321,11 @@ async fn gateway_handle_stream<S>(
             );
         }
         Err(err) => {
-            log::trace!(
+            profile_builder.prohibited(uuid);
+
+            // TODO: close
+
+            log::error!(
                 "gateway={}, laddr={:?}, raddr={:?}, handshake error, {}",
                 id,
                 laddr,
