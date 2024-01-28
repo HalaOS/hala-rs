@@ -26,12 +26,13 @@ pub struct Tunnel {
 impl Tunnel {
     /// Create new channel with random uuid.
     pub fn new(
+        uuid: Uuid,
         max_packet_len: usize,
         sender: Sender<BytesMut>,
         receiver: Receiver<BytesMut>,
     ) -> Self {
         Self {
-            uuid: Uuid::new_v4(),
+            uuid,
             max_packet_len,
             sender,
             receiver,
@@ -130,6 +131,7 @@ impl TunnelFactory for TunnelFactorySender {
     /// Using [`config`](TunnelOpenConfiguration) to open new tunnel instance.
     async fn open_tunnel(&self, config: TunnelOpenConfig) -> io::Result<()> {
         let rhs_tunnel = Tunnel::new(
+            config.session_id,
             config.max_packet_len,
             config.gateway_backward,
             config.gateway_forward,

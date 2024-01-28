@@ -462,6 +462,7 @@ fn quic_handshake(rproxy_config: ReverseProxy) -> impl Handshaker {
             let config = create_quic_config(false, rproxy_config)?;
 
             let config = TunnelOpenConfig {
+                session_id: uuid::Uuid::new_v4(),
                 max_cache_len,
                 max_packet_len,
                 tunnel_service_id: "QuicTunnel".into(),
@@ -501,6 +502,7 @@ fn tcp_ssl_handshake(rproxy_config: ReverseProxy) -> impl Handshaker {
             let config = config.build().configure().unwrap();
 
             let config = TunnelOpenConfig {
+                session_id: uuid::Uuid::new_v4(),
                 max_cache_len: rproxy_config.max_cache_len,
                 max_packet_len: rproxy_config.max_packet_len,
                 tunnel_service_id: "TcpSslTunnel".into(),
@@ -528,6 +530,7 @@ fn tcp_handshake(rproxy_config: ReverseProxy) -> impl Handshaker {
             let raddrs = parse_raddrs(&peer_domain, ports)?;
 
             let config = TunnelOpenConfig {
+                session_id: uuid::Uuid::new_v4(),
                 max_cache_len: rproxy_config.max_cache_len,
                 max_packet_len: rproxy_config.max_packet_len,
                 tunnel_service_id: "TcpTunnel".into(),

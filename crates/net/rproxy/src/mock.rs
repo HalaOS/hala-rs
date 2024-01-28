@@ -5,6 +5,7 @@ use hala_future::executor::future_spawn;
 use hala_io::sleep;
 use hala_quic::{QuicConn, QuicListener, QuicStream};
 use hala_tcp::{TcpListener, TcpStream};
+use uuid::Uuid;
 
 use crate::{
     make_tunnel_factory_channel, HandshakeContext, TransportConfig, Tunnel, TunnelFactoryManager,
@@ -129,6 +130,7 @@ pub(crate) fn quic_open_flag(
     let (gateway_forward_sender, gateway_forward_receiver) = mpsc::channel(1024);
 
     let config = TunnelOpenConfig {
+        session_id: Uuid::new_v4(),
         max_packet_len: 1370,
         max_cache_len: 10,
         tunnel_service_id: tunnel_service_id.into(),
@@ -138,7 +140,12 @@ pub(crate) fn quic_open_flag(
         gateway_path_info: crate::PathInfo::None,
     };
 
-    let tunnel = Tunnel::new(1370, gateway_forward_sender, gateway_backward_receiver);
+    let tunnel = Tunnel::new(
+        Uuid::new_v4(),
+        1370,
+        gateway_forward_sender,
+        gateway_backward_receiver,
+    );
 
     (config, tunnel)
 }
@@ -151,6 +158,7 @@ pub(crate) fn tcp_open_flag(
     let (gateway_forward_sender, gateway_forward_receiver) = mpsc::channel(1024);
 
     let config = TunnelOpenConfig {
+        session_id: Uuid::new_v4(),
         max_packet_len: 1370,
         max_cache_len: 10,
         tunnel_service_id: tunnel_service_id.into(),
@@ -160,7 +168,12 @@ pub(crate) fn tcp_open_flag(
         gateway_path_info: crate::PathInfo::None,
     };
 
-    let tunnel = Tunnel::new(1370, gateway_forward_sender, gateway_backward_receiver);
+    let tunnel = Tunnel::new(
+        Uuid::new_v4(),
+        1370,
+        gateway_forward_sender,
+        gateway_backward_receiver,
+    );
 
     (config, tunnel)
 }
@@ -178,6 +191,7 @@ pub(crate) fn mock_tunnel_factory_manager() -> (TunnelFactoryManager, TunnelFact
 
 pub(crate) async fn mock_handshaker(cx: HandshakeContext) -> io::Result<TunnelOpenConfig> {
     let config = TunnelOpenConfig {
+        session_id: Uuid::new_v4(),
         max_cache_len: 1024,
         max_packet_len: 1370,
         tunnel_service_id: "MockTunnelFactory".into(),

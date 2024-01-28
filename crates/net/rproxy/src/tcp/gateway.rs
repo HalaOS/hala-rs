@@ -285,6 +285,7 @@ async fn gateway_handle_stream<S>(
     let (backward_sender, backward_receiver) = mpsc::channel(max_cache_len);
 
     let cx = HandshakeContext {
+        session_id: Uuid::new_v4(),
         path: crate::PathInfo::Tcp(laddr, raddr),
         backward: backward_sender,
         forward: forward_receiver,
@@ -292,8 +293,8 @@ async fn gateway_handle_stream<S>(
 
     let (read, write) = stream.split();
 
-    future_spawn(gatway_recv_loop(
-        id.clone(),
+    future_spawn(gatway_forward_loop(
+        cx.session_id.clone(),
         laddr,
         raddr,
         max_packet_len,
@@ -302,8 +303,8 @@ async fn gateway_handle_stream<S>(
         builder.clone(),
     ));
 
-    future_spawn(gatway_send_loop(
-        id.clone(),
+    future_spawn(gatway_backward_loop(
+        cx.session_id.clone(),
         laddr,
         raddr,
         write,
@@ -336,8 +337,8 @@ async fn gateway_handle_stream<S>(
     }
 }
 
-async fn gatway_recv_loop<S>(
-    id: String,
+async fn gatway_forward_loop<S>(
+    session_id: Uuid,
     laddr: SocketAddr,
     raddr: SocketAddr,
     max_packet_len: usize,
@@ -353,15 +354,15 @@ async fn gatway_recv_loop<S>(
         let read_size = match stream.read(buf.as_mut()).await {
             Ok(r) => r,
             Err(err) => {
-                log::error!("{:?}, stopped recv loop, {}", id, err);
+                log::error!("session_id={}, stopped recv loop, {}", session_id, err);
                 return;
             }
         };
 
         if read_size == 0 {
             log::error!(
-                "tcp_gateway={}, laddr={:?}, raddr={:?}, stopped recv loop, tcp stream broken",
-                id,
+                "session_id={}, laddr={:?}, raddr={:?}, stopped recv loop, tcp stream broken",
+                session_id,
                 laddr,
                 raddr
             );
@@ -373,8 +374,8 @@ async fn gatway_recv_loop<S>(
 
         if sender.send(buf).await.is_err() {
             log::error!(
-                "gateway={}, laddr={:?}, raddr={:?}, stopped recv loop, forward tunnel broken",
-                id,
+                "session_id={}, laddr={:?}, raddr={:?}, stopped recv loop, forward tunnel broken",
+                session_id,
                 laddr,
                 raddr
             );
@@ -386,8 +387,8 @@ async fn gatway_recv_loop<S>(
     }
 }
 
-async fn gatway_send_loop<S>(
-    id: String,
+async fn gatway_backward_loop<S>(
+    session_id: Uuid,
     laddr: SocketAddr,
     raddr: SocketAddr,
     mut stream: S,
@@ -402,7 +403,7 @@ async fn gatway_send_loop<S>(
             Err(err) => {
                 log::error!(
                     "gateway={}, laddr={:?}, raddr={:?} stopped send loop, {}",
-                    id,
+                    session_id,
                     laddr,
                     raddr,
                     err,
@@ -418,7 +419,7 @@ async fn gatway_send_loop<S>(
 
     log::error!(
         "gateway={}, laddr={:?}, raddr={:?}, stopped send loop, backwarding broken",
-        id,
+        session_id,
         laddr,
         raddr
     );

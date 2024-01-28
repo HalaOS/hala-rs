@@ -32,12 +32,14 @@ impl TunnelFactory for TcpTunnelFactory {
     /// Using [`config`](TunnelOpenConfiguration) to open new tunnel instance.
     async fn open_tunnel(&self, config: TunnelOpenConfig) -> io::Result<()> {
         let rhs_tunnel = Tunnel::new(
+            config.session_id,
             config.max_packet_len,
             config.gateway_backward,
             config.gateway_forward,
         );
 
         event_loops::start(
+            config.session_id,
             self.profile_builder.clone(),
             rhs_tunnel,
             config.transport_config,
@@ -75,17 +77,20 @@ mod event_loops {
     };
 
     pub(super) async fn start(
+        session_id: Uuid,
         profile_builder: Arc<ProfileBuilder>,
         tunnel: Tunnel,
         transport_config: TransportConfig,
     ) -> io::Result<()> {
         match transport_config {
-            TransportConfig::Tcp(raddrs) => start_tcp(profile_builder, tunnel, raddrs).await,
+            TransportConfig::Tcp(raddrs) => {
+                start_tcp(session_id, profile_builder, tunnel, raddrs).await
+            }
             TransportConfig::Ssl {
                 raddrs,
                 domain,
                 config,
-            } => start_ssl(profile_builder, tunnel, raddrs, domain, config).await,
+            } => start_ssl(session_id, profile_builder, tunnel, raddrs, domain, config).await,
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
@@ -96,6 +101,7 @@ mod event_loops {
     }
 
     async fn start_tcp(
+        session_id: Uuid,
         profile_builder: Arc<ProfileBuilder>,
         tunnel: Tunnel,
         raddrs: Vec<SocketAddr>,
@@ -109,16 +115,16 @@ mod event_loops {
 
         let (read, write) = stream.split();
 
-        future_spawn(stream_recv_loop(
-            tunnel.uuid.clone(),
+        future_spawn(stream_backward_loop(
+            session_id,
             tunnel.max_packet_len,
             read,
             tunnel.sender,
             profile_transport_builder.clone(),
         ));
 
-        future_spawn(stream_send_loop(
-            tunnel.uuid.clone(),
+        future_spawn(stream_forward_loop(
+            session_id,
             write,
             tunnel.receiver,
             profile_transport_builder,
@@ -128,6 +134,7 @@ mod event_loops {
     }
 
     async fn start_ssl(
+        session_id: Uuid,
         profile_builder: Arc<ProfileBuilder>,
         tunnel: Tunnel,
         raddrs: Vec<SocketAddr>,
@@ -150,16 +157,16 @@ mod event_loops {
 
         let (read, write) = stream.split();
 
-        future_spawn(stream_recv_loop(
-            tunnel.uuid.clone(),
+        future_spawn(stream_backward_loop(
+            session_id,
             tunnel.max_packet_len,
             read,
             tunnel.sender,
             profile_transport_builder.clone(),
         ));
 
-        future_spawn(stream_send_loop(
-            tunnel.uuid.clone(),
+        future_spawn(stream_forward_loop(
+            session_id,
             write,
             tunnel.receiver,
             profile_transport_builder,
@@ -168,7 +175,7 @@ mod event_loops {
         Ok(())
     }
 
-    async fn stream_recv_loop<S>(
+    async fn stream_backward_loop<S>(
         uuid: Uuid,
         max_packet_len: usize,
         mut stream: S,
@@ -177,7 +184,7 @@ mod event_loops {
     ) where
         S: AsyncRead + Unpin,
     {
-        log::trace!("{:?}, start recv loop", uuid);
+        log::trace!("session_id={:?}, start recv loop", uuid);
 
         loop {
             let mut buf = ReadBuf::with_capacity(max_packet_len);
@@ -185,28 +192,28 @@ mod event_loops {
             match stream.read(buf.as_mut()).await {
                 Ok(read_size) => {
                     if read_size == 0 {
-                        log::trace!("{:?}, stop recv loop", uuid);
+                        log::trace!("session_id={:?}, stop recv loop", uuid);
                         return;
                     }
 
                     let buf = buf.into_bytes_mut(Some(read_size));
 
                     if sender.send(buf).await.is_err() {
-                        log::trace!("{:?}, stop recv loop, broken backward", uuid);
+                        log::trace!("session_id={:?}, stop recv loop, broken backward", uuid);
                         return;
                     }
 
                     profile_transport_builder.update_backwarding_data(read_size as u64);
                 }
                 Err(err) => {
-                    log::trace!("{:?}, stop recv loop, err={}", uuid, err);
+                    log::trace!("session_id={:?}, stop recv loop, err={}", uuid, err);
                     return;
                 }
             }
         }
     }
 
-    async fn stream_send_loop<S>(
+    async fn stream_forward_loop<S>(
         uuid: Uuid,
         mut stream: S,
         mut receiver: Receiver<BytesMut>,
@@ -214,12 +221,17 @@ mod event_loops {
     ) where
         S: AsyncWrite + Unpin,
     {
-        log::trace!("{:?}, start send loop", uuid);
+        log::trace!("session_id={:?}, start send loop", uuid);
 
         while let Some(buf) = receiver.next().await {
             if let Err(err) = stream.write_all(&buf).await {
                 log::trace!("{:?}, stop send loop, err={}", uuid, err);
+
+                // stop stream read loop
+                _ = stream.close().await;
+
                 profile_transport_builder.close();
+
                 return;
             }
 
@@ -231,7 +243,10 @@ mod event_loops {
 
         profile_transport_builder.close();
 
-        log::trace!("{:?}, stop send loop, forward tunnel broken.", uuid);
+        log::trace!(
+            "session_id={:?}, stop send loop, forward tunnel broken.",
+            uuid
+        );
     }
 }
 

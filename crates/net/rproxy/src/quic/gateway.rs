@@ -191,6 +191,7 @@ async fn gateway_handle_stream(
     let (backward_sender, backward_receiver) = mpsc::channel(max_cache_len);
 
     let cx = HandshakeContext {
+        session_id: Uuid::new_v4(),
         path: crate::PathInfo::Quic(
             stream.conn.source_id().clone().into_owned(),
             stream.conn.destination_id().clone().into_owned(),
@@ -201,6 +202,7 @@ async fn gateway_handle_stream(
 
     future_spawn(gatway_recv_loop(
         id.clone(),
+        cx.session_id.clone(),
         max_packet_len,
         stream.clone(),
         forward_sender,
@@ -209,6 +211,7 @@ async fn gateway_handle_stream(
 
     future_spawn(gatway_send_loop(
         id.clone(),
+        cx.session_id.clone(),
         stream.clone(),
         backward_receiver,
         profile_transport_builder,
@@ -228,7 +231,8 @@ async fn gateway_handle_stream(
 }
 
 async fn gatway_recv_loop(
-    id: String,
+    _id: String,
+    session_id: Uuid,
     max_packet_len: usize,
     stream: QuicStream,
     mut sender: Sender<BytesMut>,
@@ -240,16 +244,21 @@ async fn gatway_recv_loop(
         let (read_size, fin) = match stream.stream_recv(buf.as_mut()).await {
             Ok(r) => r,
             Err(err) => {
-                log::trace!("{:?}, stopped recv loop, {}", stream, err);
+                log::trace!(
+                    "{:?}, session_id={:?}, stopped recv loop, {}",
+                    stream,
+                    session_id,
+                    err
+                );
                 break;
             }
         };
 
         if fin {
             log::trace!(
-                "{:?}, gateway={}, stopped recv loop, stream send fin({}) or forwarding broken",
+                "{:?}, session_id={}, stopped recv loop, stream send fin({}) or forwarding broken",
                 stream,
-                id,
+                session_id,
                 fin,
             );
 
@@ -265,9 +274,9 @@ async fn gatway_recv_loop(
 
         if sender.send(buf).await.is_err() {
             log::trace!(
-                "{:?}, gateway={}, stopped recv loop, stream send fin({}) or forwarding broken",
+                "{:?}, session_id={}, stopped recv loop, stream send fin({}) or forwarding broken",
                 stream,
-                id,
+                session_id,
                 fin,
             );
 
@@ -281,7 +290,8 @@ async fn gatway_recv_loop(
 }
 
 async fn gatway_send_loop(
-    id: String,
+    _id: String,
+    session_id: Uuid,
     mut stream: QuicStream,
     mut receiver: Receiver<BytesMut>,
     profile_transport_builder: ProfileTransportBuilder,
@@ -292,7 +302,12 @@ async fn gatway_send_loop(
                 profile_transport_builder.update_backwarding_data(buf.len() as u64);
             }
             Err(err) => {
-                log::trace!("{:?}, gateway={}, stopped send loop, {}", stream, id, err,);
+                log::trace!(
+                    "{:?}, session_id={}, stopped send loop, {}",
+                    stream,
+                    session_id,
+                    err,
+                );
                 profile_transport_builder.close();
                 return;
             }
@@ -300,9 +315,9 @@ async fn gatway_send_loop(
     }
 
     log::trace!(
-        "{:?}, gateway={}, stopped send loop, backwarding broken",
+        "{:?}, session_id={}, stopped send loop, backwarding broken",
         stream,
-        id
+        session_id
     );
 
     _ = stream.stream_shutdown().await;

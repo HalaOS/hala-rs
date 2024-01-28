@@ -63,6 +63,7 @@ impl TunnelFactory for QuicTunnelFactory {
     /// Using [`config`](TunnelOpenConfiguration) to open new tunnel instance.
     async fn open_tunnel(&self, config: TunnelOpenConfig) -> io::Result<()> {
         let rhs_tunnel = Tunnel::new(
+            config.session_id,
             config.max_packet_len,
             config.gateway_backward,
             config.gateway_forward,
@@ -81,7 +82,13 @@ impl TunnelFactory for QuicTunnelFactory {
             stream.stream_id,
         );
 
-        event_loops::run_tunnel_loops(config.max_packet_len, stream, rhs_tunnel, builder);
+        event_loops::run_tunnel_loops(
+            config.session_id,
+            config.max_packet_len,
+            stream,
+            rhs_tunnel,
+            builder,
+        );
 
         Ok(())
     }
@@ -106,35 +113,40 @@ mod event_loops {
     use hala_future::executor::future_spawn;
     use hala_io::ReadBuf;
     use hala_quic::QuicStream;
+    use uuid::Uuid;
 
     use crate::{profile::ProfileTransportBuilder, Tunnel};
 
     pub(super) fn run_tunnel_loops(
+        session_id: Uuid,
         max_packet_len: usize,
         stream: QuicStream,
         tunnel: Tunnel,
         profile_transport_builder: ProfileTransportBuilder,
     ) {
-        future_spawn(run_tunnel_recv_loop(
+        future_spawn(run_tunnel_backward_loop(
+            session_id.clone(),
             max_packet_len,
             stream.clone(),
             tunnel.sender,
             profile_transport_builder.clone(),
         ));
-        future_spawn(run_tunnel_send_loop(
+        future_spawn(run_tunnel_forward_loop(
+            session_id,
             stream,
             tunnel.receiver,
             profile_transport_builder,
         ));
     }
 
-    async fn run_tunnel_recv_loop(
+    async fn run_tunnel_backward_loop(
+        session_id: Uuid,
         max_packet_len: usize,
         stream: QuicStream,
         mut sender: Sender<BytesMut>,
         profile_transport_builder: ProfileTransportBuilder,
     ) {
-        log::trace!("{:?}, start recv loop", stream);
+        log::trace!("session_id={}, {:?}, start recv loop", session_id, stream);
 
         loop {
             let mut buf = ReadBuf::with_capacity(max_packet_len);
@@ -143,7 +155,11 @@ mod event_loops {
                 Ok((read_size, fin)) => {
                     if fin {
                         _ = stream.stream_send(b"", true).await;
-                        log::error!("{:?}, stop recv loop, peer sent fin", stream);
+                        log::error!(
+                            "session_id={}, {:?}, stop recv loop, peer sent fin",
+                            session_id,
+                            stream
+                        );
                         return;
                     }
 
@@ -151,7 +167,11 @@ mod event_loops {
 
                     if sender.send(buf).await.is_err() {
                         _ = stream.stream_send(b"", true).await;
-                        log::error!("{:?}, stop recv loop, backward tunnel broken", stream);
+                        log::error!(
+                            "session_id={}, {:?}, stop recv loop, backward tunnel broken",
+                            session_id,
+                            stream
+                        );
 
                         return;
                     }
@@ -159,23 +179,38 @@ mod event_loops {
                     profile_transport_builder.update_forwarding_data(read_size as u64);
                 }
                 Err(err) => {
-                    log::error!("{:?}, stop recv loop, err={}", stream, err);
+                    log::error!(
+                        "session_id={}, {:?}, stop recv loop, err={}",
+                        session_id,
+                        stream,
+                        err
+                    );
                     return;
                 }
             }
         }
     }
 
-    async fn run_tunnel_send_loop(
+    async fn run_tunnel_forward_loop(
+        session_id: Uuid,
         mut stream: QuicStream,
         mut receiver: Receiver<BytesMut>,
         profile_transport_builder: ProfileTransportBuilder,
     ) {
-        log::trace!("{:?}, start send loop", stream);
+        log::trace!("session_id={}, {:?}, start send loop", session_id, stream);
 
         while let Some(buf) = receiver.next().await {
             if let Err(err) = stream.write_all(&buf).await {
-                log::error!("{:?}, stop send loop, err={}", stream, err);
+                log::error!(
+                    "session_id={}, {:?}, stop send loop, err={}",
+                    session_id,
+                    stream,
+                    err
+                );
+
+                // stop stream read loop
+                _ = stream.close().await;
+
                 profile_transport_builder.close();
                 return;
             }
@@ -188,7 +223,11 @@ mod event_loops {
 
         profile_transport_builder.close();
 
-        log::error!("{:?}, stop send loop, forward tunnel broken.", stream);
+        log::error!(
+            "session_id={}, {:?}, stop send loop, forward tunnel broken.",
+            session_id,
+            stream
+        );
     }
 }
 
