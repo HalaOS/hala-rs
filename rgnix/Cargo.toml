@@ -11,6 +11,7 @@ clap = {workspace = true}
 duration-str = {workspace = true}
 hala-rs = {workspace = true}
 log = {workspace = true}
+pretty_env_logger = {workspace = true}
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 tikv-jemalloc-ctl = {workspace = true}

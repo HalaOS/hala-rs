@@ -201,6 +201,8 @@ impl Debug for ReverseProxyProfile {
 }
 
 fn main() {
+    pretty_env_logger::init_timed();
+
     let rproxy_config = ReverseProxy::parse();
 
     if let Err(err) = block_on(rproxy_main(rproxy_config)) {
