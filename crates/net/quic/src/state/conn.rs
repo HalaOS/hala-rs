@@ -795,6 +795,14 @@ impl QuicConnState {
 
         self.notify_readable(&mut state)?;
 
+        self.mediator.notify_all(
+            &[
+                QuicConnStateEvent::StreamReadable(self.scid.clone(), id),
+                QuicConnStateEvent::StreamWritable(self.scid.clone(), id),
+            ],
+            event_map::Reason::Cancel,
+        );
+
         Ok(())
     }
 
