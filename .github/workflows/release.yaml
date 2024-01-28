@@ -33,14 +33,20 @@ jobs:
             os: ubuntu-latest
           - target: x86_64-apple-darwin
             os: macos-latest
+          - os: windows-latest
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - name: Install nasm
+        uses: ilammy/setup-nasm@v1
+        if: startsWith(matrix.os, 'windows')
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
           # (required) Comma-separated list of binary names (non-extension portion of filename) to build and upload.
           # Note that glob pattern is not supported yet.
           bin: rgnix
+          # (optional) Target triple, default is host triple.
+          target: ${{ matrix.target }}
           # (optional) On which platform to distribute the `.tar.gz` file.
           # [default value: unix]
           # [possible values: all, unix, windows, none]
