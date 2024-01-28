@@ -1,13 +1,13 @@
 use std::{io, net::SocketAddr, sync::Arc, time::Duration};
 
-use futures::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use futures::{channel::mpsc, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use hala_future::executor::future_spawn;
 use hala_io::sleep;
 use hala_quic::{QuicConn, QuicListener, QuicStream};
 use hala_tcp::{TcpListener, TcpStream};
 
 use crate::{
-    make_tunnel_factory_channel, HandshakeContext, TransportConfig, TunnelFactoryManager,
+    make_tunnel_factory_channel, HandshakeContext, TransportConfig, Tunnel, TunnelFactoryManager,
     TunnelFactoryReceiver, TunnelOpenConfig,
 };
 
@@ -121,22 +121,48 @@ async fn echo_handle_quic_stream(mut stream: QuicStream) {
     }
 }
 
-pub(crate) fn tunnel_open_flag(tunnel_service_id: &str, raddr: SocketAddr) -> TunnelOpenConfig {
-    TunnelOpenConfig {
+pub(crate) fn quic_open_flag(
+    tunnel_service_id: &str,
+    raddr: SocketAddr,
+) -> (TunnelOpenConfig, Tunnel) {
+    let (gateway_backward_sender, gateway_backward_receiver) = mpsc::channel(1024);
+    let (gateway_forward_sender, gateway_forward_receiver) = mpsc::channel(1024);
+
+    let config = TunnelOpenConfig {
         max_packet_len: 1370,
         max_cache_len: 10,
         tunnel_service_id: tunnel_service_id.into(),
         transport_config: TransportConfig::Quic(vec![raddr], mock_config(false, 1370)),
-    }
+        gateway_backward: gateway_backward_sender,
+        gateway_forward: gateway_forward_receiver,
+        gateway_path_info: crate::PathInfo::None,
+    };
+
+    let tunnel = Tunnel::new(1370, gateway_forward_sender, gateway_backward_receiver);
+
+    (config, tunnel)
 }
 
-pub(crate) fn tcp_open_flag(tunnel_service_id: &str, raddr: SocketAddr) -> TunnelOpenConfig {
-    TunnelOpenConfig {
+pub(crate) fn tcp_open_flag(
+    tunnel_service_id: &str,
+    raddr: SocketAddr,
+) -> (TunnelOpenConfig, Tunnel) {
+    let (gateway_backward_sender, gateway_backward_receiver) = mpsc::channel(1024);
+    let (gateway_forward_sender, gateway_forward_receiver) = mpsc::channel(1024);
+
+    let config = TunnelOpenConfig {
         max_packet_len: 1370,
         max_cache_len: 10,
         tunnel_service_id: tunnel_service_id.into(),
         transport_config: TransportConfig::Tcp(vec![raddr]),
-    }
+        gateway_backward: gateway_backward_sender,
+        gateway_forward: gateway_forward_receiver,
+        gateway_path_info: crate::PathInfo::None,
+    };
+
+    let tunnel = Tunnel::new(1370, gateway_forward_sender, gateway_backward_receiver);
+
+    (config, tunnel)
 }
 
 /// Create new mock manager.
@@ -150,17 +176,18 @@ pub(crate) fn mock_tunnel_factory_manager() -> (TunnelFactoryManager, TunnelFact
     (manager, receiver)
 }
 
-pub(crate) async fn mock_handshaker(
-    cx: HandshakeContext,
-) -> io::Result<(HandshakeContext, TunnelOpenConfig)> {
+pub(crate) async fn mock_handshaker(cx: HandshakeContext) -> io::Result<TunnelOpenConfig> {
     let config = TunnelOpenConfig {
         max_cache_len: 1024,
         max_packet_len: 1370,
         tunnel_service_id: "MockTunnelFactory".into(),
         transport_config: TransportConfig::None,
+        gateway_backward: cx.backward,
+        gateway_forward: cx.forward,
+        gateway_path_info: cx.path,
     };
 
-    Ok((cx, config))
+    Ok(config)
 }
 
 pub(crate) fn create_tcp_conn_drop_server(timeout: Duration) -> Arc<TcpListener> {

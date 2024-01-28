@@ -14,10 +14,7 @@ use crate::protocol::{PathInfo, TransportConfig};
 #[async_trait]
 pub trait Handshaker {
     /// Invoke handshake process and returns tunnel open configuration.
-    async fn handshake(
-        &self,
-        cx: HandshakeContext,
-    ) -> io::Result<(HandshakeContext, TunnelOpenConfig)>;
+    async fn handshake(&self, cx: HandshakeContext) -> io::Result<TunnelOpenConfig>;
 }
 
 /// An owned dynamically typed [`Handshaker`].
@@ -42,6 +39,12 @@ pub struct TunnelOpenConfig {
     pub tunnel_service_id: String,
     /// The transport configuration for tunnel.
     pub transport_config: TransportConfig,
+    /// The path information of gateway transfer data.
+    pub gateway_path_info: PathInfo,
+    /// Backward data sender.
+    pub gateway_backward: Sender<BytesMut>,
+    /// Forward data receiver.
+    pub gateway_forward: Receiver<BytesMut>,
 }
 
 // #[async_trait]
@@ -61,12 +64,9 @@ pub struct TunnelOpenConfig {
 impl<F, Fut> Handshaker for F
 where
     F: Fn(HandshakeContext) -> Fut + Send + Sync + 'static,
-    Fut: Future<Output = io::Result<(HandshakeContext, TunnelOpenConfig)>> + Send + Sync,
+    Fut: Future<Output = io::Result<TunnelOpenConfig>> + Send + Sync,
 {
-    async fn handshake(
-        &self,
-        cx: HandshakeContext,
-    ) -> io::Result<(HandshakeContext, TunnelOpenConfig)> {
+    async fn handshake(&self, cx: HandshakeContext) -> io::Result<TunnelOpenConfig> {
         self(cx).await
     }
 }

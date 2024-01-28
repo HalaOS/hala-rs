@@ -16,7 +16,7 @@ use hala_rproxy::{
     profile::{get_profile_config, Sample},
     quic::{QuicGatewayFactory, QuicTunnelFactory},
     tcp::{TcpGatewayFactory, TcpTunnelFactory},
-    GatewayFactoryManager, Handshaker, Protocol, ProtocolConfig, TransportConfig,
+    GatewayFactoryManager, HandshakeContext, Handshaker, Protocol, ProtocolConfig, TransportConfig,
     TunnelFactoryManager, TunnelOpenConfig,
 };
 use hala_tls::{SslAcceptor, SslConnector, SslFiletype, SslMethod};
@@ -446,7 +446,7 @@ fn create_tunnel_factory_manager(config: &ReverseProxy) -> TunnelFactoryManager 
 }
 
 fn quic_handshake(rproxy_config: ReverseProxy) -> impl Handshaker {
-    move |cx| {
+    move |cx: HandshakeContext| {
         let rproxy_config = rproxy_config.clone();
 
         async move {
@@ -465,15 +465,18 @@ fn quic_handshake(rproxy_config: ReverseProxy) -> impl Handshaker {
                 max_packet_len,
                 tunnel_service_id: "QuicTunnel".into(),
                 transport_config: TransportConfig::Quic(raddrs, config),
+                gateway_path_info: cx.path,
+                gateway_backward: cx.backward,
+                gateway_forward: cx.forward,
             };
 
-            Ok((cx, config))
+            Ok(config)
         }
     }
 }
 
 fn tcp_ssl_handshake(rproxy_config: ReverseProxy) -> impl Handshaker {
-    move |cx| {
+    move |cx: HandshakeContext| {
         let tunnel_ca_file = rproxy_config.tunnel_ca_file.clone();
 
         let peer_domain = rproxy_config.peer_domain.clone();
@@ -505,15 +508,18 @@ fn tcp_ssl_handshake(rproxy_config: ReverseProxy) -> impl Handshaker {
                     domain: peer_domain,
                     config,
                 },
+                gateway_path_info: cx.path,
+                gateway_backward: cx.backward,
+                gateway_forward: cx.forward,
             };
 
-            Ok((cx, config))
+            Ok(config)
         }
     }
 }
 
 fn tcp_handshake(rproxy_config: ReverseProxy) -> impl Handshaker {
-    move |cx| {
+    move |cx: HandshakeContext| {
         let peer_domain = rproxy_config.peer_domain.clone();
         let ports = rproxy_config.peer_port_range.clone();
 
@@ -525,9 +531,12 @@ fn tcp_handshake(rproxy_config: ReverseProxy) -> impl Handshaker {
                 max_packet_len: rproxy_config.max_packet_len,
                 tunnel_service_id: "TcpTunnel".into(),
                 transport_config: TransportConfig::Tcp(raddrs),
+                gateway_path_info: cx.path,
+                gateway_backward: cx.backward,
+                gateway_forward: cx.forward,
             };
 
-            Ok((cx, config))
+            Ok(config)
         }
     }
 }

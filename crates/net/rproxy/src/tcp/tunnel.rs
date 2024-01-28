@@ -1,7 +1,6 @@
 use std::{io, sync::Arc};
 
 use async_trait::async_trait;
-use futures::channel::mpsc;
 
 use crate::{
     profile::{ProfileBuilder, Sample},
@@ -31,22 +30,19 @@ impl TcpTunnelFactory {
 #[async_trait]
 impl TunnelFactory for TcpTunnelFactory {
     /// Using [`config`](TunnelOpenConfiguration) to open new tunnel instance.
-    async fn open_tunnel(&self, config: TunnelOpenConfig) -> io::Result<Tunnel> {
-        let (forward_sender, forward_receiver) = mpsc::channel(config.max_cache_len);
-        let (backward_sender, backward_receiver) = mpsc::channel(config.max_cache_len);
-
-        let lhs_tunnel = Tunnel::new(config.max_packet_len, forward_sender, backward_receiver);
-
-        let rhs_tunnel = Tunnel::new(config.max_packet_len, backward_sender, forward_receiver);
+    async fn open_tunnel(&self, config: TunnelOpenConfig) -> io::Result<()> {
+        let rhs_tunnel = Tunnel::new(
+            config.max_packet_len,
+            config.gateway_backward,
+            config.gateway_forward,
+        );
 
         event_loops::start(
             self.profile_builder.clone(),
             rhs_tunnel,
             config.transport_config,
         )
-        .await?;
-
-        Ok(lhs_tunnel)
+        .await
     }
 
     /// Get tunnel service id.
@@ -246,14 +242,11 @@ mod tests {
     use super::*;
 
     use bytes::BytesMut;
-    use futures::{SinkExt, StreamExt};
+    use futures::{channel::mpsc, SinkExt, StreamExt};
     use hala_future::executor::future_spawn;
     use hala_io::{sleep, test::io_test};
 
-    use crate::{
-        mock::{create_tcp_conn_drop_server, create_tcp_echo_server, tcp_open_flag},
-        TransportConfig,
-    };
+    use crate::mock::{create_tcp_conn_drop_server, create_tcp_echo_server, tcp_open_flag};
 
     #[hala_test::test(io_test)]
     async fn test_echo() {
@@ -263,14 +256,9 @@ mod tests {
 
         let tunnel_factory = TcpTunnelFactory::new("");
 
-        let config = TunnelOpenConfig {
-            max_packet_len: 1370,
-            max_cache_len: 10,
-            tunnel_service_id: "".into(),
-            transport_config: TransportConfig::Tcp(vec![raddr]),
-        };
+        let (config, mut tunnel) = tcp_open_flag("", raddr);
 
-        let mut tunnel = tunnel_factory.open_tunnel(config).await.unwrap();
+        tunnel_factory.open_tunnel(config).await.unwrap();
 
         for i in 0..1000 {
             let send_data = format!("hello quic tunnel, id={}", i);
@@ -303,9 +291,9 @@ mod tests {
         let clients = 24;
 
         for _ in 0..clients {
-            let config = tcp_open_flag("", raddr);
+            let (config, mut tunnel) = tcp_open_flag("", raddr);
 
-            let mut tunnel = tunnel_factory.open_tunnel(config).await.unwrap();
+            tunnel_factory.open_tunnel(config).await.unwrap();
 
             let mut sender = sender.clone();
 
@@ -343,14 +331,14 @@ mod tests {
 
         let tunnel_factory = TcpTunnelFactory::new("");
 
-        let config = tcp_open_flag("", raddr);
+        let (config, _) = tcp_open_flag("", raddr);
 
         let _ = tunnel_factory.open_tunnel(config).await.unwrap();
 
         // wait connection closed.
         sleep(Duration::from_secs(2)).await.unwrap();
 
-        let config = tcp_open_flag("", raddr);
+        let (config, _) = tcp_open_flag("", raddr);
 
         let _ = tunnel_factory.open_tunnel(config).await.unwrap();
 

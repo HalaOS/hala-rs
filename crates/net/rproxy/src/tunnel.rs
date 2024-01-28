@@ -48,7 +48,7 @@ impl Debug for Tunnel {
 #[async_trait]
 pub trait TunnelFactory {
     /// Using [`config`](TunnelOpenConfiguration) to open new tunnel instance.
-    async fn open_tunnel(&self, config: TunnelOpenConfig) -> io::Result<Tunnel>;
+    async fn open_tunnel(&self, config: TunnelOpenConfig) -> io::Result<()>;
 
     /// Get tunnel service id.
     fn id(&self) -> &str;
@@ -92,7 +92,7 @@ impl TunnelFactoryManager {
 
     /// Start a new handshake processing.
     pub async fn handshake(&self, forward_cx: HandshakeContext) -> io::Result<()> {
-        let (context, config) = self.handshaker.handshake(forward_cx).await?;
+        let config = self.handshaker.handshake(forward_cx).await?;
 
         let tunnel_service =
             self.transports
@@ -102,11 +102,7 @@ impl TunnelFactoryManager {
                     format!("transport {} not found.", config.tunnel_service_id),
                 ))?;
 
-        let channel = tunnel_service.open_tunnel(config).await?;
-
-        event_loop::run_event_loop(context, channel);
-
-        Ok(())
+        tunnel_service.open_tunnel(config).await
     }
 
     pub fn sample(&self) -> Vec<Sample> {
@@ -117,70 +113,6 @@ impl TunnelFactoryManager {
         }
 
         samples
-    }
-}
-
-mod event_loop {
-    use futures::{SinkExt, StreamExt};
-    use hala_future::executor::future_spawn;
-
-    use crate::{handshaker::HandshakeContext, protocol::PathInfo};
-
-    use super::*;
-
-    pub(super) fn run_event_loop(forward_cx: HandshakeContext, tunnel: Tunnel) {
-        let forward_fut =
-            run_forward_loop(forward_cx.path.clone(), forward_cx.forward, tunnel.sender);
-
-        let backward_fut = run_backward_loop(forward_cx.path, tunnel.receiver, forward_cx.backward);
-
-        future_spawn(forward_fut);
-
-        future_spawn(backward_fut);
-    }
-
-    async fn run_forward_loop(
-        path_info: PathInfo,
-        mut receiver: Receiver<BytesMut>,
-        mut sender: Sender<BytesMut>,
-    ) {
-        while let Some(data) = receiver.next().await {
-            if sender.send(data).await.is_err() {
-                log::trace!(
-                    "{:?}, stop forward channel, transport sender broken.",
-                    path_info
-                );
-
-                return;
-            }
-        }
-
-        log::trace!(
-            "{:?}, stop forward channel, gateway receiver broken.",
-            path_info
-        );
-    }
-
-    async fn run_backward_loop(
-        path_info: PathInfo,
-        mut receiver: Receiver<BytesMut>,
-        mut sender: Sender<BytesMut>,
-    ) {
-        while let Some(data) = receiver.next().await {
-            if sender.send(data).await.is_err() {
-                log::trace!(
-                    "{:?}, stop backward channel, gateway sender broken.",
-                    path_info
-                );
-
-                return;
-            }
-        }
-
-        log::trace!(
-            "{:?}, stop backward channel, transport receiver broken.",
-            path_info
-        );
     }
 }
 
@@ -196,13 +128,12 @@ pub type TunnelFactoryReceiver = mpsc::Receiver<(Tunnel, TransportConfig)>;
 #[async_trait]
 impl TunnelFactory for TunnelFactorySender {
     /// Using [`config`](TunnelOpenConfiguration) to open new tunnel instance.
-    async fn open_tunnel(&self, config: TunnelOpenConfig) -> io::Result<Tunnel> {
-        let (forward_sender, forward_receiver) = mpsc::channel(config.max_cache_len);
-        let (backward_sender, backward_receiver) = mpsc::channel(config.max_cache_len);
-
-        let lhs_tunnel = Tunnel::new(config.max_packet_len, forward_sender, backward_receiver);
-
-        let rhs_tunnel = Tunnel::new(config.max_packet_len, backward_sender, forward_receiver);
+    async fn open_tunnel(&self, config: TunnelOpenConfig) -> io::Result<()> {
+        let rhs_tunnel = Tunnel::new(
+            config.max_packet_len,
+            config.gateway_backward,
+            config.gateway_forward,
+        );
 
         self.sender
             .clone()
@@ -210,7 +141,7 @@ impl TunnelFactory for TunnelFactorySender {
             .await
             .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "Send tunnel rhs error"))?;
 
-        Ok(lhs_tunnel)
+        Ok(())
     }
 
     /// Get tunnel service id.

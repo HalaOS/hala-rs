@@ -1,7 +1,6 @@
 use std::{collections::HashMap, io, net::SocketAddr, sync::Arc};
 
 use async_trait::async_trait;
-use futures::channel::mpsc;
 use hala_quic::QuicConnPool;
 use hala_sync::{AsyncLockable, AsyncSpinMutex};
 use uuid::Uuid;
@@ -62,13 +61,12 @@ impl QuicTunnelFactory {
 #[async_trait]
 impl TunnelFactory for QuicTunnelFactory {
     /// Using [`config`](TunnelOpenConfiguration) to open new tunnel instance.
-    async fn open_tunnel(&self, config: TunnelOpenConfig) -> io::Result<Tunnel> {
-        let (forward_sender, forward_receiver) = mpsc::channel(config.max_cache_len);
-        let (backward_sender, backward_receiver) = mpsc::channel(config.max_cache_len);
-
-        let lhs_tunnel = Tunnel::new(config.max_packet_len, forward_sender, backward_receiver);
-
-        let rhs_tunnel = Tunnel::new(config.max_packet_len, backward_sender, forward_receiver);
+    async fn open_tunnel(&self, config: TunnelOpenConfig) -> io::Result<()> {
+        let rhs_tunnel = Tunnel::new(
+            config.max_packet_len,
+            config.gateway_backward,
+            config.gateway_forward,
+        );
 
         let conn_pool = self.get_pool(config.transport_config).await?;
 
@@ -85,7 +83,7 @@ impl TunnelFactory for QuicTunnelFactory {
 
         event_loops::run_tunnel_loops(config.max_packet_len, stream, rhs_tunnel, builder);
 
-        Ok(lhs_tunnel)
+        Ok(())
     }
 
     /// Get tunnel service id.
@@ -201,13 +199,11 @@ mod tests {
     use super::*;
 
     use bytes::BytesMut;
-    use futures::{SinkExt, StreamExt};
+    use futures::{channel::mpsc, SinkExt, StreamExt};
     use hala_future::executor::future_spawn;
     use hala_io::{sleep, test::io_test};
 
-    use crate::mock::{
-        create_quic_conn_drop_server, create_quic_echo_server, mock_config, tunnel_open_flag,
-    };
+    use crate::mock::{create_quic_conn_drop_server, create_quic_echo_server, quic_open_flag};
 
     #[hala_test::test(io_test)]
     async fn test_echo() {
@@ -217,14 +213,9 @@ mod tests {
 
         let tunnel_factory = QuicTunnelFactory::new("", 1);
 
-        let config = TunnelOpenConfig {
-            max_packet_len: 1370,
-            max_cache_len: 10,
-            tunnel_service_id: "".into(),
-            transport_config: TransportConfig::Quic(vec![raddr], mock_config(false, 1370)),
-        };
+        let (config, mut tunnel) = quic_open_flag("", raddr);
 
-        let mut tunnel = tunnel_factory.open_tunnel(config).await.unwrap();
+        tunnel_factory.open_tunnel(config).await.unwrap();
 
         for i in 0..1000 {
             let send_data = format!("hello quic tunnel, id={}", i);
@@ -258,9 +249,9 @@ mod tests {
         let clients = 24;
 
         for _ in 0..clients {
-            let config = tunnel_open_flag("", raddr);
+            let (config, mut tunnel) = quic_open_flag("", raddr);
 
-            let mut tunnel = tunnel_factory.open_tunnel(config).await.unwrap();
+            tunnel_factory.open_tunnel(config).await.unwrap();
 
             let mut sender = sender.clone();
 
@@ -298,12 +289,12 @@ mod tests {
 
         let tunnel_factory = QuicTunnelFactory::new("", 1);
 
-        let config = tunnel_open_flag("", raddr);
+        let (config, _tunnel) = quic_open_flag("", raddr);
 
         {
-            let _tunnel = tunnel_factory.open_tunnel(config).await.unwrap();
+            tunnel_factory.open_tunnel(config).await.unwrap();
 
-            let config = tunnel_open_flag("", raddr);
+            let (config, _tunnel) = quic_open_flag("", raddr);
 
             tunnel_factory
                 .open_tunnel(config)
@@ -311,8 +302,10 @@ mod tests {
                 .expect_err("WouldBlock");
         }
 
+        drop(_tunnel);
+
         loop {
-            let config = tunnel_open_flag("", raddr);
+            let (config, _) = quic_open_flag("", raddr);
             if tunnel_factory.open_tunnel(config).await.is_ok() {
                 break;
             }
@@ -331,10 +324,10 @@ mod tests {
 
         let tunnel_factory = QuicTunnelFactory::new("", 1);
 
-        let config = tunnel_open_flag("", raddr);
+        let (config, mut tunnel) = quic_open_flag("", raddr);
 
         {
-            let mut tunnel = tunnel_factory.open_tunnel(config).await.unwrap();
+            tunnel_factory.open_tunnel(config).await.unwrap();
 
             let send_data = format!("hello quic tunnel");
 
@@ -348,7 +341,7 @@ mod tests {
 
             assert_eq!(recv_data, send_data.as_bytes());
 
-            let config = tunnel_open_flag("", raddr);
+            let (config, _tunnel) = quic_open_flag("", raddr);
 
             tunnel_factory
                 .open_tunnel(config)
@@ -356,8 +349,10 @@ mod tests {
                 .expect_err("WouldBlock");
         }
 
+        drop(tunnel);
+
         loop {
-            let config = tunnel_open_flag("", raddr);
+            let (config, _) = quic_open_flag("", raddr);
             if tunnel_factory.open_tunnel(config).await.is_ok() {
                 break;
             }
@@ -376,16 +371,18 @@ mod tests {
 
         let tunnel_factory = QuicTunnelFactory::new("", 1);
 
-        let config = tunnel_open_flag("", raddr);
+        let (config, _tunnel) = quic_open_flag("", raddr);
 
-        let _ = tunnel_factory.open_tunnel(config).await.unwrap();
+        tunnel_factory.open_tunnel(config).await.unwrap();
+
+        drop(_tunnel);
 
         // wait connection closed.
         sleep(Duration::from_secs(2)).await.unwrap();
 
-        let config = tunnel_open_flag("", raddr);
+        let (config, _tunnel) = quic_open_flag("", raddr);
 
-        let _ = tunnel_factory.open_tunnel(config).await.unwrap();
+        tunnel_factory.open_tunnel(config).await.unwrap();
 
         listener.close().await;
     }
