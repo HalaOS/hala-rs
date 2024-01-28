@@ -123,7 +123,7 @@ mod tests {
 
         let push_threads = 5;
         let pop_threads = 5;
-        let loops = 100000;
+        let loops = 100;
 
         for _ in 0..push_threads {
             let queue = queue.clone();

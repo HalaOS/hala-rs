@@ -36,7 +36,6 @@ divan = "^0.1"
 duration-str = "0.7.1"
 futures = {version = "^0.3.29", features = ["executor", "thread-pool"]}
 futures-test = "^0.3"
-jemalloc_pprof = "0.1.0"
 lock_freedom = "0.1.0"
 log = {version = "^0.4"}
 mio = {version = "^0.8.9", features = ["os-poll", "net"]}
