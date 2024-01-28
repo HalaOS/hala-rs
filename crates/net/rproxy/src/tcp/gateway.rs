@@ -353,13 +353,13 @@ async fn gatway_recv_loop<S>(
         let read_size = match stream.read(buf.as_mut()).await {
             Ok(r) => r,
             Err(err) => {
-                log::trace!("{:?}, stopped recv loop, {}", id, err);
+                log::error!("{:?}, stopped recv loop, {}", id, err);
                 return;
             }
         };
 
         if read_size == 0 {
-            log::trace!(
+            log::error!(
                 "tcp_gateway={}, laddr={:?}, raddr={:?}, stopped recv loop, tcp stream broken",
                 id,
                 laddr,
@@ -372,7 +372,7 @@ async fn gatway_recv_loop<S>(
         let buf = buf.into_bytes_mut(Some(read_size));
 
         if sender.send(buf).await.is_err() {
-            log::trace!(
+            log::error!(
                 "gateway={}, laddr={:?}, raddr={:?}, stopped recv loop, forward tunnel broken",
                 id,
                 laddr,
@@ -400,7 +400,7 @@ async fn gatway_send_loop<S>(
         match stream.write_all(&buf).await {
             Ok(_) => {}
             Err(err) => {
-                log::trace!(
+                log::error!(
                     "gateway={}, laddr={:?}, raddr={:?} stopped send loop, {}",
                     id,
                     laddr,
@@ -416,7 +416,7 @@ async fn gatway_send_loop<S>(
         builder.update_backwarding_data(buf.len() as u64);
     }
 
-    log::trace!(
+    log::error!(
         "gateway={}, laddr={:?}, raddr={:?}, stopped send loop, backwarding broken",
         id,
         laddr,
