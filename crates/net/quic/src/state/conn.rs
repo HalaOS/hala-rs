@@ -52,6 +52,8 @@ struct RawQuicConnState {
     /// When a new outgoing stream is created, it's id is placed into this set.
     /// The state machine use this set to avoid recv error before first data send.
     register_outgoing_stream_ids: HashSet<u64>,
+    /// When call close_stream, it's id should placed into this set.
+    register_closed_stream_ids: HashSet<u64>,
     /// The latest outgoing stream id on record.
     lastest_outgoing_stream_id: u64,
     /// Incoming stream id buffer.
@@ -114,6 +116,7 @@ impl RawQuicConnState {
             incoming: Default::default(),
             dropping_stream_queue: Default::default(),
             half_closed_streams: Default::default(),
+            register_closed_stream_ids: Default::default(),
         };
 
         // process initial incoming stream.
@@ -190,6 +193,20 @@ impl QuicConnState {
         Ok(())
     }
 
+    fn handle_stream_status<Guard>(&self, state: &mut Guard, id: u64) -> io::Result<()>
+    where
+        Guard: DerefMut<Target = RawQuicConnState>,
+    {
+        if state.register_closed_stream_ids.contains(&id) {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                format!("{:?}, stream_id={}, closed", self, id),
+            ));
+        }
+
+        Ok(())
+    }
+
     fn handle_quic_incoming_stream<'a, Guard>(&self, state: &mut Guard, id: u64) -> io::Result<()>
     where
         Guard: DerefMut<Target = RawQuicConnState>,
@@ -223,7 +240,7 @@ impl QuicConnState {
         Ok(())
     }
 
-    fn handle_stream_status<'a, Guard>(&self, state: &mut Guard) -> io::Result<()>
+    fn handle_stream_rw<'a, Guard>(&self, state: &mut Guard) -> io::Result<()>
     where
         Guard: DerefMut<Target = RawQuicConnState>,
     {
@@ -518,7 +535,7 @@ impl QuicConnState {
             Ok(write_size) => {
                 log::trace!("{:?} write data success, len={}", self, write_size);
 
-                self.handle_stream_status(&mut state)?;
+                self.handle_stream_rw(&mut state)?;
 
                 self.handle_half_closed_streams(&mut state)?;
 
@@ -552,6 +569,8 @@ impl QuicConnState {
 
             self.handle_quic_conn_status(&mut state)?;
 
+            self.handle_stream_status(&mut state, id)?;
+
             match state.quiche_conn.stream_send(id, buf, fin) {
                 Ok(write_size) => {
                     log::trace!(
@@ -567,18 +586,20 @@ impl QuicConnState {
                         state.register_outgoing_stream_ids.remove(&id);
                     }
 
-                    self.handle_stream_status(&mut state)?;
+                    self.handle_stream_rw(&mut state)?;
 
                     self.notify_readable(&mut state)?;
 
                     return Ok(write_size);
                 }
                 Err(quiche::Error::Done) => {
-                    self.handle_stream_status(&mut state)?;
+                    self.handle_stream_rw(&mut state)?;
 
                     self.notify_readable(&mut state)?;
 
                     log::trace!("{:?}, stream write Done, stream_id={}", self, id,);
+
+                    self.handle_stream_status(&mut state, id)?;
 
                     match self.mediator.wait(event.clone(), state).await {
                         Ok(_) => {
@@ -671,6 +692,8 @@ impl QuicConnState {
 
             self.handle_quic_conn_status(&mut state)?;
 
+            self.handle_stream_status(&mut state, id)?;
+
             match state.quiche_conn.stream_recv(id, buf) {
                 Ok((read_size, fin)) => {
                     log::trace!(
@@ -681,16 +704,18 @@ impl QuicConnState {
                         fin,
                     );
 
-                    self.handle_stream_status(&mut state)?;
+                    self.handle_stream_rw(&mut state)?;
 
                     self.notify_readable(&mut state)?;
 
                     return Ok((read_size, fin));
                 }
                 Err(quiche::Error::Done) => {
-                    self.handle_stream_status(&mut state)?;
+                    self.handle_stream_rw(&mut state)?;
 
                     log::trace!("{:?}, stream read Done, stream_id={}", self, id,);
+
+                    self.handle_stream_status(&mut state, id)?;
 
                     self.stream_recv_wait(id, state).await?;
                 }
@@ -702,6 +727,8 @@ impl QuicConnState {
                             self,
                             id,
                         );
+
+                        self.handle_stream_status(&mut state, id)?;
 
                         self.stream_recv_wait(id, state).await?;
                     } else {
@@ -716,7 +743,7 @@ impl QuicConnState {
                         err
                     );
 
-                    self.handle_stream_status(&mut state)?;
+                    self.handle_stream_rw(&mut state)?;
 
                     return Err(into_io_error(err));
                 }
@@ -782,6 +809,8 @@ impl QuicConnState {
     pub async fn close_stream(&self, id: u64) -> io::Result<()> {
         let mut state = self.state.lock().await;
 
+        self.handle_quic_conn_status(&mut state)?;
+
         // the stream didn't sent any data.
         if state.register_outgoing_stream_ids.contains(&id) {
             state.register_outgoing_stream_ids.remove(&id);
@@ -789,7 +818,7 @@ impl QuicConnState {
             return Ok(());
         }
 
-        self.handle_quic_conn_status(&mut state)?;
+        state.register_closed_stream_ids.insert(id);
 
         state.dropping_stream_queue.push_back(id);
 
