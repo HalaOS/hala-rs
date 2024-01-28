@@ -291,7 +291,7 @@ impl QuicConnState {
                     log::trace!("{:?} send fin successfully, stream_id={}", self, stream_id);
                 }
                 Err(err) => {
-                    log::trace!(
+                    log::error!(
                         "{:?} send fin failed, stream_id={}, err={}",
                         self,
                         stream_id,
@@ -299,6 +299,14 @@ impl QuicConnState {
                     );
                 }
             }
+
+            self.mediator.notify_all(
+                &[
+                    QuicConnStateEvent::StreamReadable(self.scid.clone(), stream_id),
+                    QuicConnStateEvent::StreamWritable(self.scid.clone(), stream_id),
+                ],
+                event_map::Reason::Cancel,
+            );
 
             // Warning!!: Stream data reading is prohibited here:
             //
@@ -368,9 +376,17 @@ impl QuicConnState {
 
         let mut remaining = vec![];
 
-        while let Some(stream_id) = state.half_closed_streams.pop_front() {
-            if !self.handle_half_closed_stream_resp(state, stream_id, &mut buf) {
-                remaining.push(stream_id);
+        while let Some(stream) = state.half_closed_streams.pop_front() {
+            if !self.handle_half_closed_stream_resp(state, stream, &mut buf) {
+                remaining.push(stream);
+            } else {
+                self.mediator.notify_all(
+                    &[
+                        QuicConnStateEvent::StreamReadable(self.scid.clone(), stream.stream_id),
+                        QuicConnStateEvent::StreamWritable(self.scid.clone(), stream.stream_id),
+                    ],
+                    event_map::Reason::Cancel,
+                );
             }
         }
 
@@ -778,13 +794,6 @@ impl QuicConnState {
         state.dropping_stream_queue.push_back(id);
 
         self.notify_readable(&mut state)?;
-        self.mediator.notify_all(
-            &[
-                QuicConnStateEvent::StreamReadable(self.scid.clone(), id),
-                QuicConnStateEvent::StreamWritable(self.scid.clone(), id),
-            ],
-            event_map::Reason::Cancel,
-        );
 
         Ok(())
     }
