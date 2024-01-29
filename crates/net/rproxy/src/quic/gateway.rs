@@ -200,7 +200,7 @@ async fn gateway_handle_stream(
         forward: forward_receiver,
     };
 
-    future_spawn(gatway_recv_loop(
+    future_spawn(gatway_forward_loop(
         id.clone(),
         cx.session_id.clone(),
         max_packet_len,
@@ -209,7 +209,7 @@ async fn gateway_handle_stream(
         profile_transport_builder.clone(),
     ));
 
-    future_spawn(gatway_send_loop(
+    future_spawn(gatway_backward_loop(
         id.clone(),
         cx.session_id.clone(),
         stream.clone(),
@@ -223,14 +223,12 @@ async fn gateway_handle_stream(
         }
         Err(err) => {
             profile_builder.prohibited(uuid);
-
-            _ = stream.stream_shutdown().await;
             log::trace!("{:?}, gateway={}, handshake error, {}", stream, id, err);
         }
     }
 }
 
-async fn gatway_recv_loop(
+async fn gatway_forward_loop(
     _id: String,
     session_id: Uuid,
     max_packet_len: usize,
@@ -245,24 +243,24 @@ async fn gatway_recv_loop(
             Ok(r) => r,
             Err(err) => {
                 log::trace!(
-                    "{:?}, session_id={:?}, stopped recv loop, {}",
+                    "{:?}, session_id={:?}, stopped forwarding loop, {}",
                     stream,
                     session_id,
                     err
                 );
+
                 break;
             }
         };
 
         if fin {
             log::trace!(
-                "{:?}, session_id={}, stopped recv loop, stream send fin({}) or forwarding broken",
+                "{:?}, session_id={}, stopped forwarding loop, stream send fin({}) or forwarding broken",
                 stream,
                 session_id,
                 fin,
             );
 
-            _ = stream.stream_shutdown().await;
             break;
         }
 
@@ -280,8 +278,6 @@ async fn gatway_recv_loop(
                 fin,
             );
 
-            _ = stream.stream_shutdown().await;
-
             break;
         }
 
@@ -289,7 +285,7 @@ async fn gatway_recv_loop(
     }
 }
 
-async fn gatway_send_loop(
+async fn gatway_backward_loop(
     _id: String,
     session_id: Uuid,
     mut stream: QuicStream,
@@ -308,7 +304,10 @@ async fn gatway_send_loop(
                     session_id,
                     err,
                 );
+                _ = stream.close().await;
+
                 profile_transport_builder.close();
+
                 return;
             }
         }
@@ -320,7 +319,7 @@ async fn gatway_send_loop(
         session_id
     );
 
-    _ = stream.stream_shutdown().await;
+    _ = stream.close().await;
 
     profile_transport_builder.close();
 }

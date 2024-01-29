@@ -146,7 +146,11 @@ mod event_loops {
         mut sender: Sender<BytesMut>,
         profile_transport_builder: ProfileTransportBuilder,
     ) {
-        log::trace!("session_id={}, {:?}, start recv loop", session_id, stream);
+        log::trace!(
+            "session_id={}, {:?}, start backwarding loop",
+            session_id,
+            stream
+        );
 
         loop {
             let mut buf = ReadBuf::with_capacity(max_packet_len);
@@ -154,9 +158,8 @@ mod event_loops {
             match stream.stream_recv(buf.as_mut()).await {
                 Ok((read_size, fin)) => {
                     if fin {
-                        _ = stream.stream_send(b"", true).await;
                         log::error!(
-                            "session_id={}, {:?}, stop recv loop, peer sent fin",
+                            "session_id={}, {:?}, stop backwarding loop, peer sent fin",
                             session_id,
                             stream
                         );
@@ -166,9 +169,8 @@ mod event_loops {
                     let buf = buf.into_bytes_mut(Some(read_size));
 
                     if sender.send(buf).await.is_err() {
-                        _ = stream.stream_send(b"", true).await;
                         log::error!(
-                            "session_id={}, {:?}, stop recv loop, backward tunnel broken",
+                            "session_id={}, {:?}, stop backwarding loop, backward tunnel broken",
                             session_id,
                             stream
                         );
@@ -180,7 +182,7 @@ mod event_loops {
                 }
                 Err(err) => {
                     log::error!(
-                        "session_id={}, {:?}, stop recv loop, err={}",
+                        "session_id={}, {:?}, stop backwarding loop, err={}",
                         session_id,
                         stream,
                         err
@@ -197,12 +199,16 @@ mod event_loops {
         mut receiver: Receiver<BytesMut>,
         profile_transport_builder: ProfileTransportBuilder,
     ) {
-        log::trace!("session_id={}, {:?}, start send loop", session_id, stream);
+        log::trace!(
+            "session_id={}, {:?}, start forwarding loop",
+            session_id,
+            stream
+        );
 
         while let Some(buf) = receiver.next().await {
             if let Err(err) = stream.write_all(&buf).await {
                 log::error!(
-                    "session_id={}, {:?}, stop send loop, err={}",
+                    "session_id={}, {:?}, stop forwarding loop, err={}",
                     session_id,
                     stream,
                     err
@@ -224,7 +230,7 @@ mod event_loops {
         profile_transport_builder.close();
 
         log::error!(
-            "session_id={}, {:?}, stop send loop, forward tunnel broken.",
+            "session_id={}, {:?}, stop forwarding loop, forward tunnel broken.",
             session_id,
             stream
         );

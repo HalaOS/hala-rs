@@ -1,7 +1,7 @@
 //! The quic connection state matchine implementation.
 
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     fmt::Debug,
     io, mem,
     ops::{self, DerefMut},
@@ -52,8 +52,6 @@ struct RawQuicConnState {
     /// When a new outgoing stream is created, it's id is placed into this set.
     /// The state machine use this set to avoid recv error before first data send.
     register_outgoing_stream_ids: HashSet<u64>,
-    /// When call close_stream, it's id should placed into this set.
-    register_closed_stream_ids: HashSet<u64>,
     /// The latest outgoing stream id on record.
     lastest_outgoing_stream_id: u64,
     /// Incoming stream id buffer.
@@ -61,10 +59,10 @@ struct RawQuicConnState {
     /// The queue of stream ids for dropping stream.
     dropping_stream_queue: VecDeque<u64>,
     /// The collection of half closed stream.
-    half_closed_streams: VecDeque<HalfClosedStream>,
+    half_closed_streams: HashMap<u64, HalfClosedStream>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct HalfClosedStream {
     stream_id: u64,
     start_instant: Instant,
@@ -95,6 +93,7 @@ impl HalfClosedStream {
         }
     }
 
+    #[allow(unused)]
     fn is_timeout(&self, timeout: Duration) -> bool {
         self.start_instant.elapsed() >= timeout
     }
@@ -116,7 +115,6 @@ impl RawQuicConnState {
             incoming: Default::default(),
             dropping_stream_queue: Default::default(),
             half_closed_streams: Default::default(),
-            register_closed_stream_ids: Default::default(),
         };
 
         // process initial incoming stream.
@@ -193,20 +191,6 @@ impl QuicConnState {
         Ok(())
     }
 
-    fn handle_stream_status<Guard>(&self, state: &mut Guard, id: u64) -> io::Result<()>
-    where
-        Guard: DerefMut<Target = RawQuicConnState>,
-    {
-        if state.register_closed_stream_ids.contains(&id) {
-            return Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                format!("{:?}, stream_id={}, closed", self, id),
-            ));
-        }
-
-        Ok(())
-    }
-
     fn handle_quic_incoming_stream<'a, Guard>(&self, state: &mut Guard, id: u64) -> io::Result<()>
     where
         Guard: DerefMut<Target = RawQuicConnState>,
@@ -240,7 +224,21 @@ impl QuicConnState {
         Ok(())
     }
 
-    fn handle_stream_rw<'a, Guard>(&self, state: &mut Guard) -> io::Result<()>
+    fn handle_stream_status<Guard>(&self, state: &mut Guard, stream_id: u64) -> io::Result<()>
+    where
+        Guard: DerefMut<Target = RawQuicConnState>,
+    {
+        if state.half_closed_streams.contains_key(&stream_id) {
+            return Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                format!("{:?}, stream_id={}, closed", self, stream_id),
+            ));
+        }
+
+        Ok(())
+    }
+
+    fn handle_stream_events<'a, Guard>(&self, state: &mut Guard) -> io::Result<()>
     where
         Guard: DerefMut<Target = RawQuicConnState>,
     {
@@ -317,10 +315,11 @@ impl QuicConnState {
                 }
             }
 
+            // cancel `stream_send` ops.
             self.mediator.notify_all(
                 &[
-                    QuicConnStateEvent::StreamReadable(self.scid.clone(), stream_id),
                     QuicConnStateEvent::StreamWritable(self.scid.clone(), stream_id),
+                    QuicConnStateEvent::StreamReadable(self.scid.clone(), stream_id),
                 ],
                 event_map::Reason::Cancel,
             );
@@ -330,7 +329,9 @@ impl QuicConnState {
             // The quiche may remove closed stream when invoke stream_recv,
             // this will cause the fin frame to fail to send.
 
-            state.half_closed_streams.push_back(stream_id.into());
+            state
+                .half_closed_streams
+                .insert(stream_id, stream_id.into());
 
             log::trace!("{:?}, stream_id={}, half closed", self, stream_id);
         }
@@ -341,43 +342,37 @@ impl QuicConnState {
     fn handle_half_closed_stream_resp<Guard>(
         &self,
         state: &mut Guard,
-        stream: HalfClosedStream,
+        stream_id: u64,
         buf: &mut [u8],
     ) -> bool
     where
         Guard: DerefMut<Target = RawQuicConnState>,
     {
-        // using ping timeout as stream half close timeout.
-        if stream.is_timeout(state.ping_timeout) {
-            _ = state
-                .quiche_conn
-                .stream_shutdown(stream.stream_id, quiche::Shutdown::Read, 0);
-
-            log::trace!("{:?} {:?}, timeout and force closed", self, stream);
-
-            return true;
-        }
-
         loop {
-            match state.quiche_conn.stream_recv(stream.stream_id, buf) {
+            match state.quiche_conn.stream_recv(stream_id, buf) {
                 Ok((read_size, fin)) => {
                     if !fin {
-                        log::trace!("{:?} {:?}, recv_len={}, pending", self, stream, read_size);
+                        log::trace!(
+                            "{:?} {:?}, recv_len={}, pending",
+                            self,
+                            stream_id,
+                            read_size
+                        );
 
                         continue;
                     } else {
-                        log::trace!("{:?} {:?}, recv_len={}, closed", self, stream, read_size);
+                        log::trace!("{:?} {:?}, recv_len={}, closed", self, stream_id, read_size);
 
                         return true;
                     }
                 }
                 Err(quiche::Error::Done) => {
-                    log::trace!("{:?} {:?}, pending", self, stream);
+                    log::trace!("{:?} {:?}, pending", self, stream_id);
 
                     return false;
                 }
                 Err(err) => {
-                    log::trace!("{:?} {:?}, closed with error, err={}", self, stream, err);
+                    log::trace!("{:?} {:?}, closed with error, err={}", self, stream_id, err);
 
                     return true;
                 }
@@ -391,25 +386,10 @@ impl QuicConnState {
     {
         let mut buf = vec![0; state.quiche_conn.send_quantum()];
 
-        let mut remaining = vec![];
-
-        while let Some(stream) = state.half_closed_streams.pop_front() {
-            if !self.handle_half_closed_stream_resp(state, stream, &mut buf) {
-                remaining.push(stream);
-            } else {
-                self.mediator.notify_all(
-                    &[
-                        QuicConnStateEvent::StreamReadable(self.scid.clone(), stream.stream_id),
-                        QuicConnStateEvent::StreamWritable(self.scid.clone(), stream.stream_id),
-                    ],
-                    event_map::Reason::Cancel,
-                );
-                state.register_closed_stream_ids.remove(&stream.stream_id);
+        for (stream_id, stream) in state.half_closed_streams.drain().collect::<Vec<_>>() {
+            if !self.handle_half_closed_stream_resp(state, stream_id, &mut buf) {
+                state.half_closed_streams.insert(stream_id, stream);
             }
-        }
-
-        for stream_id in remaining {
-            state.half_closed_streams.push_back(stream_id);
         }
 
         Ok(())
@@ -536,7 +516,7 @@ impl QuicConnState {
             Ok(write_size) => {
                 log::trace!("{:?} write data success, len={}", self, write_size);
 
-                self.handle_stream_rw(&mut state)?;
+                self.handle_stream_events(&mut state)?;
 
                 self.handle_half_closed_streams(&mut state)?;
 
@@ -587,20 +567,18 @@ impl QuicConnState {
                         state.register_outgoing_stream_ids.remove(&id);
                     }
 
-                    self.handle_stream_rw(&mut state)?;
+                    self.handle_stream_events(&mut state)?;
 
                     self.notify_readable(&mut state)?;
 
                     return Ok(write_size);
                 }
                 Err(quiche::Error::Done) => {
-                    self.handle_stream_rw(&mut state)?;
+                    self.handle_stream_events(&mut state)?;
 
                     self.notify_readable(&mut state)?;
 
                     log::trace!("{:?}, stream write Done, stream_id={}", self, id,);
-
-                    self.handle_stream_status(&mut state, id)?;
 
                     match self.mediator.wait(event.clone(), state).await {
                         Ok(_) => {
@@ -705,18 +683,16 @@ impl QuicConnState {
                         fin,
                     );
 
-                    self.handle_stream_rw(&mut state)?;
+                    self.handle_stream_events(&mut state)?;
 
                     self.notify_readable(&mut state)?;
 
                     return Ok((read_size, fin));
                 }
                 Err(quiche::Error::Done) => {
-                    self.handle_stream_rw(&mut state)?;
+                    self.handle_stream_events(&mut state)?;
 
                     log::trace!("{:?}, stream read Done, stream_id={}", self, id,);
-
-                    self.handle_stream_status(&mut state, id)?;
 
                     self.stream_recv_wait(id, state).await?;
                 }
@@ -728,8 +704,6 @@ impl QuicConnState {
                             self,
                             id,
                         );
-
-                        self.handle_stream_status(&mut state, id)?;
 
                         self.stream_recv_wait(id, state).await?;
                     } else {
@@ -744,7 +718,7 @@ impl QuicConnState {
                         err
                     );
 
-                    self.handle_stream_rw(&mut state)?;
+                    self.handle_stream_events(&mut state)?;
 
                     return Err(into_io_error(err));
                 }
@@ -819,11 +793,7 @@ impl QuicConnState {
             return Ok(());
         }
 
-        state.register_closed_stream_ids.insert(id);
-
         state.dropping_stream_queue.push_back(id);
-
-        self.notify_readable(&mut state)?;
 
         self.mediator.notify_all(
             &[
@@ -832,6 +802,8 @@ impl QuicConnState {
             ],
             event_map::Reason::Cancel,
         );
+
+        self.notify_readable(&mut state)?;
 
         Ok(())
     }

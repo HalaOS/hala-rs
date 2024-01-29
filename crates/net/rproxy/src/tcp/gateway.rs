@@ -352,14 +352,14 @@ async fn gatway_forward_loop<S>(
         let read_size = match stream.read(buf.as_mut()).await {
             Ok(r) => r,
             Err(err) => {
-                log::error!("session_id={}, stopped recv loop, {}", session_id, err);
+                log::error!("session_id={}, stopped forward loop, {}", session_id, err);
                 return;
             }
         };
 
         if read_size == 0 {
             log::error!(
-                "session_id={}, laddr={:?}, raddr={:?}, stopped recv loop, tcp stream broken",
+                "session_id={}, laddr={:?}, raddr={:?}, stopped forward loop, tcp stream broken",
                 session_id,
                 laddr,
                 raddr
@@ -372,7 +372,7 @@ async fn gatway_forward_loop<S>(
 
         if sender.send(buf).await.is_err() {
             log::error!(
-                "session_id={}, laddr={:?}, raddr={:?}, stopped recv loop, forward tunnel broken",
+                "session_id={}, laddr={:?}, raddr={:?}, stopped forward loop, forward tunnel broken",
                 session_id,
                 laddr,
                 raddr
@@ -400,7 +400,7 @@ async fn gatway_backward_loop<S>(
             Ok(_) => {}
             Err(err) => {
                 log::error!(
-                    "gateway={}, laddr={:?}, raddr={:?} stopped send loop, {}",
+                    "gateway={}, laddr={:?}, raddr={:?} stopped backward loop, {}",
                     session_id,
                     laddr,
                     raddr,
@@ -416,7 +416,7 @@ async fn gatway_backward_loop<S>(
     }
 
     log::error!(
-        "gateway={}, laddr={:?}, raddr={:?}, stopped send loop, backwarding broken",
+        "gateway={}, laddr={:?}, raddr={:?}, stopped backward loop, backwarding broken",
         session_id,
         laddr,
         raddr
