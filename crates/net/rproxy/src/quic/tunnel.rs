@@ -178,7 +178,7 @@ mod event_loops {
                         return;
                     }
 
-                    profile_transport_builder.update_forwarding_data(read_size as u64);
+                    profile_transport_builder.update_backwarding_data(read_size as u64);
                 }
                 Err(err) => {
                     log::trace!(
@@ -221,7 +221,7 @@ mod event_loops {
                 return;
             }
 
-            profile_transport_builder.update_backwarding_data(buf.len() as u64);
+            profile_transport_builder.update_forwarding_data(buf.len() as u64);
         }
 
         // stop stream read loop
