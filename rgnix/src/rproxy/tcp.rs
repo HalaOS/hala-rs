@@ -6,7 +6,7 @@ use hala_rs::{
     tls::{SslConnector, SslMethod},
 };
 
-use crate::{parse_raddrs, ReverseProxy};
+use crate::ReverseProxy;
 
 pub struct TcpHandshaker {
     config: ReverseProxy,
@@ -22,10 +22,7 @@ impl TcpHandshaker {
 #[async_trait]
 impl Handshaker for TcpHandshaker {
     async fn handshake(&self, cx: HandshakeContext) -> io::Result<TunnelOpenConfig> {
-        let peer_domain = self.config.peer_domain.clone();
-        let ports = self.config.peer_port_range.clone();
-
-        let raddrs = parse_raddrs(&peer_domain, ports)?;
+        let raddrs = self.config.raddrs.clone();
 
         let config = TunnelOpenConfig {
             session_id: cx.session_id,
@@ -56,11 +53,15 @@ impl TcpSslHandshaker {
 #[async_trait]
 impl Handshaker for TcpSslHandshaker {
     async fn handshake(&self, cx: HandshakeContext) -> io::Result<TunnelOpenConfig> {
-        let peer_domain = self.config.peer_domain.clone();
-        let ports = self.config.peer_port_range.clone();
+        let raddrs = self.config.raddrs.clone();
+
         let tunnel_ca_file = self.config.tunnel_ca_file.clone();
 
-        let raddrs = parse_raddrs(&peer_domain, ports)?;
+        let domain = self
+            .config
+            .domain
+            .clone()
+            .expect("Tunnel TcpSsl that require provide the `domain` name of peer");
 
         let mut config = SslConnector::builder(SslMethod::tls()).unwrap();
 
@@ -82,7 +83,7 @@ impl Handshaker for TcpSslHandshaker {
             tunnel_service_id: "TcpSslTunnel".into(),
             transport_config: TransportConfig::Ssl {
                 raddrs,
-                domain: peer_domain,
+                domain,
                 config,
             },
             gateway_path_info: cx.path,

@@ -1,18 +1,20 @@
 use std::time::Duration;
-use std::{net::SocketAddr, ops::Range, path::PathBuf};
+use std::{net::SocketAddr, path::PathBuf};
 
 use super::clap_parse_duration;
-use super::clap_parse_ports;
+use super::clap_parse_sockaddrs;
 use clap::Parser;
 use hala_rs::rproxy::Protocol;
+
+type SocketAddrs = Vec<SocketAddr>;
 
 /// reverse proxy server program for `HalaOS`
 #[derive(Parser, Debug, Clone)]
 #[command(author, version, about, long_about = None)]
 pub struct ReverseProxy {
     /// The gateway protocol listen on addresses.
-    #[arg(long)]
-    pub laddrs: Vec<SocketAddr>,
+    #[arg(long, value_parser = clap_parse_sockaddrs)]
+    pub laddrs: SocketAddrs,
 
     /// The gateway launch protocol
     #[arg(short, long, value_enum, default_value_t = Protocol::Tcp)]
@@ -22,13 +24,14 @@ pub struct ReverseProxy {
     #[arg(short, long, value_enum, default_value_t = Protocol::Quic)]
     pub tunnel: Protocol,
 
-    /// The peer domain name of the forwarding tunnel
-    #[arg(long)]
-    pub peer_domain: String,
+    /// The tunnel peer listening endpoints.
+    #[arg(long,value_parser = clap_parse_sockaddrs)]
+    pub raddrs: SocketAddrs,
 
-    /// The peer domain name of the forwarding tunnel
-    #[arg(long, value_parser=clap_parse_ports)]
-    pub peer_port_range: Range<u16>,
+    /// The tunnel peer domain name.
+    /// rgnix using this value to validate server.
+    #[arg(long)]
+    pub domain: Option<String>,
 
     /// The cert chain file path for gateway.
     ///

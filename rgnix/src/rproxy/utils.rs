@@ -1,5 +1,4 @@
 use std::{
-    io,
     net::{SocketAddr, ToSocketAddrs},
     ops::Range,
     time::Duration,
@@ -35,12 +34,26 @@ pub fn clap_parse_duration(s: &str) -> Result<Duration, String> {
     Ok(duration)
 }
 
-pub fn parse_raddrs(peer_domain: &str, port_ranges: Range<u16>) -> io::Result<Vec<SocketAddr>> {
-    let mut raddrs = vec![];
-    for port in port_ranges {
-        let mut addrs = (peer_domain, port).to_socket_addrs()?.collect::<Vec<_>>();
-        raddrs.append(&mut addrs);
+pub fn clap_parse_sockaddrs(s: &str) -> Result<Vec<SocketAddr>, String> {
+    let splits = s.split(":").collect::<Vec<_>>();
+
+    if splits.len() != 2 {
+        return Err(format!(
+            "Invalid address string: {}. the desired format is `ip_or_domain_name:port-range`",
+            s
+        ));
     }
 
-    Ok(raddrs)
+    let mut parsed_addrs = vec![];
+
+    for port in clap_parse_ports(splits[1])? {
+        let mut addrs = (splits[0], port)
+            .to_socket_addrs()
+            .map_err(|err| err.to_string())?
+            .collect::<Vec<_>>();
+
+        parsed_addrs.append(&mut addrs);
+    }
+
+    Ok(parsed_addrs)
 }

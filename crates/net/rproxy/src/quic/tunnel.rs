@@ -158,7 +158,7 @@ mod event_loops {
             match stream.stream_recv(buf.as_mut()).await {
                 Ok((read_size, fin)) => {
                     if fin {
-                        log::error!(
+                        log::trace!(
                             "session_id={}, {:?}, stop backwarding loop, peer sent fin",
                             session_id,
                             stream
@@ -169,7 +169,7 @@ mod event_loops {
                     let buf = buf.into_bytes_mut(Some(read_size));
 
                     if sender.send(buf).await.is_err() {
-                        log::error!(
+                        log::trace!(
                             "session_id={}, {:?}, stop backwarding loop, backward tunnel broken",
                             session_id,
                             stream
@@ -181,7 +181,7 @@ mod event_loops {
                     profile_transport_builder.update_forwarding_data(read_size as u64);
                 }
                 Err(err) => {
-                    log::error!(
+                    log::trace!(
                         "session_id={}, {:?}, stop backwarding loop, err={}",
                         session_id,
                         stream,
@@ -207,7 +207,7 @@ mod event_loops {
 
         while let Some(buf) = receiver.next().await {
             if let Err(err) = stream.write_all(&buf).await {
-                log::error!(
+                log::trace!(
                     "session_id={}, {:?}, stop forwarding loop, err={}",
                     session_id,
                     stream,
@@ -229,7 +229,7 @@ mod event_loops {
 
         profile_transport_builder.close();
 
-        log::error!(
+        log::trace!(
             "session_id={}, {:?}, stop forwarding loop, forward tunnel broken.",
             session_id,
             stream

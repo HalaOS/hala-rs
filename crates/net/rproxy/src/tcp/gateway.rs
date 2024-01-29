@@ -324,7 +324,7 @@ async fn gateway_handle_stream<S>(
         Err(err) => {
             profile_builder.prohibited(uuid);
 
-            log::error!(
+            log::trace!(
                 "gateway={}, laddr={:?}, raddr={:?}, handshake error, {}",
                 id,
                 laddr,
@@ -352,13 +352,13 @@ async fn gatway_forward_loop<S>(
         let read_size = match stream.read(buf.as_mut()).await {
             Ok(r) => r,
             Err(err) => {
-                log::error!("session_id={}, stopped forward loop, {}", session_id, err);
+                log::trace!("session_id={}, stopped forward loop, {}", session_id, err);
                 return;
             }
         };
 
         if read_size == 0 {
-            log::error!(
+            log::trace!(
                 "session_id={}, laddr={:?}, raddr={:?}, stopped forward loop, tcp stream broken",
                 session_id,
                 laddr,
@@ -371,7 +371,7 @@ async fn gatway_forward_loop<S>(
         let buf = buf.into_bytes_mut(Some(read_size));
 
         if sender.send(buf).await.is_err() {
-            log::error!(
+            log::trace!(
                 "session_id={}, laddr={:?}, raddr={:?}, stopped forward loop, forward tunnel broken",
                 session_id,
                 laddr,
@@ -399,7 +399,7 @@ async fn gatway_backward_loop<S>(
         match stream.write_all(&buf).await {
             Ok(_) => {}
             Err(err) => {
-                log::error!(
+                log::trace!(
                     "gateway={}, laddr={:?}, raddr={:?} stopped backward loop, {}",
                     session_id,
                     laddr,
@@ -415,7 +415,7 @@ async fn gatway_backward_loop<S>(
         builder.update_backwarding_data(buf.len() as u64);
     }
 
-    log::error!(
+    log::trace!(
         "gateway={}, laddr={:?}, raddr={:?}, stopped backward loop, backwarding broken",
         session_id,
         laddr,

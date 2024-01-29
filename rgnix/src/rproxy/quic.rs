@@ -6,7 +6,7 @@ use hala_rs::{
     rproxy::{HandshakeContext, Handshaker, TransportConfig, TunnelOpenConfig},
 };
 
-use crate::{parse_raddrs, ReverseProxy};
+use crate::ReverseProxy;
 
 pub fn create_quic_config(is_gateway: bool, rproxy_config: &ReverseProxy) -> io::Result<Config> {
     let mut config = Config::new().unwrap();
@@ -121,13 +121,10 @@ impl QuicHandshaker {
 #[async_trait]
 impl Handshaker for QuicHandshaker {
     async fn handshake(&self, cx: HandshakeContext) -> io::Result<TunnelOpenConfig> {
-        let peer_domain = self.config.peer_domain.clone();
-        let ports = self.config.peer_port_range.clone();
-
         let max_cache_len = self.config.max_cache_len;
         let max_packet_len = self.config.max_packet_len;
 
-        let raddrs = parse_raddrs(&peer_domain, ports)?;
+        let raddrs = self.config.raddrs.clone();
 
         let config = create_quic_config(false, &self.config)?;
 
