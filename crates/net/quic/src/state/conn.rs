@@ -298,12 +298,18 @@ impl QuicConnState {
     where
         Guard: DerefMut<Target = RawQuicConnState>,
     {
+        let mut send_fin_pending = vec![];
+
         while let Some(stream_id) = state.dropping_stream_queue.pop_front() {
             log::trace!("{:?} handle dropping stream, stream_id={}", self, stream_id);
 
             match state.quiche_conn.stream_send(stream_id, b"", true) {
                 Ok(_) => {
                     log::trace!("{:?} send fin successfully, stream_id={}", self, stream_id);
+                }
+                Err(quiche::Error::Done) => {
+                    send_fin_pending.push(stream_id);
+                    continue;
                 }
                 Err(err) => {
                     log::error!(
@@ -334,6 +340,11 @@ impl QuicConnState {
                 .insert(stream_id, stream_id.into());
 
             log::trace!("{:?}, stream_id={}, half closed", self, stream_id);
+        }
+
+        // Reinsert the stream id that returned the error "Done" with the call to `stream_send`
+        for stream_id in send_fin_pending {
+            state.dropping_stream_queue.push_back(stream_id);
         }
 
         Ok(())
