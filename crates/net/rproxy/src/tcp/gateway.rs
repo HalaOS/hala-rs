@@ -324,9 +324,7 @@ async fn gateway_handle_stream<S>(
         Err(err) => {
             profile_builder.prohibited(uuid);
 
-            // TODO: close
-
-            log::trace!(
+            log::error!(
                 "gateway={}, laddr={:?}, raddr={:?}, handshake error, {}",
                 id,
                 laddr,

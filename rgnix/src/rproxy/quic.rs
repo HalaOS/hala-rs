@@ -132,7 +132,7 @@ impl Handshaker for QuicHandshaker {
         let config = create_quic_config(false, &self.config)?;
 
         let config = TunnelOpenConfig {
-            session_id: uuid::Uuid::new_v4(),
+            session_id: cx.session_id,
             max_cache_len,
             max_packet_len,
             tunnel_service_id: "QuicTunnel".into(),
