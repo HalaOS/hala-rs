@@ -93,9 +93,9 @@ pub struct ReverseProxy {
     #[arg(long, default_value_t = 1024)]
     pub max_cache_len: usize,
 
-    /// Specifies the max lenght of tunnel forwarding cache.
+    /// The interval of print profile debug information.
     ///
-    /// The default value equals `1024`. the larger the value, the more memory is used.
+    /// The default value equals `60s`.
     #[arg(long,value_parser = clap_parse_duration, default_value="60s")]
     pub profile_interval: Duration,
 }
