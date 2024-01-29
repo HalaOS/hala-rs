@@ -17,4 +17,4 @@ uuid = "^1.6.1"
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 tikv-jemalloc-ctl = "0.5.4"
-tikv-jemallocator = {version = "0.5.4"}
+tikv-jemallocator = {version = "0.5.4", features = ["profiling"]}

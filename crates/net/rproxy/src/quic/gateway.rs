@@ -445,6 +445,8 @@ mod tests {
 
     #[hala_test::test(io_test)]
     async fn test_server_broken_channel() {
+        // pretty_env_logger::init_timed();
+
         let (gateway, mut tunnel_receiver) = setup().await;
 
         let raddrs = gateway.local_addrs()[0];
@@ -470,10 +472,11 @@ mod tests {
         // wait gateway close channel
         sleep(Duration::from_secs(1)).await.unwrap();
 
-        stream
-            .write_all(send_data)
-            .await
-            .expect_err("Stream closed");
+        let mut buf = vec![0; 1024];
+
+        let (_, fin) = stream.stream_recv(&mut buf).await.unwrap();
+
+        assert!(fin);
     }
 
     #[hala_test::test(io_test)]
