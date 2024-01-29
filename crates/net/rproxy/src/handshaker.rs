@@ -53,19 +53,6 @@ pub struct TunnelOpenConfig {
     pub gateway_forward: Receiver<BytesMut>,
 }
 
-// #[async_trait]
-// impl<F> Handshaker for F
-// where
-//     F: Fn(HandshakeContext) -> io::Result<(HandshakeContext, TunnelOpenConfig)> + Send + Sync,
-// {
-//     async fn handshake(
-//         &self,
-//         cx: HandshakeContext,
-//     ) -> io::Result<(HandshakeContext, TunnelOpenConfig)> {
-//         self(cx)
-//     }
-// }
-
 #[async_trait]
 impl<F, Fut> Handshaker for F
 where

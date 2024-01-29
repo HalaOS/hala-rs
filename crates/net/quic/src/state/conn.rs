@@ -404,6 +404,7 @@ impl QuicConnState {
                     ],
                     event_map::Reason::Cancel,
                 );
+                state.register_closed_stream_ids.remove(&stream.stream_id);
             }
         }
 
