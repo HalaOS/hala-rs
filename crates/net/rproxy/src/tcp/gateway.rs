@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use crate::{
     profile::{ProfileBuilder, ProfileTransportBuilder, Sample},
-    Gateway, GatewayFactory, HandshakeContext, Protocol, ProtocolConfig, TransportConfig,
+    Gateway, GatewayConfig, GatewayFactory, HandshakeContext, Protocol, TransportConfig,
     TunnelFactoryManager,
 };
 
@@ -89,7 +89,7 @@ impl GatewayFactory for TcpGatewayFactory {
     /// Create new gateway instance.
     async fn create(
         &self,
-        protocol_config: ProtocolConfig,
+        protocol_config: GatewayConfig,
         tunnel_factory_manager: TunnelFactoryManager,
     ) -> io::Result<Box<dyn Gateway + Send + Sync + 'static>> {
         match protocol_config.transport_config {
@@ -447,7 +447,7 @@ mod tests {
 
         let gateway = factory
             .create(
-                ProtocolConfig {
+                GatewayConfig {
                     max_cache_len: 1024,
                     max_packet_len: 1370,
                     transport_config: TransportConfig::Tcp(vec!["127.0.0.1:0".parse().unwrap()]),

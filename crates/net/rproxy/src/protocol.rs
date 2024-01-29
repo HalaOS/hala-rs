@@ -34,7 +34,7 @@ pub enum Protocol {
     Quic,
 }
 
-pub struct ProtocolConfig {
+pub struct GatewayConfig {
     /// The config for transport layer
     pub transport_config: TransportConfig,
     /// The max packet len for trasnferring.

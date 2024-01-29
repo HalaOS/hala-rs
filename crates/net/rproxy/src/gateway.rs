@@ -6,7 +6,7 @@ use dashmap::DashMap;
 use crate::{
     profile::{get_profile_config, Sample},
     tunnel::TunnelFactoryManager,
-    Protocol, ProtocolConfig,
+    GatewayConfig, Protocol,
 };
 
 /// The gateway is responsible for accepting new connections and forwarding data.
@@ -33,7 +33,7 @@ pub trait GatewayFactory {
     /// Create new gateway instance.
     async fn create(
         &self,
-        protocol_config: ProtocolConfig,
+        protocol_config: GatewayConfig,
         tunnel_factory_manager: TunnelFactoryManager,
     ) -> io::Result<Box<dyn Gateway + Send + Sync + 'static>>;
 
@@ -78,7 +78,7 @@ impl GatewayFactoryManager {
     pub async fn start<ID: ToString>(
         &self,
         factory_id: ID,
-        protocol_config: ProtocolConfig,
+        protocol_config: GatewayConfig,
     ) -> io::Result<String> {
         let factory_id = factory_id.to_string();
         let factory = self

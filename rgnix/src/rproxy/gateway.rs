@@ -2,8 +2,8 @@ use std::io;
 
 use hala_rs::{
     rproxy::{
-        quic::QuicGatewayFactory, tcp::TcpGatewayFactory, GatewayFactoryManager, Protocol,
-        ProtocolConfig, TransportConfig,
+        quic::QuicGatewayFactory, tcp::TcpGatewayFactory, GatewayConfig, GatewayFactoryManager,
+        Protocol, TransportConfig,
     },
     tls::{SslAcceptor, SslFiletype, SslMethod},
 };
@@ -23,7 +23,7 @@ pub fn create_gateway_factory(
     }
 }
 
-pub fn create_protocol_config(rproxy_config: ReverseProxy) -> io::Result<ProtocolConfig> {
+pub fn create_protocol_config(rproxy_config: ReverseProxy) -> io::Result<GatewayConfig> {
     match rproxy_config.gateway {
         Protocol::TcpSsl => {
             let mut acceptor = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
@@ -63,7 +63,7 @@ pub fn create_protocol_config(rproxy_config: ReverseProxy) -> io::Result<Protoco
 
             let transport_config = TransportConfig::SslServer(rproxy_config.laddrs, acceptor);
 
-            return Ok(ProtocolConfig {
+            return Ok(GatewayConfig {
                 max_cache_len: rproxy_config.max_cache_len,
                 max_packet_len: rproxy_config.max_packet_len,
                 transport_config,
@@ -72,7 +72,7 @@ pub fn create_protocol_config(rproxy_config: ReverseProxy) -> io::Result<Protoco
         Protocol::Tcp => {
             let transport_config = TransportConfig::Tcp(rproxy_config.laddrs);
 
-            return Ok(ProtocolConfig {
+            return Ok(GatewayConfig {
                 max_cache_len: rproxy_config.max_cache_len,
                 max_packet_len: rproxy_config.max_packet_len,
                 transport_config,
@@ -87,7 +87,7 @@ pub fn create_protocol_config(rproxy_config: ReverseProxy) -> io::Result<Protoco
 
             let transport_config = TransportConfig::Quic(laddrs, config);
 
-            return Ok(ProtocolConfig {
+            return Ok(GatewayConfig {
                 max_cache_len,
                 max_packet_len,
                 transport_config,
