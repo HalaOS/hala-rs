@@ -1,7 +1,7 @@
 use hala_pprof::alloc::{get_heap_profiling, HeapProfilingAlloc};
 
 #[global_allocator]
-static ALLOC: HeapProfilingAlloc = HeapProfilingAlloc::new();
+static ALLOC: HeapProfilingAlloc = HeapProfilingAlloc;
 
 #[test]
 fn test_alloc() {

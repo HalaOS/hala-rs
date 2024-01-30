@@ -1,6 +1,6 @@
 use std::{
     alloc::GlobalAlloc,
-    cell::RefCell,
+    cell::Cell,
     collections::HashMap,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -30,22 +30,23 @@ impl HeapProfiling {
     }
 
     /// Returns true if heap profiling is opened, otherwise returns false.
-    #[inline]
+    #[inline(always)]
     fn is_on(&self) -> bool {
-        self.on.load(Ordering::Acquire)
+        self.on.load(Ordering::Relaxed)
     }
 
+    #[inline(always)]
     fn enter<F, R>(f: F) -> Option<R>
     where
         F: FnOnce() -> R,
     {
         thread_local! {
-            static REENTRANCY: RefCell<bool> = RefCell::new(false);
+            static REENTRANCY: Cell<bool> = Cell::new(false);
         }
 
-        let enter = REENTRANCY.with_borrow_mut(|flag| {
-            if !*flag {
-                *flag = true;
+        let enter = REENTRANCY.with(|flag| {
+            if !flag.get() {
+                flag.set(true);
                 true
             } else {
                 false
@@ -55,9 +56,9 @@ impl HeapProfiling {
         if enter {
             let r = f();
 
-            REENTRANCY.with_borrow_mut(|flag| {
-                assert!(*flag, "Not here");
-                *flag = false;
+            REENTRANCY.with(|flag| {
+                assert!(flag.get(), "Not here");
+                flag.set(false);
             });
 
             Some(r)
@@ -67,14 +68,14 @@ impl HeapProfiling {
     }
 
     /// A wrapper function to [`alloc`](GlobalAlloc::alloc) that provide heap alloc sampling.
-    #[inline]
+    #[inline(always)]
     pub(super) fn alloc<Alloc: GlobalAlloc>(alloc: &Alloc, layout: std::alloc::Layout) -> *mut u8 {
         let ptr = unsafe { alloc.alloc(layout) };
 
-        Self::enter(|| {
-            let profiling = get_heap_profiling();
+        let profiling = get_heap_profiling();
 
-            if profiling.is_on() {
+        if profiling.is_on() {
+            Self::enter(|| {
                 let mut frames = Vec::new();
 
                 let mut blocks = profiling.blocks.lock();
@@ -91,23 +92,23 @@ impl HeapProfiling {
                 profiling
                     .alloc_size
                     .fetch_add(layout.size(), Ordering::Relaxed);
-            }
-        });
+            });
+        }
 
         ptr
     }
 
     /// A wrapper function to [`alloc`](GlobalAlloc::dealloc) that provide heap dealloc sampling.
-    #[inline]
+    #[inline(always)]
     pub(super) fn dealloc<Alloc: GlobalAlloc>(
         alloc: &Alloc,
         ptr: *mut u8,
         layout: std::alloc::Layout,
     ) {
-        Self::enter(|| {
-            let profiling = get_heap_profiling();
+        let profiling = get_heap_profiling();
 
-            if profiling.is_on() {
+        if profiling.is_on() {
+            Self::enter(|| {
                 let mut blocks = profiling.blocks.lock();
 
                 let removed = blocks.remove(&(ptr as usize));
@@ -117,8 +118,8 @@ impl HeapProfiling {
                         .alloc_size
                         .fetch_sub(layout.size(), Ordering::Relaxed);
                 }
-            }
-        });
+            });
+        }
 
         unsafe { alloc.dealloc(ptr, layout) }
     }
@@ -130,8 +131,8 @@ impl HeapProfiling {
 
     /// Set whether to turn on profile logging.
     pub fn record(&self, flag: bool) {
-        if self.on.swap(flag, Ordering::Release) {
-            self.alloc_size.store(0, Ordering::Release);
+        if self.on.swap(flag, Ordering::Relaxed) {
+            self.alloc_size.store(0, Ordering::Relaxed);
 
             // dashmap may realloc / dealloc
             Self::enter(|| {
@@ -144,7 +145,7 @@ impl HeapProfiling {
         Self::enter(|| {
             let mut blocks = self.blocks.lock();
             for (block, frames) in blocks.iter() {
-                log::trace!("alloc: {}, frames:", *block);
+                log::trace!("alloc: 0x{:02x}, frames:", *block);
 
                 for frame in frames {
                     unsafe {
