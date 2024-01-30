@@ -3,10 +3,14 @@ pub use api::*;
 /// [`AyncLockable`] type maker
 pub mod maker;
 
-#[cfg(not(feature = "use_parking_lot"))]
 mod spin;
+
 #[cfg(not(feature = "use_parking_lot"))]
 pub use spin::*;
+
+pub mod spin_simple {
+    pub use super::spin::*;
+}
 
 #[cfg(feature = "use_parking_lot")]
 mod parking_lot;

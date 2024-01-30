@@ -1,6 +1,7 @@
 use std::{
     alloc::GlobalAlloc,
     cell::RefCell,
+    collections::HashMap,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         OnceLock,
@@ -8,21 +9,23 @@ use std::{
 };
 
 use backtrace::Frame;
-use dashmap::DashMap;
+use hala_sync::{spin_simple, Lockable};
 
 /// Heap profiling enter type.
 pub struct HeapProfiling {
     on: AtomicBool,
-    blocks: DashMap<usize, Vec<Frame>>,
+    // blocks: DashMap<usize, Vec<Frame>>,
     alloc_size: AtomicUsize,
+    blocks: spin_simple::SpinMutex<HashMap<usize, Vec<Frame>>>,
 }
 
 impl HeapProfiling {
     fn new() -> Self {
         Self {
             on: AtomicBool::default(),
-            blocks: Default::default(),
+            // blocks: Default::default(),
             alloc_size: AtomicUsize::default(),
+            blocks: spin_simple::SpinMutex::default(),
         }
     }
 
@@ -32,20 +35,10 @@ impl HeapProfiling {
         self.on.load(Ordering::Acquire)
     }
 
-    fn record_alloc(&self, ptr: *mut u8, layout: std::alloc::Layout, frames: Vec<Frame>) {
-        self.blocks.insert(ptr as usize, frames);
-        self.alloc_size.fetch_add(layout.size(), Ordering::Relaxed);
-    }
-
-    fn record_dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
-        if self.blocks.remove(&(ptr as usize)).is_some() {
-            self.alloc_size.fetch_sub(layout.size(), Ordering::Relaxed);
-        }
-    }
-
-    /// A wrapper function to [`alloc`](GlobalAlloc::alloc) that provide heap alloc sampling.
-    #[inline]
-    pub(super) fn alloc<Alloc: GlobalAlloc>(alloc: &Alloc, layout: std::alloc::Layout) -> *mut u8 {
+    fn enter<F, R>(f: F) -> Option<R>
+    where
+        F: FnOnce() -> R,
+    {
         thread_local! {
             static REENTRANCY: RefCell<bool> = RefCell::new(false);
         }
@@ -59,26 +52,47 @@ impl HeapProfiling {
             }
         });
 
+        if enter {
+            let r = f();
+
+            REENTRANCY.with_borrow_mut(|flag| {
+                assert!(*flag, "Not here");
+                *flag = false;
+            });
+
+            Some(r)
+        } else {
+            None
+        }
+    }
+
+    /// A wrapper function to [`alloc`](GlobalAlloc::alloc) that provide heap alloc sampling.
+    #[inline]
+    pub(super) fn alloc<Alloc: GlobalAlloc>(alloc: &Alloc, layout: std::alloc::Layout) -> *mut u8 {
         let ptr = unsafe { alloc.alloc(layout) };
 
-        if enter {
+        Self::enter(|| {
             let profiling = get_heap_profiling();
 
             if profiling.is_on() {
                 let mut frames = Vec::new();
 
-                backtrace::trace(|frame| {
-                    frames.push(frame.clone());
-                    true
-                });
+                let mut blocks = profiling.blocks.lock();
 
-                profiling.record_alloc(ptr, layout, frames);
+                unsafe {
+                    backtrace::trace_unsynchronized(|frame| {
+                        frames.push(frame.clone());
+                        true
+                    });
+                }
+
+                blocks.insert(ptr as usize, frames);
+
+                profiling
+                    .alloc_size
+                    .fetch_add(layout.size(), Ordering::Relaxed);
             }
-        }
-
-        if enter {
-            REENTRANCY.with_borrow_mut(|flag| *flag = false);
-        }
+        });
 
         ptr
     }
@@ -90,11 +104,21 @@ impl HeapProfiling {
         ptr: *mut u8,
         layout: std::alloc::Layout,
     ) {
-        let profiling = get_heap_profiling();
+        Self::enter(|| {
+            let profiling = get_heap_profiling();
 
-        if profiling.is_on() {
-            profiling.record_dealloc(ptr, layout);
-        }
+            if profiling.is_on() {
+                let mut blocks = profiling.blocks.lock();
+
+                let removed = blocks.remove(&(ptr as usize));
+
+                if removed.is_some() {
+                    profiling
+                        .alloc_size
+                        .fetch_sub(layout.size(), Ordering::Relaxed);
+                }
+            }
+        });
 
         unsafe { alloc.dealloc(ptr, layout) }
     }
@@ -106,7 +130,33 @@ impl HeapProfiling {
 
     /// Set whether to turn on profile logging.
     pub fn record(&self, flag: bool) {
-        self.on.store(flag, Ordering::Release);
+        if self.on.swap(flag, Ordering::Release) {
+            self.alloc_size.store(0, Ordering::Release);
+
+            // dashmap may realloc / dealloc
+            Self::enter(|| {
+                self.blocks.lock().clear();
+            });
+        }
+    }
+
+    pub fn print_blocks(&self) {
+        Self::enter(|| {
+            let mut blocks = self.blocks.lock();
+            for (block, frames) in blocks.iter() {
+                log::trace!("alloc: {}, frames:", *block);
+
+                for frame in frames {
+                    unsafe {
+                        backtrace::resolve_frame_unsynchronized(frame, |symbol| {
+                            log::trace!("\t {:?}", symbol);
+                        });
+                    }
+                }
+            }
+
+            blocks.clear();
+        });
     }
 }
 

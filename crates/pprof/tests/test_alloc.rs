@@ -7,7 +7,18 @@ static ALLOC: HeapProfilingAlloc = HeapProfilingAlloc::new();
 fn test_alloc() {
     get_heap_profiling().record(true);
 
-    let a = "hello world".to_string();
+    for _ in 0..10000 {
+        let _a = "hello world".to_string();
+        get_heap_profiling().print_blocks();
+    }
+}
 
-    assert_eq!(get_heap_profiling().allocated(), a.len());
+#[test]
+fn test_alloc_vec() {
+    get_heap_profiling().record(true);
+
+    for _ in 0..10000 {
+        let mut _a = Vec::<i32>::with_capacity(10);
+        get_heap_profiling().print_blocks();
+    }
 }

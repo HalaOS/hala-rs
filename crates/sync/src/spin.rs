@@ -35,6 +35,13 @@ impl<T: Default> Default for SpinMutex<T> {
     }
 }
 
+impl<T> SpinMutex<T> {
+    #[cold]
+    fn lockable(&self) {
+        while self.flag.load(Ordering::Relaxed) {}
+    }
+}
+
 impl<T> Lockable for SpinMutex<T> {
     type GuardMut<'a> = SpinMutexGuard<'a, T>
     where
@@ -46,7 +53,9 @@ impl<T> Lockable for SpinMutex<T> {
             .flag
             .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
             .is_err()
-        {}
+        {
+            self.lockable();
+        }
 
         let mut guard = SpinMutexGuard {
             locker: self,
