@@ -1,5 +1,6 @@
 use std::{
     alloc::GlobalAlloc,
+    cell::UnsafeCell,
     collections::HashMap,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -7,8 +8,7 @@ use std::{
     },
 };
 
-use crate::backtrace::Backtrace;
-use hala_sync::{spin_simple, Lockable};
+use crate::{backtrace::Backtrace, external::backtrace_lock};
 
 use crate::external::Reentrancy;
 
@@ -20,10 +20,13 @@ pub trait HeapProfilingWriter {
 /// Heap profiling enter type.
 pub struct HeapProfiling {
     on: AtomicBool,
-    // blocks: DashMap<usize, Vec<Frame>>,
     alloc_size: AtomicUsize,
-    blocks: spin_simple::SpinMutex<HashMap<usize, Backtrace>>,
+    /// allocated block register.
+    blocks: UnsafeCell<HashMap<usize, Backtrace>>,
 }
+
+unsafe impl Send for HeapProfiling {}
+unsafe impl Sync for HeapProfiling {}
 
 impl HeapProfiling {
     fn new() -> Self {
@@ -31,7 +34,7 @@ impl HeapProfiling {
             on: AtomicBool::default(),
             // blocks: Default::default(),
             alloc_size: AtomicUsize::default(),
-            blocks: spin_simple::SpinMutex::default(),
+            blocks: UnsafeCell::default(),
         }
     }
 
@@ -52,15 +55,17 @@ impl HeapProfiling {
             let profiling = get_heap_profiling();
 
             if profiling.is_on() {
-                let bt = crate::backtrace::Backtrace::new();
-
-                let mut blocks = profiling.blocks.lock();
-
-                blocks.insert(ptr as usize, bt);
-
                 profiling
                     .alloc_size
                     .fetch_add(layout.size(), Ordering::Relaxed);
+
+                let _guard = backtrace_lock();
+
+                let bt = crate::backtrace::Backtrace::new();
+
+                let blocks = profiling.get_blocks();
+
+                blocks.insert(ptr as usize, bt);
             }
         }
 
@@ -80,7 +85,9 @@ impl HeapProfiling {
             let profiling = get_heap_profiling();
 
             if profiling.is_on() {
-                let mut blocks = profiling.blocks.lock();
+                let _guard = backtrace_lock();
+
+                let blocks = profiling.get_blocks();
 
                 let removed = blocks.remove(&(ptr as usize));
 
@@ -109,7 +116,9 @@ impl HeapProfiling {
             let reentrancy = Reentrancy::new();
 
             if reentrancy.is_ok() {
-                self.blocks.lock().clear();
+                let _guard = backtrace_lock();
+
+                self.get_blocks().clear();
             };
         }
     }
@@ -118,13 +127,19 @@ impl HeapProfiling {
     pub fn write_profile<W: HeapProfilingWriter>(&self, writer: &mut W) {
         let reentrancy = Reentrancy::new();
 
-        if reentrancy.is_ok() {
-            let blocks = self.blocks.lock();
+        if reentrancy.is_ok() && self.is_on() {
+            let _guard = backtrace_lock();
+
+            let blocks = self.get_blocks();
 
             for (block, bt) in blocks.iter() {
                 writer.write_block(*block as *mut u8, bt);
             }
         };
+    }
+
+    fn get_blocks(&self) -> &mut HashMap<usize, crate::backtrace::Backtrace> {
+        unsafe { &mut *self.blocks.get() }
     }
 }
 

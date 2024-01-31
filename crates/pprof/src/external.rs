@@ -1,9 +1,14 @@
 extern "C" {
+    /// Reentrancy guard counter plus 1.
     fn reentrancy_guard_counter_add() -> i32;
+
+    /// Reentrancy guard counter sub 1.
     fn reentrancy_guard_counter_sub() -> i32;
 
+    /// locks the backtrace mutex, blocks if the mutex is not available
     fn backtrace_mutex_lock();
 
+    /// unlocks the backtrace mutex.
     fn backtrace_mutex_unlock();
 
 }
@@ -28,6 +33,7 @@ impl Reentrancy {
 }
 
 impl Drop for Reentrancy {
+    #[inline]
     fn drop(&mut self) {
         unsafe {
             reentrancy_guard_counter_sub();
@@ -49,6 +55,7 @@ pub(crate) fn backtrace_lock() -> BacktraceGuard {
 }
 
 impl Drop for BacktraceGuard {
+    #[inline]
     fn drop(&mut self) {
         unsafe { backtrace_mutex_unlock() }
     }
