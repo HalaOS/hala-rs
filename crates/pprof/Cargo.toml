@@ -12,12 +12,18 @@ version.workspace = true
 [dependencies]
 backtrace = {version = "^0.3"}
 dashmap = {workspace = true}
-hala-sync = {workspace = true}
 log = {workspace = true}
+protobuf = {workspace = true}
+
+hala-sync = {workspace = true}
 
 [dev-dependencies]
 divan = {workspace = true}
 pretty_env_logger = {workspace = true}
+
+[build-dependencies]
+protobuf-codegen = {workspace = true}
+protoc-bin-vendored = {workspace = true}
 
 [[bench]]
 harness = false

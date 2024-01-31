@@ -8,15 +8,20 @@ use std::{
     },
 };
 
-use backtrace::Frame;
+use backtrace::Backtrace;
 use hala_sync::{spin_simple, Lockable};
+
+/// Heap profiling data writer trait.
+pub trait HeapProfilingWriter {
+    fn write_block(&mut self, block: *mut u8, bt: &Backtrace);
+}
 
 /// Heap profiling enter type.
 pub struct HeapProfiling {
     on: AtomicBool,
     // blocks: DashMap<usize, Vec<Frame>>,
     alloc_size: AtomicUsize,
-    blocks: spin_simple::SpinMutex<HashMap<usize, Vec<Frame>>>,
+    blocks: spin_simple::SpinMutex<HashMap<usize, Backtrace>>,
 }
 
 impl HeapProfiling {
@@ -76,18 +81,11 @@ impl HeapProfiling {
 
         if profiling.is_on() {
             Self::enter(|| {
-                let mut frames = Vec::new();
+                let bt = backtrace::Backtrace::new();
 
                 let mut blocks = profiling.blocks.lock();
 
-                unsafe {
-                    backtrace::trace_unsynchronized(|frame| {
-                        frames.push(frame.clone());
-                        true
-                    });
-                }
-
-                blocks.insert(ptr as usize, frames);
+                blocks.insert(ptr as usize, bt);
 
                 profiling
                     .alloc_size
@@ -141,22 +139,14 @@ impl HeapProfiling {
         }
     }
 
-    pub fn print_blocks(&self) {
+    #[inline]
+    pub fn write_profile<W: HeapProfilingWriter>(&self, writer: &mut W) {
         Self::enter(|| {
-            let mut blocks = self.blocks.lock();
-            for (block, frames) in blocks.iter() {
-                log::trace!("alloc: 0x{:02x}, frames:", *block);
+            let blocks = self.blocks.lock();
 
-                for frame in frames {
-                    unsafe {
-                        backtrace::resolve_frame_unsynchronized(frame, |symbol| {
-                            log::trace!("\t {:?}", symbol);
-                        });
-                    }
-                }
+            for (block, bt) in blocks.iter() {
+                writer.write_block(*block as *mut u8, bt);
             }
-
-            blocks.clear();
         });
     }
 }
@@ -166,9 +156,5 @@ static HEAP_PROFILING: OnceLock<HeapProfiling> = OnceLock::new();
 
 /// Get global heap profiling instance.
 pub fn get_heap_profiling() -> &'static HeapProfiling {
-    HEAP_PROFILING.get_or_init(|| {
-        let profile = HeapProfiling::new();
-
-        profile
-    })
+    HEAP_PROFILING.get_or_init(|| HeapProfiling::new())
 }
