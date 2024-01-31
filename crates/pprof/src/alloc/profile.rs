@@ -1,6 +1,5 @@
 use std::{
     alloc::GlobalAlloc,
-    cell::Cell,
     collections::HashMap,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -8,12 +7,10 @@ use std::{
     },
 };
 
-use backtrace::Backtrace;
+use crate::backtrace::Backtrace;
 use hala_sync::{spin_simple, Lockable};
 
-thread_local! {
-    static REENTRANCY: Cell<bool> = Cell::new(false);
-}
+use crate::external::Reentrancy;
 
 /// Heap profiling data writer trait.
 pub trait HeapProfilingWriter {
@@ -44,44 +41,18 @@ impl HeapProfiling {
         self.on.load(Ordering::Relaxed)
     }
 
-    #[inline(always)]
-    fn enter<F, R>(f: F) -> Option<R>
-    where
-        F: FnOnce() -> R,
-    {
-        let enter = REENTRANCY.with(|flag| {
-            if !flag.get() {
-                flag.set(true);
-                true
-            } else {
-                false
-            }
-        });
-
-        if enter {
-            let r = f();
-
-            REENTRANCY.with(|flag| {
-                assert!(flag.get(), "Not here");
-                flag.set(false);
-            });
-
-            Some(r)
-        } else {
-            None
-        }
-    }
-
     /// A wrapper function to [`alloc`](GlobalAlloc::alloc) that provide heap alloc sampling.
     #[inline(always)]
     pub(super) fn alloc<Alloc: GlobalAlloc>(alloc: &Alloc, layout: std::alloc::Layout) -> *mut u8 {
         let ptr = unsafe { alloc.alloc(layout) };
 
-        Self::enter(|| {
+        let reentrancy = Reentrancy::new();
+
+        if reentrancy.is_ok() {
             let profiling = get_heap_profiling();
 
             if profiling.is_on() {
-                let bt = backtrace::Backtrace::new();
+                let bt = crate::backtrace::Backtrace::new();
 
                 let mut blocks = profiling.blocks.lock();
 
@@ -91,7 +62,7 @@ impl HeapProfiling {
                     .alloc_size
                     .fetch_add(layout.size(), Ordering::Relaxed);
             }
-        });
+        }
 
         ptr
     }
@@ -103,7 +74,9 @@ impl HeapProfiling {
         ptr: *mut u8,
         layout: std::alloc::Layout,
     ) {
-        Self::enter(|| {
+        let reentrancy = Reentrancy::new();
+
+        if reentrancy.is_ok() {
             let profiling = get_heap_profiling();
 
             if profiling.is_on() {
@@ -117,7 +90,7 @@ impl HeapProfiling {
                         .fetch_sub(layout.size(), Ordering::Relaxed);
                 }
             }
-        });
+        }
 
         unsafe { alloc.dealloc(ptr, layout) }
     }
@@ -133,21 +106,25 @@ impl HeapProfiling {
             self.alloc_size.store(0, Ordering::Relaxed);
 
             // dashmap may realloc / dealloc
-            Self::enter(|| {
+            let reentrancy = Reentrancy::new();
+
+            if reentrancy.is_ok() {
                 self.blocks.lock().clear();
-            });
+            };
         }
     }
 
     #[inline]
     pub fn write_profile<W: HeapProfilingWriter>(&self, writer: &mut W) {
-        Self::enter(|| {
+        let reentrancy = Reentrancy::new();
+
+        if reentrancy.is_ok() {
             let blocks = self.blocks.lock();
 
             for (block, bt) in blocks.iter() {
                 writer.write_block(*block as *mut u8, bt);
             }
-        });
+        };
     }
 }
 
