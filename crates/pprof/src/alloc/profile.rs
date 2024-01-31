@@ -11,6 +11,10 @@ use std::{
 use backtrace::Backtrace;
 use hala_sync::{spin_simple, Lockable};
 
+thread_local! {
+    static REENTRANCY: Cell<bool> = Cell::new(false);
+}
+
 /// Heap profiling data writer trait.
 pub trait HeapProfilingWriter {
     fn write_block(&mut self, block: *mut u8, bt: &Backtrace);
@@ -45,10 +49,6 @@ impl HeapProfiling {
     where
         F: FnOnce() -> R,
     {
-        thread_local! {
-            static REENTRANCY: Cell<bool> = Cell::new(false);
-        }
-
         let enter = REENTRANCY.with(|flag| {
             if !flag.get() {
                 flag.set(true);
@@ -77,10 +77,10 @@ impl HeapProfiling {
     pub(super) fn alloc<Alloc: GlobalAlloc>(alloc: &Alloc, layout: std::alloc::Layout) -> *mut u8 {
         let ptr = unsafe { alloc.alloc(layout) };
 
-        let profiling = get_heap_profiling();
+        Self::enter(|| {
+            let profiling = get_heap_profiling();
 
-        if profiling.is_on() {
-            Self::enter(|| {
+            if profiling.is_on() {
                 let bt = backtrace::Backtrace::new();
 
                 let mut blocks = profiling.blocks.lock();
@@ -90,8 +90,8 @@ impl HeapProfiling {
                 profiling
                     .alloc_size
                     .fetch_add(layout.size(), Ordering::Relaxed);
-            });
-        }
+            }
+        });
 
         ptr
     }
@@ -103,10 +103,10 @@ impl HeapProfiling {
         ptr: *mut u8,
         layout: std::alloc::Layout,
     ) {
-        let profiling = get_heap_profiling();
+        Self::enter(|| {
+            let profiling = get_heap_profiling();
 
-        if profiling.is_on() {
-            Self::enter(|| {
+            if profiling.is_on() {
                 let mut blocks = profiling.blocks.lock();
 
                 let removed = blocks.remove(&(ptr as usize));
@@ -116,8 +116,8 @@ impl HeapProfiling {
                         .alloc_size
                         .fetch_sub(layout.size(), Ordering::Relaxed);
                 }
-            });
-        }
+            }
+        });
 
         unsafe { alloc.dealloc(ptr, layout) }
     }
