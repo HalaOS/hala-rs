@@ -1,9 +1,11 @@
+use std::ffi::c_int;
+
 extern "C" {
     /// Reentrancy guard counter plus 1.
-    fn reentrancy_guard_counter_add() -> i32;
+    fn reentrancy_guard_counter_add() -> c_int;
 
     /// Reentrancy guard counter sub 1.
-    fn reentrancy_guard_counter_sub() -> i32;
+    fn reentrancy_guard_counter_sub() -> c_int;
 
     /// locks the backtrace mutex, blocks if the mutex is not available
     fn backtrace_mutex_lock();
@@ -14,7 +16,7 @@ extern "C" {
 }
 
 /// Reentrancy guard
-pub(crate) struct Reentrancy(i32);
+pub(crate) struct Reentrancy(c_int);
 
 impl Reentrancy {
     /// Create new reentrancy guard.
