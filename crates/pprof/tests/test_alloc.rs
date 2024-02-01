@@ -1,7 +1,11 @@
+use std::fs;
+
 use hala_pprof::{
     alloc::{get_heap_profiling, HeapProfilingAlloc, HeapProfilingWriter},
     backtrace,
+    pprof::HeapProfilingPerfToolsBuilder,
 };
+use protobuf::{text_format::print_to_string_pretty, Message};
 
 #[global_allocator]
 static ALLOC: HeapProfilingAlloc = HeapProfilingAlloc;
@@ -10,7 +14,7 @@ struct MockHeapProfilingWriter {}
 
 impl HeapProfilingWriter for MockHeapProfilingWriter {
     #[inline]
-    fn write_block(&mut self, _block: *mut u8, _bt: &backtrace::Backtrace) {}
+    fn write_block(&mut self, _block: *mut u8, _: usize, _bt: &backtrace::Backtrace) {}
 }
 
 #[test]
@@ -50,4 +54,27 @@ fn may_not_use_tls() {
     for handle in handles {
         handle.join().unwrap();
     }
+}
+
+#[test]
+fn test_pprof_build() {
+    get_heap_profiling().record(true);
+
+    let mut _a = Vec::<i32>::with_capacity(10);
+
+    let mut _b = "hello".to_string();
+
+    get_heap_profiling().record(false);
+
+    println!("{}", get_heap_profiling().allocated());
+
+    let mut builder = HeapProfilingPerfToolsBuilder::new();
+
+    get_heap_profiling().write_profile(&mut builder);
+
+    let profile = builder.build();
+
+    fs::write("./pprof.json", print_to_string_pretty(&profile)).unwrap();
+
+    fs::write("./pprof.pb", profile.write_to_bytes().unwrap()).unwrap();
 }

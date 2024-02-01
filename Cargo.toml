@@ -43,6 +43,7 @@ parking_lot = "0.12.1"
 pretty_env_logger = "^0.5"
 protobuf = "^3.3.0"
 protobuf-codegen = "^3.3.0"
+protobuf-json-mapping = "3.3.0"
 protoc-bin-vendored = "^3.0.0"
 quiche = {version = "^0.20.0"}
 rand = {version = "^0.8", features = ["getrandom"]}

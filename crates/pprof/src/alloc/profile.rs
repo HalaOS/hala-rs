@@ -14,7 +14,7 @@ use crate::external::Reentrancy;
 
 /// Heap profiling data writer trait.
 pub trait HeapProfilingWriter {
-    fn write_block(&mut self, block: *mut u8, bt: &Backtrace);
+    fn write_block(&mut self, block: *mut u8, block_size: usize, bt: &Backtrace);
 }
 
 /// Heap profiling enter type.
@@ -22,7 +22,7 @@ pub struct HeapProfiling {
     on: AtomicBool,
     alloc_size: AtomicUsize,
     /// allocated block register.
-    blocks: UnsafeCell<HashMap<usize, Backtrace>>,
+    blocks: UnsafeCell<HashMap<usize, (usize, Backtrace)>>,
 }
 
 unsafe impl Send for HeapProfiling {}
@@ -65,7 +65,7 @@ impl HeapProfiling {
 
                 let blocks = profiling.get_blocks();
 
-                blocks.insert(ptr as usize, bt);
+                blocks.insert(ptr as usize, (layout.size(), bt));
             }
         }
 
@@ -109,36 +109,25 @@ impl HeapProfiling {
 
     /// Set whether to turn on profile logging.
     pub fn record(&self, flag: bool) {
-        if self.on.swap(flag, Ordering::Relaxed) {
-            self.alloc_size.store(0, Ordering::Relaxed);
-
-            // dashmap may realloc / dealloc
-            let reentrancy = Reentrancy::new();
-
-            if reentrancy.is_ok() {
-                let _guard = backtrace_lock();
-
-                self.get_blocks().clear();
-            };
-        }
+        self.on.store(flag, Ordering::Relaxed);
     }
 
     #[inline]
     pub fn write_profile<W: HeapProfilingWriter>(&self, writer: &mut W) {
         let reentrancy = Reentrancy::new();
 
-        if reentrancy.is_ok() && self.is_on() {
+        if reentrancy.is_ok() {
             let _guard = backtrace_lock();
 
             let blocks = self.get_blocks();
 
-            for (block, bt) in blocks.iter() {
-                writer.write_block(*block as *mut u8, bt);
+            for (block, (block_size, bt)) in blocks.iter() {
+                writer.write_block(*block as *mut u8, *block_size, bt);
             }
         };
     }
 
-    fn get_blocks(&self) -> &mut HashMap<usize, crate::backtrace::Backtrace> {
+    fn get_blocks(&self) -> &mut HashMap<usize, (usize, crate::backtrace::Backtrace)> {
         unsafe { &mut *self.blocks.get() }
     }
 }
