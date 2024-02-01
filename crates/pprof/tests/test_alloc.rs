@@ -66,8 +66,6 @@ fn test_pprof_build() {
 
     get_heap_profiling().record(false);
 
-    println!("{}", get_heap_profiling().allocated());
-
     let mut builder = HeapProfilingPerfToolsBuilder::new();
 
     get_heap_profiling().write_profile(&mut builder);
