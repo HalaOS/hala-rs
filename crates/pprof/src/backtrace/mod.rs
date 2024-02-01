@@ -362,12 +362,12 @@ fn _assert_send_sync() {
 /// enabled, and the `std` feature is enabled by default.
 #[derive(Clone)]
 pub struct BacktraceFrame {
-    frame: Frame,
-    symbols: Option<Vec<BacktraceSymbol>>,
+    pub(crate) frame: Frame,
+    pub(crate) symbols: Option<Vec<BacktraceSymbol>>,
 }
 
 #[derive(Clone)]
-enum Frame {
+pub(crate) enum Frame {
     Raw(backtrace::Frame),
     #[allow(dead_code)]
     Deserialized {
@@ -416,11 +416,11 @@ impl Frame {
 #[cfg_attr(feature = "serialize-rustc", derive(RustcDecodable, RustcEncodable))]
 #[cfg_attr(feature = "serde", derive(Deserialize, Serialize))]
 pub struct BacktraceSymbol {
-    name: Option<Vec<u8>>,
-    addr: Option<usize>,
-    filename: Option<PathBuf>,
-    lineno: Option<u32>,
-    colno: Option<u32>,
+    pub(crate) name: Option<Vec<u8>>,
+    pub(crate) addr: Option<usize>,
+    pub(crate) filename: Option<PathBuf>,
+    pub(crate) lineno: Option<u32>,
+    pub(crate) colno: Option<u32>,
 }
 
 impl Backtrace {

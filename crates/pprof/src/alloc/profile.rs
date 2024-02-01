@@ -2,19 +2,93 @@ use std::{
     alloc::GlobalAlloc,
     cell::UnsafeCell,
     collections::HashMap,
+    ffi::c_void,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         OnceLock,
     },
 };
 
-use crate::{backtrace::Backtrace, external::backtrace_lock};
+use backtrace::{resolve_frame_unsynchronized, resolve_unsynchronized, Symbol};
+
+use crate::external::backtrace_lock;
 
 use crate::external::Reentrancy;
 
 /// Heap profiling data writer trait.
 pub trait HeapProfilingReport {
-    fn write_block(&mut self, block: *mut u8, block_size: usize, bt: &Backtrace);
+    fn write_block(
+        &mut self,
+        block: *mut u8,
+        block_size: usize,
+        bt: &[&crate::backtrace::BacktraceFrame],
+    );
+}
+
+#[derive(Default)]
+struct BlockRegister {
+    alloc_blocks: HashMap<usize, (usize, Vec<usize>)>,
+    frames: HashMap<usize, crate::backtrace::BacktraceFrame>,
+}
+
+impl BlockRegister {
+    fn register(&mut self, block: *mut u8, block_size: usize) {
+        let bt = crate::backtrace::Backtrace::new_unresolved();
+
+        let mut frame_ids = vec![];
+
+        for frame in bt.frames() {
+            frame_ids.push(self.register_frame(frame));
+        }
+
+        self.alloc_blocks
+            .insert(block as usize, (block_size, frame_ids));
+    }
+
+    fn register_frame(&mut self, frame: &crate::backtrace::BacktraceFrame) -> usize {
+        let symbol = frame.symbol_address() as usize;
+
+        if self.frames.contains_key(&symbol) {
+            return symbol;
+        }
+
+        let mut frame = frame.clone();
+
+        if frame.symbols.is_none() {
+            let mut symbols = Vec::new();
+            {
+                let sym = |symbol: &Symbol| {
+                    symbols.push(crate::backtrace::BacktraceSymbol {
+                        name: symbol.name().map(|m| m.as_bytes().to_vec()),
+                        addr: symbol.addr().map(|a| a as usize),
+                        filename: symbol.filename().map(|m| m.to_owned()),
+                        lineno: symbol.lineno(),
+                        colno: symbol.colno(),
+                    });
+                };
+                match frame.frame {
+                    crate::backtrace::Frame::Raw(ref f) => {
+                        let _guard = backtrace_lock();
+                        unsafe { resolve_frame_unsynchronized(f, sym) }
+                    }
+                    crate::backtrace::Frame::Deserialized { ip, .. } => {
+                        let _guard = backtrace_lock();
+                        unsafe { resolve_unsynchronized(ip as *mut c_void, sym) };
+                    }
+                }
+            }
+
+            frame.symbols = Some(symbols);
+        }
+
+        self.frames.insert(symbol, frame);
+
+        symbol
+    }
+
+    fn unregister(&mut self, block: *mut u8) -> bool {
+        self.alloc_blocks.remove(&(block as usize)).is_some()
+    }
 }
 
 /// Heap profiling enter type.
@@ -22,7 +96,7 @@ pub struct HeapProfiling {
     on: AtomicBool,
     alloc_size: AtomicUsize,
     /// allocated block register.
-    blocks: UnsafeCell<HashMap<usize, (usize, Backtrace)>>,
+    blocks: UnsafeCell<BlockRegister>,
 }
 
 unsafe impl Send for HeapProfiling {}
@@ -61,11 +135,7 @@ impl HeapProfiling {
 
                 let _guard = backtrace_lock();
 
-                let bt = crate::backtrace::Backtrace::new_unresolved();
-
-                let blocks = profiling.get_blocks();
-
-                blocks.insert(ptr as usize, (layout.size(), bt));
+                profiling.get_register().register(ptr, layout.size());
             }
         }
 
@@ -83,11 +153,9 @@ impl HeapProfiling {
 
         let _guard = backtrace_lock();
 
-        let blocks = profiling.get_blocks();
+        let register = profiling.get_register();
 
-        let removed = blocks.remove(&(ptr as usize));
-
-        if removed.is_some() {
+        if register.unregister(ptr) {
             profiling
                 .alloc_size
                 .fetch_sub(layout.size(), Ordering::Relaxed);
@@ -120,10 +188,15 @@ impl HeapProfiling {
 
             let _guard = backtrace_lock();
 
-            let blocks = self.get_blocks();
+            let register = self.get_register();
 
-            for (block, (block_size, bt)) in blocks.iter() {
-                report.write_block(*block as *mut u8, *block_size, bt);
+            for (block, (block_size, frame_ids)) in register.alloc_blocks.iter() {
+                let frames = frame_ids
+                    .iter()
+                    .map(|id| register.frames.get(id).unwrap())
+                    .collect::<Vec<_>>();
+
+                report.write_block(*block as *mut u8, *block_size, &frames);
             }
 
             return Some(report);
@@ -132,7 +205,7 @@ impl HeapProfiling {
         None
     }
 
-    fn get_blocks(&self) -> &mut HashMap<usize, (usize, crate::backtrace::Backtrace)> {
+    fn get_register(&self) -> &mut BlockRegister {
         unsafe { &mut *self.blocks.get() }
     }
 }

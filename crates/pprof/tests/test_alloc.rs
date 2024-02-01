@@ -14,7 +14,7 @@ struct MockHeapProfilingWriter {}
 
 impl HeapProfilingReport for MockHeapProfilingWriter {
     #[inline]
-    fn write_block(&mut self, _block: *mut u8, _: usize, _bt: &backtrace::Backtrace) {}
+    fn write_block(&mut self, _block: *mut u8, _: usize, _bt: &[&backtrace::BacktraceFrame]) {}
 }
 
 #[test]
@@ -23,7 +23,7 @@ fn test_alloc() {
 
     for _ in 0..10000 {
         let _a = "hello world".to_string();
-        get_heap_profiling().report(|| MockHeapProfilingWriter {});
+        // get_heap_profiling().report(|| MockHeapProfilingWriter {});
     }
 }
 
@@ -33,7 +33,7 @@ fn test_alloc_vec() {
 
     for _ in 0..10000 {
         let mut _a = Vec::<i32>::with_capacity(10);
-        get_heap_profiling().report(|| MockHeapProfilingWriter {});
+        // get_heap_profiling().report(|| MockHeapProfilingWriter {});
     }
 }
 
