@@ -4,7 +4,7 @@ use std::ptr::null_mut;
 use crate::backtrace::BacktraceSymbol;
 
 use crate::pprof::const_str::HEAP;
-use crate::{alloc::HeapProfilingWriter, proto};
+use crate::{alloc::HeapProfilingReport, proto};
 
 use self::const_str::BYTES;
 
@@ -147,7 +147,7 @@ impl HeapProfilingPerfToolsBuilder {
     }
 }
 
-impl HeapProfilingWriter for HeapProfilingPerfToolsBuilder {
+impl HeapProfilingReport for HeapProfilingPerfToolsBuilder {
     fn write_block(&mut self, block: *mut u8, block_size: usize, bt: &crate::backtrace::Backtrace) {
         let mut locs = vec![];
 

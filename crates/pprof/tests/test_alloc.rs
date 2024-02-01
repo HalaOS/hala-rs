@@ -1,7 +1,7 @@
 use std::fs;
 
 use hala_pprof::{
-    alloc::{get_heap_profiling, HeapProfilingAlloc, HeapProfilingWriter},
+    alloc::{get_heap_profiling, HeapProfilingAlloc, HeapProfilingReport},
     backtrace,
     pprof::HeapProfilingPerfToolsBuilder,
 };
@@ -12,7 +12,7 @@ static ALLOC: HeapProfilingAlloc = HeapProfilingAlloc;
 
 struct MockHeapProfilingWriter {}
 
-impl HeapProfilingWriter for MockHeapProfilingWriter {
+impl HeapProfilingReport for MockHeapProfilingWriter {
     #[inline]
     fn write_block(&mut self, _block: *mut u8, _: usize, _bt: &backtrace::Backtrace) {}
 }

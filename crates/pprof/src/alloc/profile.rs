@@ -13,7 +13,7 @@ use crate::{backtrace::Backtrace, external::backtrace_lock};
 use crate::external::Reentrancy;
 
 /// Heap profiling data writer trait.
-pub trait HeapProfilingWriter {
+pub trait HeapProfilingReport {
     fn write_block(&mut self, block: *mut u8, block_size: usize, bt: &Backtrace);
 }
 
@@ -113,7 +113,7 @@ impl HeapProfiling {
     }
 
     #[inline]
-    pub fn write_profile<W: HeapProfilingWriter>(&self, writer: &mut W) {
+    pub fn write_profile<W: HeapProfilingReport>(&self, writer: &mut W) {
         let reentrancy = Reentrancy::new();
 
         if reentrancy.is_ok() {
