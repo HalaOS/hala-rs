@@ -11,3 +11,5 @@ pub mod net {
 }
 
 pub use hala_sync as sync;
+
+pub use hala_pprof as pprof;

@@ -4,3 +4,5 @@ pub mod pprof;
 pub mod proto;
 
 mod external;
+
+pub use protobuf;

@@ -149,6 +149,10 @@ impl HeapProfilingPerfToolsBuilder {
 
 impl HeapProfilingReport for HeapProfilingPerfToolsBuilder {
     fn write_block(&mut self, block: *mut u8, block_size: usize, bt: &crate::backtrace::Backtrace) {
+        let mut bt = bt.clone();
+
+        bt.resolve();
+
         let mut locs = vec![];
 
         for frame in bt.frames() {

@@ -12,6 +12,7 @@ hala-future = {workspace = true}
 hala-io = {workspace = true}
 hala-lockfree = {workspace = true}
 hala-ops = {workspace = true}
+hala-pprof = {workspace = true}
 hala-quic = {workspace = true}
 hala-rproxy = {workspace = true}
 hala-sync = {workspace = true}

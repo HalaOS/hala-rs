@@ -20,3 +20,5 @@ Cargo.lock
 
 mac.sh
 linux.sh
+
+/pprof

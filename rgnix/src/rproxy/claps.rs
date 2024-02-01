@@ -98,4 +98,16 @@ pub struct ReverseProxy {
     /// The default value equals `60s`.
     #[arg(long,value_parser = clap_parse_duration, default_value="60s")]
     pub profile_interval: Duration,
+
+    /// Specifies whether open heap pprof.
+    #[arg(long, default_value_t = true)]
+    pub pprof: bool,
+
+    /// Dump heap pprof file when memory increment exceeds `pprof_memory_increases`, the default value is `1M`.
+    #[arg(long, default_value_t = 1048576)]
+    pub pprof_memory_increases: usize,
+
+    /// The directory where the pprof  dump file is written to
+    #[arg(long, default_value = "./pprof/")]
+    pub pprof_dir: PathBuf,
 }

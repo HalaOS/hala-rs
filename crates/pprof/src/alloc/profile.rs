@@ -61,7 +61,7 @@ impl HeapProfiling {
 
                 let _guard = backtrace_lock();
 
-                let bt = crate::backtrace::Backtrace::new();
+                let bt = crate::backtrace::Backtrace::new_unresolved();
 
                 let blocks = profiling.get_blocks();
 
@@ -79,24 +79,18 @@ impl HeapProfiling {
         ptr: *mut u8,
         layout: std::alloc::Layout,
     ) {
-        let reentrancy = Reentrancy::new();
+        let profiling = get_heap_profiling();
 
-        if reentrancy.is_ok() {
-            let profiling = get_heap_profiling();
+        let _guard = backtrace_lock();
 
-            if profiling.is_on() {
-                let _guard = backtrace_lock();
+        let blocks = profiling.get_blocks();
 
-                let blocks = profiling.get_blocks();
+        let removed = blocks.remove(&(ptr as usize));
 
-                let removed = blocks.remove(&(ptr as usize));
-
-                if removed.is_some() {
-                    profiling
-                        .alloc_size
-                        .fetch_sub(layout.size(), Ordering::Relaxed);
-                }
-            }
+        if removed.is_some() {
+            profiling
+                .alloc_size
+                .fetch_sub(layout.size(), Ordering::Relaxed);
         }
 
         unsafe { alloc.dealloc(ptr, layout) }
