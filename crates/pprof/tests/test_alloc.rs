@@ -21,11 +21,9 @@ impl HeapProfilingReport for MockHeapProfilingWriter {
 fn test_alloc() {
     get_heap_profiling().record(true);
 
-    let mut writer = MockHeapProfilingWriter {};
-
     for _ in 0..10000 {
         let _a = "hello world".to_string();
-        get_heap_profiling().write_profile(&mut writer);
+        get_heap_profiling().report(|| MockHeapProfilingWriter {});
     }
 }
 
@@ -33,11 +31,9 @@ fn test_alloc() {
 fn test_alloc_vec() {
     get_heap_profiling().record(true);
 
-    let mut writer = MockHeapProfilingWriter {};
-
     for _ in 0..10000 {
         let mut _a = Vec::<i32>::with_capacity(10);
-        get_heap_profiling().write_profile(&mut writer);
+        get_heap_profiling().report(|| MockHeapProfilingWriter {});
     }
 }
 
@@ -66,9 +62,9 @@ fn test_pprof_build() {
 
     get_heap_profiling().record(false);
 
-    let mut builder = HeapProfilingPerfToolsBuilder::new();
-
-    get_heap_profiling().write_profile(&mut builder);
+    let mut builder = get_heap_profiling()
+        .report(|| HeapProfilingPerfToolsBuilder::new())
+        .unwrap();
 
     let profile = builder.build();
 

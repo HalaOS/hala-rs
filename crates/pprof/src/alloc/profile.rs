@@ -112,19 +112,30 @@ impl HeapProfiling {
         self.on.store(flag, Ordering::Relaxed);
     }
 
+    /// Create new memory snapshot, and generates a heap profiling report.
     #[inline]
-    pub fn write_profile<W: HeapProfilingReport>(&self, writer: &mut W) {
+    pub fn report<F, W>(&self, reporter: F) -> Option<W>
+    where
+        F: FnOnce() -> W,
+        W: HeapProfilingReport,
+    {
         let reentrancy = Reentrancy::new();
 
         if reentrancy.is_ok() {
+            let mut report = reporter();
+
             let _guard = backtrace_lock();
 
             let blocks = self.get_blocks();
 
             for (block, (block_size, bt)) in blocks.iter() {
-                writer.write_block(*block as *mut u8, *block_size, bt);
+                report.write_block(*block as *mut u8, *block_size, bt);
             }
+
+            return Some(report);
         };
+
+        None
     }
 
     fn get_blocks(&self) -> &mut HashMap<usize, (usize, crate::backtrace::Backtrace)> {
