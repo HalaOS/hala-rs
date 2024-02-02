@@ -21,8 +21,7 @@ pub use profile::*;
 
 use std::{
     fs::{self, create_dir_all},
-    io,
-    time::Instant,
+    io, process,
 };
 
 use clap::Parser;
@@ -76,6 +75,9 @@ pub async fn rproxy_main() -> io::Result<()> {
 
     let mut tunnel_profile = ReverseProxyProfile::default();
 
+    let mut i = 0;
+    let process_id = process::id();
+
     loop {
         sleep(profile_interval).await.unwrap();
 
@@ -110,9 +112,11 @@ pub async fn rproxy_main() -> io::Result<()> {
 
                 let profile_file_path = rproxy_config
                     .pprof_dir
-                    .join(format!("heap-{:?}.pb", Instant::now()));
+                    .join(format!("heap-{}-{}.pb", process_id, i));
 
                 fs::write(profile_file_path, profile.write_to_bytes().unwrap()).unwrap();
+
+                i += 1;
             }
 
             log::info!("heap profiling: before={}, current={}", current, allocated);

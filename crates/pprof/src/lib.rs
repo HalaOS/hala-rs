@@ -6,3 +6,5 @@ mod external;
 
 mod proto;
 pub use proto::*;
+
+pub mod backtrace;

@@ -13,11 +13,9 @@ version.workspace = true
 backtrace = {workspace = true}
 bytes = {workspace = true}
 dashmap = {workspace = true}
-leveldb-sys = {workspace = true}
 libc = {workspace = true}
 log = {workspace = true}
 protobuf = {workspace = true}
-serde = {workspace = true, optional = true}
 
 hala-sync = {workspace = true}
 
@@ -30,9 +28,6 @@ serde_json = {workspace = true}
 cc = {workspace = true}
 protobuf-codegen = {workspace = true}
 protoc-bin-vendored = {workspace = true}
-
-[features]
-serialize-serde = ["serde"]
 
 [[bench]]
 harness = false

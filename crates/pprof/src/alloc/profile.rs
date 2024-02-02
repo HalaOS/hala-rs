@@ -6,7 +6,7 @@ use std::{
     },
 };
 
-use crate::proto;
+use crate::backtrace::Symbol;
 
 use crate::external::Reentrancy;
 
@@ -14,12 +14,7 @@ use super::storage::HeapProfilingStorage;
 
 /// Heap profiling data writer trait.
 pub trait HeapProfilingReport {
-    fn write_block(
-        &mut self,
-        block: *mut u8,
-        block_size: usize,
-        frames: &[proto::backtrace::Symbol],
-    ) -> bool;
+    fn write_block(&mut self, block: *mut u8, block_size: usize, frames: &[Symbol]) -> bool;
 }
 /// Heap profiling enter type.
 pub struct HeapProfiling {
@@ -116,7 +111,7 @@ impl HeapProfiling {
         if reentrancy.is_ok() {
             let mut report = reporter();
 
-            self.storage.dump_heap_backtraces(&mut report).unwrap();
+            self.storage.report(&mut report).unwrap();
 
             return Some(report);
         };

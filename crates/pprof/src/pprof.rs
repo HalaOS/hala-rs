@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::backtrace::Symbol;
 use crate::pprof::const_str::HEAP;
 use crate::{alloc::HeapProfilingReport, proto};
 
@@ -29,13 +30,13 @@ impl FunctionTable {
         }
     }
 
-    fn get(&self, symbol: &proto::backtrace::Symbol) -> Option<u64> {
+    fn get(&self, symbol: &Symbol) -> Option<u64> {
         self.index
             .get(&(symbol.address as usize))
             .map(|value| *value)
     }
 
-    fn push(&mut self, string_table: &mut StringTable, symbol: &proto::backtrace::Symbol) -> u64 {
+    fn push(&mut self, string_table: &mut StringTable, symbol: &Symbol) -> u64 {
         let func_id = (self.funcs.len() + 1) as u64;
 
         let func = proto::profile::Function {
@@ -133,12 +134,7 @@ impl HeapProfilingPerfToolsBuilder {
 }
 
 impl HeapProfilingReport for HeapProfilingPerfToolsBuilder {
-    fn write_block(
-        &mut self,
-        block: *mut u8,
-        block_size: usize,
-        frames: &[proto::backtrace::Symbol],
-    ) -> bool {
+    fn write_block(&mut self, block: *mut u8, block_size: usize, frames: &[Symbol]) -> bool {
         let mut locs = vec![];
 
         for symbol in frames {
@@ -163,7 +159,7 @@ impl HeapProfilingReport for HeapProfilingPerfToolsBuilder {
             let loc = proto::profile::Location {
                 id: func_id,
                 line: vec![line],
-                address: symbol.address,
+                address: symbol.address as u64,
                 ..Default::default()
             };
 
