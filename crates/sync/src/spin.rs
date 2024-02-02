@@ -36,6 +36,13 @@ impl<T: Default> Default for SpinMutex<T> {
 }
 
 impl<T> SpinMutex<T> {
+    pub const fn const_new(t: T) -> Self {
+        Self {
+            flag: AtomicBool::new(false),
+            data: UnsafeCell::new(t),
+            guard: AtomicUsize::new(0),
+        }
+    }
     #[cold]
     fn lockable(&self) {
         while self.flag.load(Ordering::Relaxed) {}

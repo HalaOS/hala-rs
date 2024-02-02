@@ -2,7 +2,7 @@ use std::fs;
 
 use hala_pprof::{
     alloc::{get_heap_profiling, HeapProfilingAlloc, HeapProfilingReport},
-    backtrace,
+    backtrace::Symbol,
     pprof::HeapProfilingPerfToolsBuilder,
 };
 use protobuf::{text_format::print_to_string_pretty, Message};
@@ -14,7 +14,9 @@ struct MockHeapProfilingWriter {}
 
 impl HeapProfilingReport for MockHeapProfilingWriter {
     #[inline]
-    fn write_block(&mut self, _block: *mut u8, _: usize, _bt: &[&backtrace::BacktraceFrame]) {}
+    fn write_block(&mut self, _block: *mut u8, _: usize, _bt: &[Symbol]) -> bool {
+        true
+    }
 }
 
 #[test]
@@ -23,8 +25,9 @@ fn test_alloc() {
 
     for _ in 0..10000 {
         let _a = "hello world".to_string();
-        // get_heap_profiling().report(|| MockHeapProfilingWriter {});
     }
+
+    get_heap_profiling().report(|| MockHeapProfilingWriter {});
 }
 
 #[test]
@@ -33,8 +36,9 @@ fn test_alloc_vec() {
 
     for _ in 0..10000 {
         let mut _a = Vec::<i32>::with_capacity(10);
-        // get_heap_profiling().report(|| MockHeapProfilingWriter {});
     }
+
+    get_heap_profiling().report(|| MockHeapProfilingWriter {});
 }
 
 #[test]

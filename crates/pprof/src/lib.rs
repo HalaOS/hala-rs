@@ -1,8 +1,8 @@
 pub mod alloc;
-pub mod backtrace;
 pub mod pprof;
-pub mod proto;
+pub use protobuf;
 
 mod external;
 
-pub use protobuf;
+mod proto;
+pub use proto::*;

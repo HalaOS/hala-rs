@@ -1,7 +1,4 @@
 use std::collections::HashMap;
-use std::ptr::null_mut;
-
-use crate::backtrace::BacktraceSymbol;
 
 use crate::pprof::const_str::HEAP;
 use crate::{alloc::HeapProfilingReport, proto};
@@ -32,33 +29,21 @@ impl FunctionTable {
         }
     }
 
-    fn get(&self, symbol: &BacktraceSymbol) -> Option<u64> {
-        if let Some(addr) = symbol.addr() {
-            self.index.get(&(addr as usize)).map(|value| *value)
-        } else {
-            Some(0)
-        }
+    fn get(&self, symbol: &proto::backtrace::Symbol) -> Option<u64> {
+        self.index
+            .get(&(symbol.address as usize))
+            .map(|value| *value)
     }
 
-    fn push(&mut self, string_table: &mut StringTable, symbol: &BacktraceSymbol) -> u64 {
+    fn push(&mut self, string_table: &mut StringTable, symbol: &proto::backtrace::Symbol) -> u64 {
         let func_id = (self.funcs.len() + 1) as u64;
-
-        let system_name = symbol
-            .name()
-            .map(|val| string_table.insert(val.as_str().unwrap()))
-            .unwrap_or(0);
-
-        let filename = symbol
-            .filename()
-            .map(|val| string_table.insert(val.to_str().unwrap()))
-            .unwrap_or(0);
 
         let func = proto::profile::Function {
             id: func_id,
             name: 0,
-            system_name,
-            filename,
-            start_line: symbol.lineno().unwrap_or(0) as i64,
+            system_name: string_table.insert(&symbol.name),
+            filename: string_table.insert(&symbol.file_name),
+            start_line: symbol.line_no as i64,
             ..Default::default()
         };
 
@@ -66,7 +51,7 @@ impl FunctionTable {
 
         assert!(
             self.index
-                .insert(symbol.addr().unwrap() as usize, func_id)
+                .insert(symbol.address as usize, func_id)
                 .is_none(),
             "push function twice."
         );
@@ -152,41 +137,39 @@ impl HeapProfilingReport for HeapProfilingPerfToolsBuilder {
         &mut self,
         block: *mut u8,
         block_size: usize,
-        frames: &[&crate::backtrace::BacktraceFrame],
-    ) {
+        frames: &[proto::backtrace::Symbol],
+    ) -> bool {
         let mut locs = vec![];
 
-        for frame in frames {
-            for symbol in frame.symbols() {
-                if let Some(func_id) = self.func_table.get(symbol) {
-                    if func_id == 0 {
-                        continue;
-                    }
-                    locs.push(func_id);
+        for symbol in frames {
+            if let Some(func_id) = self.func_table.get(symbol) {
+                if func_id == 0 {
                     continue;
                 }
-
-                let func_id = self.func_table.push(&mut self.string_table, symbol);
-
                 locs.push(func_id);
-
-                let line = proto::profile::Line {
-                    function_id: func_id,
-                    line: symbol.lineno().unwrap_or(0) as i64,
-                    ..Default::default()
-                };
-
-                let loc = proto::profile::Location {
-                    id: func_id,
-                    line: vec![line],
-                    address: symbol.addr().unwrap_or(null_mut()) as u64,
-                    ..Default::default()
-                };
-
-                assert_eq!(self.loc_table.len() + 1, func_id as usize);
-
-                self.loc_table.push(loc);
+                continue;
             }
+
+            let func_id = self.func_table.push(&mut self.string_table, symbol);
+
+            locs.push(func_id);
+
+            let line = proto::profile::Line {
+                function_id: func_id,
+                line: symbol.line_no as i64,
+                ..Default::default()
+            };
+
+            let loc = proto::profile::Location {
+                id: func_id,
+                line: vec![line],
+                address: symbol.address,
+                ..Default::default()
+            };
+
+            assert_eq!(self.loc_table.len() + 1, func_id as usize);
+
+            self.loc_table.push(loc);
         }
 
         let heap_name = proto::profile::Label {
@@ -205,5 +188,7 @@ impl HeapProfilingReport for HeapProfilingPerfToolsBuilder {
         };
 
         self.samples.push(sample);
+
+        true
     }
 }

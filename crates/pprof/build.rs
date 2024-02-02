@@ -12,6 +12,7 @@ fn main() {
         .protoc_path(&protoc_bin_vendored::protoc_bin_path().unwrap())
         .includes(&["proto"])
         .input("proto/profile.proto")
+        .input("proto/backtrace.proto")
         .out_dir(out_dir)
         .run_from_script();
 
