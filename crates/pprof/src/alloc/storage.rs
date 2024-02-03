@@ -213,11 +213,7 @@ impl HeapProfilingStorage {
             backtrace::trace_unsynchronized(|frame| {
                 symbols.push(frame.symbol_address() as usize);
 
-                if symbols.len() > 12 {
-                    false
-                } else {
-                    true
-                }
+                true
             });
         }
 
