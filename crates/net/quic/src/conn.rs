@@ -17,12 +17,40 @@ use crate::{
     Config,
 };
 
+struct QuicConnDrop(QuicConnState);
+
+impl Drop for QuicConnDrop {
+    fn drop(&mut self) {
+        let state = self.0.clone();
+
+        future_spawn(async move {
+            match state.close(false, 0, b"").await {
+                Ok(_) => {
+                    log::info!(
+                        "quic conn, scid={:?}, dcide={:?} closed successfully",
+                        state.scid,
+                        state.dcid
+                    );
+                }
+                Err(err) => {
+                    log::info!(
+                        "quic conn, scid={:?}, dcide={:?} closed with error, {}",
+                        state.scid,
+                        state.dcid,
+                        err
+                    );
+                }
+            }
+        });
+    }
+}
+
 /// Socket connection type for quic protocol.
 #[must_use = "If return variable is not bound, the created stream will be dropped immediately"]
 #[derive(Clone)]
 pub struct QuicConn {
     state: QuicConnState,
-    conn_counter: Arc<()>,
+    _conn_counter: Arc<QuicConnDrop>,
 }
 
 impl Debug for QuicConn {
@@ -34,37 +62,8 @@ impl Debug for QuicConn {
 impl From<QuicConnState> for QuicConn {
     fn from(value: QuicConnState) -> Self {
         Self {
+            _conn_counter: Arc::new(QuicConnDrop(value.clone())),
             state: value,
-            conn_counter: Arc::new(()),
-        }
-    }
-}
-
-impl Drop for QuicConn {
-    fn drop(&mut self) {
-        // only this instance is aliving.
-        if Arc::strong_count(&self.conn_counter) == 1 {
-            let state = self.state.clone();
-
-            future_spawn(async move {
-                match state.close(false, 0, b"").await {
-                    Ok(_) => {
-                        log::info!(
-                            "quic conn, scid={:?}, dcide={:?} closed successfully",
-                            state.scid,
-                            state.dcid
-                        );
-                    }
-                    Err(err) => {
-                        log::info!(
-                            "quic conn, scid={:?}, dcide={:?} closed with error, {}",
-                            state.scid,
-                            state.dcid,
-                            err
-                        );
-                    }
-                }
-            });
         }
     }
 }
@@ -198,13 +197,26 @@ impl QuicConn {
     }
 }
 
+struct QuicStreamDrop(u64, QuicConn);
+
+impl Drop for QuicStreamDrop {
+    fn drop(&mut self) {
+        let conn = self.1.clone();
+        let stream_id = self.0;
+
+        future_spawn(async move {
+            _ = conn.state.close_stream(stream_id).await;
+        });
+    }
+}
+
 /// Stream socket type for quic protocol.
 #[must_use = "If return variable is not bound, the created stream will be dropped immediately"]
 #[derive(Clone)]
 pub struct QuicStream {
     pub conn: QuicConn,
     pub stream_id: u64,
-    stream_counter: Arc<()>,
+    _stream_counter: Arc<QuicStreamDrop>,
 }
 
 impl Debug for QuicStream {
@@ -216,23 +228,9 @@ impl Debug for QuicStream {
 impl From<(QuicConn, u64)> for QuicStream {
     fn from(value: (QuicConn, u64)) -> Self {
         Self {
+            _stream_counter: Arc::new(QuicStreamDrop(value.1, value.0.clone())),
             conn: value.0,
             stream_id: value.1,
-            stream_counter: Arc::default(),
-        }
-    }
-}
-
-impl Drop for QuicStream {
-    fn drop(&mut self) {
-        // only this instance is aliving.
-        if Arc::strong_count(&self.stream_counter) == 1 {
-            let conn = self.conn.clone();
-            let stream_id = self.stream_id;
-
-            future_spawn(async move {
-                _ = conn.state.close_stream(stream_id).await;
-            });
         }
     }
 }
