@@ -10,13 +10,14 @@ use std::{
 
 use leveldb_sys::*;
 
-/// Trait for leveldb storage key / value.
+/// The leveldb key / value input type must implement this trait.
 pub trait KeyValue {
     type Bytes: AsRef<[u8]>;
 
     fn to_bytes(self) -> Self::Bytes;
 }
 
+/// The leveldb get / iterator return type must implement this trait.
 pub trait KeyValueReturn {
     fn from_bytes(buf: &[u8]) -> io::Result<Self>
     where
