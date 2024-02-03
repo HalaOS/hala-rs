@@ -74,16 +74,12 @@ impl HeapProfiling {
         ptr: *mut u8,
         layout: std::alloc::Layout,
     ) {
-        let reentrancy = Reentrancy::new();
+        let profiling = get_heap_profiling();
 
-        if reentrancy.is_ok() {
-            let profiling = get_heap_profiling();
-
-            if profiling.storage.unregister_heap_block(ptr).unwrap() {
-                profiling
-                    .alloc_size
-                    .fetch_sub(layout.size(), Ordering::Relaxed);
-            }
+        if profiling.storage.unregister_heap_block(ptr).unwrap() {
+            profiling
+                .alloc_size
+                .fetch_sub(layout.size(), Ordering::Relaxed);
         }
 
         unsafe { alloc.dealloc(ptr, layout) }
@@ -125,8 +121,5 @@ static HEAP_PROFILING: OnceLock<HeapProfiling> = OnceLock::new();
 
 /// Get global heap profiling instance.
 pub fn get_heap_profiling() -> &'static HeapProfiling {
-    HEAP_PROFILING.get_or_init(|| {
-        let _reentrancy = Reentrancy::new();
-        HeapProfiling::new()
-    })
+    HEAP_PROFILING.get_or_init(|| HeapProfiling::new())
 }

@@ -1,6 +1,4 @@
-use std::{collections::HashMap, io, os::raw::c_void, ptr::null_mut};
-
-use hala_sync::{spin_simple, Lockable};
+use std::{cell::UnsafeCell, collections::HashMap, io, os::raw::c_void, ptr::null_mut};
 
 use crate::{
     backtrace::{HeapBacktrace, Symbol},
@@ -12,7 +10,7 @@ use super::HeapProfilingReport;
 /// Process backtrace database access structure.
 pub struct HeapProfilingStorage {
     /// memory cached allocated heap block list.
-    alloc_blocks: spin_simple::SpinMutex<HashMap<usize, HeapBacktrace>>,
+    alloc_blocks: UnsafeCell<HashMap<usize, HeapBacktrace>>,
 }
 /// Safety: leveldb c implementation can be accessed safely in multi-threaded mode.
 unsafe impl Sync for HeapProfilingStorage {}
@@ -38,8 +36,9 @@ impl HeapProfilingStorage {
 
         let proto_heap_backtrace = HeapBacktrace { block_size, frames };
 
-        self.alloc_blocks
-            .lock()
+        let _guard = backtrace_lock();
+
+        self.get_alloc_blocks()
             .insert(block as usize, proto_heap_backtrace);
 
         Ok(())
@@ -47,15 +46,9 @@ impl HeapProfilingStorage {
 
     /// Unregister heap block and remove backtrace metadata.
     pub fn unregister_heap_block(&self, block: *mut u8) -> io::Result<bool> {
-        assert!(
-            !Reentrancy::new().is_ok(),
-            "Calls to unregister_heap_block must be protected by Reentrancy."
-        );
+        let _guard = backtrace_lock();
 
-        if self.alloc_blocks.lock().remove(&(block as usize)).is_some() {
-            // unsafe {
-            //     self.leveldb_delete(block as u64)?;
-            // }
+        if self.get_alloc_blocks().remove(&(block as usize)).is_some() {
             Ok(true)
         } else {
             Ok(false)
@@ -70,8 +63,12 @@ impl HeapProfilingStorage {
 
         let mut blocks = vec![];
 
-        for (ptr, block) in self.alloc_blocks.lock().iter() {
-            blocks.push((*ptr, block.clone()));
+        {
+            let _guard = backtrace_lock();
+
+            for (ptr, block) in self.get_alloc_blocks().iter() {
+                blocks.push((*ptr, block.clone()));
+            }
         }
 
         for (ptr, bt) in blocks {
@@ -87,6 +84,10 @@ impl HeapProfilingStorage {
 }
 
 impl HeapProfilingStorage {
+    fn get_alloc_blocks(&self) -> &mut HashMap<usize, HeapBacktrace> {
+        unsafe { &mut *self.alloc_blocks.get() }
+    }
+
     fn get_frames(&self, heap: &HeapBacktrace) -> io::Result<Vec<Symbol>> {
         let mut symbols = vec![];
 
