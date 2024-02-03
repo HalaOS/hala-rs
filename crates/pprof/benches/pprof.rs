@@ -1,10 +1,12 @@
 use divan::{bench, Bencher};
-use hala_pprof::alloc::{get_heap_profiling, HeapProfilingAlloc};
+use hala_pprof::alloc::{create_heap_profiling, get_heap_profiling, HeapProfilingAlloc};
 
 #[global_allocator]
 static ALLOC: HeapProfilingAlloc = HeapProfilingAlloc;
 
 fn main() {
+    create_heap_profiling();
+
     divan::main();
 }
 

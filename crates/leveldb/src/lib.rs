@@ -1,7 +1,9 @@
 use std::{
+    borrow::Borrow,
     ffi::{c_char, c_void, CString},
     io,
     marker::PhantomData,
+    mem::size_of,
     path::Path,
     ptr::{null_mut, slice_from_raw_parts},
     rc::Rc,
@@ -14,7 +16,7 @@ use leveldb_sys::*;
 pub trait KeyValue {
     type Bytes: AsRef<[u8]>;
 
-    fn to_bytes(self) -> Self::Bytes;
+    fn to_bytes(self) -> io::Result<Self::Bytes>;
 }
 
 /// The leveldb get / iterator return type must implement this trait.
@@ -80,6 +82,16 @@ impl OpenOptions {
 
         self
     }
+
+    /// Set block size.
+    pub fn block_size(&self, size: usize) -> &Self {
+        unsafe {
+            leveldb_options_set_block_size(self.c_ops, size);
+        }
+
+        self
+    }
+
     /// Open snappy compression.
     pub fn compression(&self, flag: bool) -> &Self {
         unsafe {
@@ -158,13 +170,13 @@ impl<'a> ReadOps<'a> {
     /// Create new read options with default values.
     pub fn new_with<S>(snapshot: S) -> Self
     where
-        S: AsRef<Snapshot<'a>>,
+        S: Borrow<Snapshot<'a>>,
     {
         let c_ops = unsafe { leveldb_readoptions_create() };
 
         Self {
             c_ops,
-            _snapshot: Some(snapshot.as_ref().clone()),
+            _snapshot: Some(snapshot.borrow().clone()),
         }
     }
 }
@@ -224,13 +236,13 @@ impl<'a> WriteBatch<'a> {
     }
 
     /// Put new object into leveldb.
-    pub fn put<K, V>(&self, key: K, value: V)
+    pub fn put<K, V>(&self, key: K, value: V) -> io::Result<()>
     where
         K: KeyValue,
         V: KeyValue,
     {
-        let key = key.to_bytes();
-        let value = value.to_bytes();
+        let key = key.to_bytes()?;
+        let value = value.to_bytes()?;
 
         let key = key.as_ref();
         let value = value.as_ref();
@@ -244,16 +256,20 @@ impl<'a> WriteBatch<'a> {
                 value.len(),
             );
         }
+
+        Ok(())
     }
 
     /// Delete one row date from leveldb by provided key.
-    pub fn delete<K: KeyValue>(&self, key: K) {
-        let key = key.to_bytes();
+    pub fn delete<K: KeyValue>(&self, key: K) -> io::Result<()> {
+        let key = key.to_bytes()?;
         let key = key.as_ref();
 
         unsafe {
             leveldb_writebatch_delete(self.c_write_batch, key.as_ptr() as *mut c_char, key.len());
         }
+
+        Ok(())
     }
 
     /// Commmit batch write to leveldb.
@@ -329,8 +345,12 @@ impl<'a> Item<'a> {
 
             let buf = &*slice_from_raw_parts(raw as *const u8, length);
 
-            return K::from_bytes(buf);
-        };
+            let r = K::from_bytes(buf);
+
+            // leveldb_free(raw as *mut c_void);
+
+            r
+        }
     }
 
     pub fn value<V>(&self) -> io::Result<V>
@@ -343,8 +363,12 @@ impl<'a> Item<'a> {
 
             let buf = &*slice_from_raw_parts(raw as *const u8, length);
 
-            return V::from_bytes(buf);
-        };
+            let v = V::from_bytes(buf);
+
+            // leveldb_free(raw as *mut c_void);
+
+            v
+        }
     }
 }
 
@@ -364,11 +388,11 @@ impl<'a> KeyValueIterator<'a> {
         this
     }
 
-    pub fn seek<K>(mut self, k: K) -> Self
+    pub fn seek<K>(mut self, k: K) -> io::Result<Self>
     where
         K: KeyValue,
     {
-        let k = k.to_bytes();
+        let k = k.to_bytes()?;
 
         let k = k.as_ref();
 
@@ -376,7 +400,7 @@ impl<'a> KeyValueIterator<'a> {
 
         self.seek = true;
 
-        self
+        Ok(self)
     }
 }
 
@@ -458,8 +482,8 @@ impl Database {
     {
         let ops = ops.unwrap_or_else(|| WriteOps::new());
 
-        let key = key.to_bytes();
-        let value = value.to_bytes();
+        let key = key.to_bytes()?;
+        let value = value.to_bytes()?;
 
         let key = key.as_ref();
         let value = value.as_ref();
@@ -493,7 +517,7 @@ impl Database {
     {
         let ops = ops.unwrap_or_else(|| ReadOps::new());
 
-        let key = key.to_bytes();
+        let key = key.to_bytes()?;
 
         let key = key.as_ref();
 
@@ -526,28 +550,50 @@ impl Database {
     }
 
     /// Delete one row date from leveldb by provided key.
-    pub fn delete<K: KeyValue>(&self, key: K, ops: Option<WriteOps>) -> io::Result<()> {
+    pub fn delete<K: KeyValue>(&self, key: K, ops: Option<WriteOps>) -> io::Result<bool> {
         let ops = ops.unwrap_or_else(|| WriteOps::new());
 
-        let key = key.to_bytes();
+        let key = key.to_bytes()?;
         let key = key.as_ref();
 
         let mut error = null_mut();
 
+        let read_ops = ReadOps::new();
+        let mut read_len: usize = 0;
+
         unsafe {
-            leveldb_delete(
+            let raw = leveldb_get(
                 self.c_db,
-                ops.c_ops,
+                read_ops.c_ops,
                 key.as_ptr() as *mut c_char,
                 key.len(),
+                &mut read_len,
                 &mut error,
             );
-        }
 
-        if error != null_mut() {
-            to_io_error(error)
-        } else {
-            Ok(())
+            if error != null_mut() {
+                return to_io_error(error);
+            }
+
+            if raw != null_mut() && read_len > 0 {
+                leveldb_free(raw as *mut c_void);
+
+                leveldb_delete(
+                    self.c_db,
+                    ops.c_ops,
+                    key.as_ptr() as *mut c_char,
+                    key.len(),
+                    &mut error,
+                );
+
+                if error != null_mut() {
+                    return to_io_error(error);
+                } else {
+                    return Ok(true);
+                }
+            } else {
+                return Ok(false);
+            }
         }
     }
     /// Create a batch write session
@@ -572,16 +618,16 @@ impl Drop for Database {
 impl<'a> KeyValue for &'a str {
     type Bytes = &'a str;
 
-    fn to_bytes(self) -> Self::Bytes {
-        self
+    fn to_bytes(self) -> io::Result<Self::Bytes> {
+        Ok(self)
     }
 }
 
 impl KeyValue for String {
     type Bytes = String;
 
-    fn to_bytes(self) -> Self::Bytes {
-        self
+    fn to_bytes(self) -> io::Result<Self::Bytes> {
+        Ok(self)
     }
 }
 
@@ -597,16 +643,16 @@ impl KeyValueReturn for String {
 
 impl<'a> KeyValue for &'a [u8] {
     type Bytes = &'a [u8];
-    fn to_bytes(self) -> Self::Bytes {
-        self
+    fn to_bytes(self) -> io::Result<Self::Bytes> {
+        Ok(self)
     }
 }
 
 impl KeyValue for Vec<u8> {
     type Bytes = Self;
 
-    fn to_bytes(self) -> Self::Bytes {
-        self
+    fn to_bytes(self) -> io::Result<Self::Bytes> {
+        Ok(self)
     }
 }
 
@@ -618,3 +664,48 @@ impl KeyValueReturn for Vec<u8> {
         Ok(buf.to_vec())
     }
 }
+
+macro_rules! num_def {
+    ($t: tt) => {
+        impl KeyValue for $t {
+            type Bytes = [u8; size_of::<$t>()];
+            fn to_bytes(self) -> io::Result<Self::Bytes> {
+                Ok(self.to_ne_bytes())
+            }
+        }
+
+        impl KeyValueReturn for $t {
+            fn from_bytes(buf: &[u8]) -> io::Result<Self>
+            where
+                Self: Sized,
+            {
+                if buf.len() != size_of::<$t>() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("num data len mismatch. {}", size_of::<$t>()),
+                    ));
+                }
+
+                let mut array = [0; size_of::<$t>()];
+
+                array.copy_from_slice(buf);
+
+                Ok($t::from_ne_bytes(array))
+            }
+        }
+    };
+}
+
+num_def!(i8);
+num_def!(i16);
+num_def!(i32);
+num_def!(i64);
+num_def!(i128);
+num_def!(isize);
+
+num_def!(u8);
+num_def!(u16);
+num_def!(u32);
+num_def!(u64);
+num_def!(u128);
+num_def!(usize);

@@ -1,5 +1,6 @@
 use std::{
     alloc::GlobalAlloc,
+    fmt::Debug,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         OnceLock,
@@ -23,6 +24,12 @@ pub struct HeapProfiling {
     storage: HeapProfilingStorage,
 }
 
+impl Debug for HeapProfiling {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "HeapProfiling")
+    }
+}
+
 unsafe impl Send for HeapProfiling {}
 unsafe impl Sync for HeapProfiling {}
 
@@ -30,7 +37,6 @@ impl HeapProfiling {
     fn new() -> Self {
         Self {
             on: AtomicBool::default(),
-            // blocks: Default::default(),
             alloc_size: AtomicUsize::default(),
             storage: HeapProfilingStorage::new().unwrap(),
         }
@@ -50,17 +56,17 @@ impl HeapProfiling {
         let reentrancy = Reentrancy::new();
 
         if reentrancy.is_ok() {
-            let profiling = get_heap_profiling();
+            if let Some(profiling) = _get_heap_profiling() {
+                if profiling.is_on() {
+                    profiling
+                        .alloc_size
+                        .fetch_add(layout.size(), Ordering::Relaxed);
 
-            if profiling.is_on() {
-                profiling
-                    .alloc_size
-                    .fetch_add(layout.size(), Ordering::Relaxed);
-
-                profiling
-                    .storage
-                    .register_heap_block(ptr, layout.size())
-                    .unwrap();
+                    profiling
+                        .storage
+                        .register_heap_block(ptr, layout.size())
+                        .unwrap();
+                }
             }
         }
 
@@ -74,12 +80,12 @@ impl HeapProfiling {
         ptr: *mut u8,
         layout: std::alloc::Layout,
     ) {
-        let profiling = get_heap_profiling();
-
-        if profiling.storage.unregister_heap_block(ptr).unwrap() {
-            profiling
-                .alloc_size
-                .fetch_sub(layout.size(), Ordering::Relaxed);
+        if let Some(profiling) = _get_heap_profiling() {
+            if profiling.storage.unregister_heap_block(ptr).unwrap() {
+                profiling
+                    .alloc_size
+                    .fetch_sub(layout.size(), Ordering::Relaxed);
+            }
         }
 
         unsafe { alloc.dealloc(ptr, layout) }
@@ -121,5 +127,18 @@ static HEAP_PROFILING: OnceLock<HeapProfiling> = OnceLock::new();
 
 /// Get global heap profiling instance.
 pub fn get_heap_profiling() -> &'static HeapProfiling {
-    HEAP_PROFILING.get_or_init(|| HeapProfiling::new())
+    HEAP_PROFILING
+        .get()
+        .expect("Call create_heap_profiling first")
+}
+fn _get_heap_profiling() -> Option<&'static HeapProfiling> {
+    HEAP_PROFILING.get()
+}
+
+pub fn create_heap_profiling() {
+    let _reentracy = Reentrancy::new();
+
+    HEAP_PROFILING
+        .set(HeapProfiling::new())
+        .expect("Call create_heap_profiling more than once.");
 }

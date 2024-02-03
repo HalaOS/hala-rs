@@ -28,7 +28,7 @@ use clap::Parser;
 use hala_rs::{
     io::sleep,
     pprof::{
-        alloc::{get_heap_profiling, HeapProfilingAlloc},
+        alloc::{create_heap_profiling, get_heap_profiling, HeapProfilingAlloc},
         pprof::HeapProfilingPerfToolsBuilder,
     },
     rproxy::{profile::get_profile_config, GatewayFactoryManager},
@@ -39,6 +39,10 @@ static ALLOC: HeapProfilingAlloc = HeapProfilingAlloc;
 
 pub async fn rproxy_main() -> io::Result<()> {
     let rproxy_config = ReverseProxy::parse();
+
+    if rproxy_config.pprof {
+        create_heap_profiling();
+    }
 
     get_profile_config().on(true);
 

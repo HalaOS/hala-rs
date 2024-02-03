@@ -40,6 +40,7 @@ fn test_leveldb() {
         let c = db
             .iter(None)
             .seek(format!("hello {}", i))
+            .unwrap()
             .map(|item| {
                 (
                     item.key::<String>().unwrap(),

@@ -1,4 +1,11 @@
-use std::{cell::UnsafeCell, collections::HashMap, io, os::raw::c_void, ptr::null_mut};
+use std::{io, os::raw::c_void, ptr::null_mut};
+
+#[cfg(not(feature = "leveldb"))]
+use std::cell::UnsafeCell;
+#[cfg(not(feature = "leveldb"))]
+use std::collections::HashMap;
+
+use hala_leveldb::ReadOps;
 
 use crate::{
     backtrace::{HeapBacktrace, Symbol},
@@ -9,8 +16,12 @@ use super::HeapProfilingReport;
 
 /// Process backtrace database access structure.
 pub struct HeapProfilingStorage {
+    #[cfg(not(feature = "leveldb"))]
     /// memory cached allocated heap block list.
     alloc_blocks: UnsafeCell<HashMap<usize, HeapBacktrace>>,
+
+    #[cfg(feature = "leveldb")]
+    level_db: hala_leveldb::Database,
 }
 /// Safety: leveldb c implementation can be accessed safely in multi-threaded mode.
 unsafe impl Sync for HeapProfilingStorage {}
@@ -18,10 +29,34 @@ unsafe impl Send for HeapProfilingStorage {}
 
 impl HeapProfilingStorage {
     /// Create new backtrace database.
+    #[cfg(not(feature = "leveldb"))]
     pub fn new() -> io::Result<Self> {
         Ok(Self {
             alloc_blocks: Default::default(),
         })
+    }
+
+    #[cfg(feature = "leveldb")]
+    pub fn new() -> io::Result<Self> {
+        use std::{env::temp_dir, fs::create_dir_all, process};
+
+        use hala_leveldb::OpenOptions;
+
+        let path = temp_dir().join(format!("{}", process::id())).join("heap");
+
+        if !path.exists() {
+            create_dir_all(path.clone())?;
+        }
+
+        let ops = OpenOptions::new();
+
+        ops.block_size(1024 * 1024);
+        ops.write_buffer_size(1024 * 1024);
+        ops.create_if_missing(true);
+
+        let level_db = hala_leveldb::Database::open(path, Some(ops))?;
+
+        Ok(Self { level_db })
     }
 
     /// Register heap allocated block and generate backtrace metadata.
@@ -36,25 +71,68 @@ impl HeapProfilingStorage {
 
         let proto_heap_backtrace = HeapBacktrace { block_size, frames };
 
-        let _guard = backtrace_lock();
+        #[cfg(not(feature = "leveldb"))]
+        {
+            let _guard = backtrace_lock();
 
-        self.get_alloc_blocks()
-            .insert(block as usize, proto_heap_backtrace);
+            self.get_alloc_blocks()
+                .insert(block as usize, proto_heap_backtrace);
+        }
+
+        #[cfg(feature = "leveldb")]
+        {
+            self.level_db
+                .put(block as usize, proto_heap_backtrace, None)?;
+        }
 
         Ok(())
     }
 
     /// Unregister heap block and remove backtrace metadata.
     pub fn unregister_heap_block(&self, block: *mut u8) -> io::Result<bool> {
-        let _guard = backtrace_lock();
+        #[cfg(not(feature = "leveldb"))]
+        {
+            let _guard = backtrace_lock();
 
-        if self.get_alloc_blocks().remove(&(block as usize)).is_some() {
-            Ok(true)
-        } else {
-            Ok(false)
+            if self.get_alloc_blocks().remove(&(block as usize)).is_some() {
+                Ok(true)
+            } else {
+                Ok(false)
+            }
+        }
+
+        #[cfg(feature = "leveldb")]
+        {
+            Ok(self.level_db.delete(block as usize, None)?)
         }
     }
 
+    #[cfg(feature = "leveldb")]
+    pub fn report<R: HeapProfilingReport>(&self, dump: &mut R) -> io::Result<()> {
+        assert!(
+            !Reentrancy::new().is_ok(),
+            "Calls to dump_heap_backtraces must be protected by Reentrancy."
+        );
+
+        let snapshot = self.level_db.snapshot();
+
+        let iter = self.level_db.iter(Some(ReadOps::new_with(snapshot)));
+
+        for item in iter {
+            let ptr = item.key::<usize>()?;
+            let bt = item.value::<HeapBacktrace>()?;
+
+            let frames = self.get_frames(&bt)?;
+
+            if !dump.write_block(ptr as *mut u8, bt.block_size as usize, &frames) {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
+    #[cfg(not(feature = "leveldb"))]
     pub fn report<R: HeapProfilingReport>(&self, dump: &mut R) -> io::Result<()> {
         assert!(
             !Reentrancy::new().is_ok(),
@@ -84,6 +162,7 @@ impl HeapProfilingStorage {
 }
 
 impl HeapProfilingStorage {
+    #[cfg(not(feature = "leveldb"))]
     fn get_alloc_blocks(&self) -> &mut HashMap<usize, HeapBacktrace> {
         unsafe { &mut *self.alloc_blocks.get() }
     }
@@ -105,7 +184,7 @@ impl HeapProfilingStorage {
                     if proto_symbol.is_none() {
                         proto_symbol = Some(Symbol {
                             name: symbol.name().map(|s| s.to_string()).unwrap_or_default(),
-                            address: symbol.addr().unwrap_or(null_mut()),
+                            address: symbol.addr().unwrap_or(null_mut()) as usize,
                             file_name: symbol
                                 .filename()
                                 .map(|path| path.to_str().unwrap().to_string())
@@ -125,14 +204,14 @@ impl HeapProfilingStorage {
         Ok(symbols)
     }
 
-    fn generate_backtrace(&self) -> io::Result<Vec<*mut c_void>> {
+    fn generate_backtrace(&self) -> io::Result<Vec<usize>> {
         let mut symbols = vec![];
 
         unsafe {
             let _gurad = backtrace_lock();
 
             backtrace::trace_unsynchronized(|frame| {
-                symbols.push(frame.symbol_address());
+                symbols.push(frame.symbol_address() as usize);
 
                 if symbols.len() > 12 {
                     false

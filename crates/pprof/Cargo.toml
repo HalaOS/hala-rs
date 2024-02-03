@@ -11,12 +11,15 @@ version.workspace = true
 
 [dependencies]
 backtrace = {workspace = true}
+bson = {workspace = true, optional = true}
 bytes = {workspace = true}
 dashmap = {workspace = true}
 libc = {workspace = true}
 log = {workspace = true}
 protobuf = {workspace = true}
+serde = {workspace = true}
 
+hala-leveldb = {workspace = true, optional = true}
 hala-sync = {workspace = true}
 
 [dev-dependencies]
@@ -28,6 +31,10 @@ serde_json = {workspace = true}
 cc = {workspace = true}
 protobuf-codegen = {workspace = true}
 protoc-bin-vendored = {workspace = true}
+
+[features]
+default = ["leveldb"]
+leveldb = ["hala-leveldb", "bson"]
 
 [[bench]]
 harness = false

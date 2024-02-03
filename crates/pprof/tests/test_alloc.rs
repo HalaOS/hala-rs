@@ -1,7 +1,7 @@
-use std::fs;
+use std::{fs, sync::Once};
 
 use hala_pprof::{
-    alloc::{get_heap_profiling, HeapProfilingAlloc, HeapProfilingReport},
+    alloc::{create_heap_profiling, get_heap_profiling, HeapProfilingAlloc, HeapProfilingReport},
     backtrace::Symbol,
     pprof::HeapProfilingPerfToolsBuilder,
 };
@@ -19,9 +19,14 @@ impl HeapProfilingReport for MockHeapProfilingWriter {
     }
 }
 
+static INIT: Once = Once::new();
+
 #[test]
 fn test_alloc() {
-    get_heap_profiling().record(true);
+    INIT.call_once(|| {
+        create_heap_profiling();
+        get_heap_profiling().record(true);
+    });
 
     for _ in 0..10000 {
         let _a = "hello world".to_string();
@@ -32,7 +37,10 @@ fn test_alloc() {
 
 #[test]
 fn test_alloc_vec() {
-    get_heap_profiling().record(true);
+    INIT.call_once(|| {
+        create_heap_profiling();
+        get_heap_profiling().record(true);
+    });
 
     for _ in 0..10000 {
         let mut _a = Vec::<i32>::with_capacity(10);
@@ -43,6 +51,10 @@ fn test_alloc_vec() {
 
 #[test]
 fn may_not_use_tls() {
+    INIT.call_once(|| {
+        create_heap_profiling();
+    });
+
     let mut handles = vec![];
 
     for _ in 0..10 {
@@ -58,7 +70,10 @@ fn may_not_use_tls() {
 
 #[test]
 fn test_pprof_build() {
-    get_heap_profiling().record(true);
+    INIT.call_once(|| {
+        create_heap_profiling();
+        get_heap_profiling().record(true);
+    });
 
     let mut _a = Vec::<i32>::with_capacity(10);
 
