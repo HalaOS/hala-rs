@@ -48,12 +48,11 @@ struct WakerHost {
 impl WakerHost {
     fn wake(&self) {
         if let Some(waker) = self.remove_waker() {
-            let waker = unsafe { Box::from_raw(waker) };
             waker.wake();
         }
     }
 
-    fn remove_waker(&self) -> Option<*mut Waker> {
+    fn remove_waker(&self) -> Option<Box<Waker>> {
         loop {
             let waker_ptr = self.waker.load(Ordering::Acquire);
 
@@ -69,7 +68,7 @@ impl WakerHost {
                 continue;
             }
 
-            return Some(waker_ptr);
+            return Some(unsafe { Box::from_raw(waker_ptr) });
         }
     }
 
