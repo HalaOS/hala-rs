@@ -22,6 +22,7 @@ fn main() {
         .static_crt(true)
         .flag_if_supported("-std=c++17")
         .flag_if_supported("/std:c++17")
+        .flag_if_supported("/MD")
         .opt_level(3);
 
     println!("cargo:rerun-if-changed=src/external.cpp");
