@@ -58,6 +58,7 @@ mod event_loop {
     use std::sync::Arc;
 
     use hala_future::executor::future_spawn;
+    use hala_udp::PathInfo;
     use quiche::RecvInfo;
 
     use super::*;
@@ -144,7 +145,13 @@ mod event_loop {
                         );
 
                         udp_socket
-                            .send_to(&mut buf[..read_size], send_info.to)
+                            .send_to_on_path(
+                                &mut buf[..read_size],
+                                PathInfo {
+                                    from: send_info.from,
+                                    to: send_info.to,
+                                },
+                            )
                             .await?;
                     }
                 }
