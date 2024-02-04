@@ -99,9 +99,10 @@ pub async fn rproxy_main() -> io::Result<()> {
         log::info!("tunnel: {:?}", tunnel_profile);
 
         if let Some(current) = current_memeory_allocated {
-            let allocated = get_heap_profiling().allocated();
-
             log::info!("heap profiling:");
+
+            let allocated = get_heap_profiling().allocated();
+            let blocks = get_heap_profiling().allocated_blocks();
 
             if allocated > current && allocated - current > rproxy_config.pprof_memory_increases {
                 use hala_rs::pprof::protobuf::Message;
@@ -123,7 +124,12 @@ pub async fn rproxy_main() -> io::Result<()> {
                 i += 1;
             }
 
-            log::info!("heap profiling: before={}, current={}", current, allocated);
+            log::info!(
+                "heap profiling: before={}, current={}, blocks={}",
+                current,
+                allocated,
+                blocks
+            );
         }
     }
 }

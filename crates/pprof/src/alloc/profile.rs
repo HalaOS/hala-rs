@@ -21,6 +21,7 @@ pub trait HeapProfilingReport {
 pub struct HeapProfiling {
     on: AtomicBool,
     alloc_size: AtomicUsize,
+    alloc_blocks: AtomicUsize,
     storage: HeapProfilingStorage,
 }
 
@@ -38,6 +39,7 @@ impl HeapProfiling {
         Self {
             on: AtomicBool::default(),
             alloc_size: AtomicUsize::default(),
+            alloc_blocks: AtomicUsize::default(),
             storage: HeapProfilingStorage::new().unwrap(),
         }
     }
@@ -62,6 +64,8 @@ impl HeapProfiling {
                         .alloc_size
                         .fetch_add(layout.size(), Ordering::Relaxed);
 
+                    profiling.alloc_blocks.fetch_add(1, Ordering::Relaxed);
+
                     profiling
                         .storage
                         .register_heap_block(ptr, layout.size())
@@ -85,6 +89,8 @@ impl HeapProfiling {
                 profiling
                     .alloc_size
                     .fetch_sub(layout.size(), Ordering::Relaxed);
+
+                profiling.alloc_blocks.fetch_sub(1, Ordering::Relaxed);
             }
         }
 
@@ -94,6 +100,11 @@ impl HeapProfiling {
     /// Get allocated buf size in bytes.
     pub fn allocated(&self) -> usize {
         self.alloc_size.load(Ordering::Relaxed)
+    }
+
+    /// Get allocated blocks.
+    pub fn allocated_blocks(&self) -> usize {
+        self.alloc_blocks.load(Ordering::Relaxed)
     }
 
     /// Set whether to turn on profile logging.
