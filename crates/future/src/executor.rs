@@ -1,6 +1,8 @@
 use std::sync::OnceLock;
 
-use futures::{executor::ThreadPool, future::BoxFuture, task::SpawnExt, Future, FutureExt};
+use futures::{
+    executor::ThreadPool, future::BoxFuture, task::SpawnExt, Future, FutureExt, SinkExt, StreamExt,
+};
 
 /// Future executor must implement this trait to support register to hala register system.
 pub trait FutureSpawner {
@@ -46,12 +48,12 @@ where
     Fut: Future<Output = R> + Send + 'static,
     R: Send + 'static,
 {
-    let (sender, receiver) = futures::channel::oneshot::channel::<R>();
+    let (mut sender, mut receiver) = futures::channel::mpsc::channel::<R>(0);
 
     future_spawn(async move {
         let r = fut.await;
-        _ = sender.send(r);
+        _ = sender.send(r).await;
     });
 
-    futures::executor::block_on(async move { receiver.await.unwrap() })
+    futures::executor::block_on(async move { receiver.next().await.unwrap() })
 }

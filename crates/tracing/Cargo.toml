@@ -1,5 +1,5 @@
 [package]
-description = "Hala tracing framework implementation."
+description = "A structured logging facade for rust programming."
 documentation = "https://docs.rs/hala-tracing"
 edition.workspace = true
 license = "MIT"
@@ -10,3 +10,8 @@ version.workspace = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+bson = {workspace = true}
+dashmap = {workspace = true}
+log = {workspace = true}
+serde = {workspace = true}
+uuid = {workspace = true}
