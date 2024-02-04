@@ -41,7 +41,7 @@ pub async fn rproxy_main() -> io::Result<()> {
     let rproxy_config = ReverseProxy::parse();
 
     if rproxy_config.pprof {
-        create_heap_profiling();
+        create_heap_profiling(None);
     }
 
     get_profile_config().on(true);

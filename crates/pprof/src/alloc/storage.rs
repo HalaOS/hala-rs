@@ -37,10 +37,8 @@ impl HeapProfilingStorage {
     }
 
     #[cfg(feature = "leveldb")]
-    pub fn new() -> io::Result<Self> {
+    pub fn new(ops: Option<hala_leveldb::OpenOptions>) -> io::Result<Self> {
         use std::{env::temp_dir, fs::create_dir_all, process};
-
-        use hala_leveldb::OpenOptions;
 
         let path = temp_dir().join(format!("{}", process::id())).join("heap");
 
@@ -48,13 +46,7 @@ impl HeapProfilingStorage {
             create_dir_all(path.clone())?;
         }
 
-        let ops = OpenOptions::new();
-
-        ops.block_size(1024 * 1024);
-        ops.write_buffer_size(1024 * 1024);
-        ops.create_if_missing(true);
-
-        let level_db = hala_leveldb::Database::open(path, Some(ops))?;
+        let level_db = hala_leveldb::Database::open(path, ops)?;
 
         Ok(Self { level_db })
     }

@@ -55,9 +55,14 @@ pub struct OpenOptions {
 impl OpenOptions {
     /// Create default leveldb open options.
     pub fn new() -> Self {
-        Self {
-            c_ops: unsafe { leveldb_options_create() },
-        }
+        let c_ops = unsafe {
+            let c_ops = leveldb_options_create();
+
+            leveldb_options_set_create_if_missing(c_ops, 1);
+
+            c_ops
+        };
+        Self { c_ops }
     }
     /// Create database if none exists yet
     pub fn create_if_missing(&self, flag: bool) -> &Self {

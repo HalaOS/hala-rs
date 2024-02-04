@@ -35,7 +35,18 @@ unsafe impl Send for HeapProfiling {}
 unsafe impl Sync for HeapProfiling {}
 
 impl HeapProfiling {
-    fn new() -> Self {
+    #[cfg(feature = "leveldb")]
+    fn new(ops: Option<hala_leveldb::OpenOptions>) -> Self {
+        Self {
+            on: AtomicBool::default(),
+            alloc_size: AtomicUsize::default(),
+            alloc_blocks: AtomicUsize::default(),
+            storage: HeapProfilingStorage::new(ops).unwrap(),
+        }
+    }
+
+    #[cfg(not(feature = "leveldb"))]
+    fn new(ops: Option<hala_leveldb::OpenOptions>) -> Self {
         Self {
             on: AtomicBool::default(),
             alloc_size: AtomicUsize::default(),
@@ -146,6 +157,16 @@ fn _get_heap_profiling() -> Option<&'static HeapProfiling> {
     HEAP_PROFILING.get()
 }
 
+#[cfg(feature = "leveldb")]
+pub fn create_heap_profiling(ops: Option<hala_leveldb::OpenOptions>) {
+    let _reentracy = Reentrancy::new();
+
+    HEAP_PROFILING
+        .set(HeapProfiling::new(ops))
+        .expect("Call create_heap_profiling more than once.");
+}
+
+#[cfg(not(feature = "leveldb"))]
 pub fn create_heap_profiling() {
     let _reentracy = Reentrancy::new();
 

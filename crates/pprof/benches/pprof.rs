@@ -5,7 +5,7 @@ use hala_pprof::alloc::{create_heap_profiling, get_heap_profiling, HeapProfiling
 static ALLOC: HeapProfilingAlloc = HeapProfilingAlloc;
 
 fn main() {
-    create_heap_profiling();
+    create_heap_profiling(None);
 
     divan::main();
 }

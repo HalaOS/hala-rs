@@ -1,5 +1,6 @@
 use std::{fs, sync::Once};
 
+use hala_leveldb::OpenOptions;
 use hala_pprof::{
     alloc::{create_heap_profiling, get_heap_profiling, HeapProfilingAlloc, HeapProfilingReport},
     backtrace::Symbol,
@@ -24,7 +25,7 @@ static INIT: Once = Once::new();
 #[test]
 fn test_alloc() {
     INIT.call_once(|| {
-        create_heap_profiling();
+        create_heap_profiling(Some(OpenOptions::new()));
         get_heap_profiling().record(true);
     });
 
@@ -38,7 +39,7 @@ fn test_alloc() {
 #[test]
 fn test_alloc_vec() {
     INIT.call_once(|| {
-        create_heap_profiling();
+        create_heap_profiling(Some(OpenOptions::new()));
         get_heap_profiling().record(true);
     });
 
@@ -52,7 +53,7 @@ fn test_alloc_vec() {
 #[test]
 fn may_not_use_tls() {
     INIT.call_once(|| {
-        create_heap_profiling();
+        create_heap_profiling(Some(OpenOptions::new()));
     });
 
     let mut handles = vec![];
@@ -71,7 +72,7 @@ fn may_not_use_tls() {
 #[test]
 fn test_pprof_build() {
     INIT.call_once(|| {
-        create_heap_profiling();
+        create_heap_profiling(Some(OpenOptions::new()));
         get_heap_profiling().record(true);
     });
 
