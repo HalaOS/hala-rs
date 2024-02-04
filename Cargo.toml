@@ -1,5 +1,5 @@
 [workspace]
-exclude = ["rgnix"]
+exclude = ["app/rproxy"]
 members = [
   "hala",
   "crates/lockfree",
@@ -11,6 +11,7 @@ members = [
   "crates/ops",
   "crates/pprof",
   "crates/leveldb",
+  "crates/tracing",
 ]
 resolver = "2"
 
@@ -72,6 +73,7 @@ hala-sync = {path = "crates/sync", version = "^0.1"}
 hala-tcp = {path = "crates/net/tcp", version = "^0.1"}
 hala-test = {path = "crates/test", version = "^0.1"}
 hala-tls = {path = "crates/net/tls", version = "^0.1"}
+hala-tracing = {path = "crates/tracing", version = "^0.1"}
 hala-udp = {path = "crates/net/udp", version = "^0.1"}
 
 hala-rs = {path = "hala", version = "^0.1"}

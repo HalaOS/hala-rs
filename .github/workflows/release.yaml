@@ -40,10 +40,10 @@ jobs:
         if: startsWith(matrix.os, 'windows')
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
-          manifest-path: rgnix/Cargo.toml
+          manifest-path: app/rproxy/Cargo.toml
           # (required) Comma-separated list of binary names (non-extension portion of filename) to build and upload.
           # Note that glob pattern is not supported yet.
-          bin: rgnix
+          bin: rproxy
           # (optional) Target triple, default is host triple.
           target: ${{ matrix.target }}
           # (optional) On which platform to distribute the `.tar.gz` file.
