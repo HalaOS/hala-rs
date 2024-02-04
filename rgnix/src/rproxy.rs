@@ -40,12 +40,6 @@ static ALLOC: HeapProfilingAlloc = HeapProfilingAlloc;
 pub async fn rproxy_main() -> io::Result<()> {
     let rproxy_config = ReverseProxy::parse();
 
-    if rproxy_config.pprof {
-        create_heap_profiling(None);
-    }
-
-    get_profile_config().on(true);
-
     let profile_interval = rproxy_config.profile_interval.clone();
 
     let tunnel_factory_manager = create_tunnel_factory_manager(&rproxy_config);
@@ -63,17 +57,20 @@ pub async fn rproxy_main() -> io::Result<()> {
 
     log::info!("Gateway {} created", gateway_id);
 
-    let heap_profiling = get_heap_profiling();
-
     let mut current_memeory_allocated = if rproxy_config.pprof {
+        create_heap_profiling(None);
+
         if !rproxy_config.pprof_dir.exists() {
             create_dir_all(rproxy_config.pprof_dir.clone())?;
         }
-        heap_profiling.record(true);
-        Some(heap_profiling.allocated())
+
+        get_heap_profiling().record(true);
+        Some(get_heap_profiling().allocated())
     } else {
         None
     };
+
+    get_profile_config().on(true);
 
     let mut gateway_profile: ReverseProxyProfile = ReverseProxyProfile::default();
 
@@ -98,6 +95,10 @@ pub async fn rproxy_main() -> io::Result<()> {
         log::info!("gateway: {:?}", gateway_profile);
         log::info!("tunnel: {:?}", tunnel_profile);
 
+        if !rproxy_config.pprof {
+            continue;
+        }
+
         if let Some(current) = current_memeory_allocated {
             log::info!("heap profiling:");
 
@@ -109,7 +110,7 @@ pub async fn rproxy_main() -> io::Result<()> {
 
                 current_memeory_allocated = Some(allocated);
 
-                let mut report = heap_profiling
+                let mut report = get_heap_profiling()
                     .report(|| HeapProfilingPerfToolsBuilder::new())
                     .unwrap();
 
