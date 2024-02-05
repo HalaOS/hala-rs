@@ -52,14 +52,16 @@ protobuf-codegen = "^3.3.0"
 protobuf-json-mapping = "3.3.0"
 protoc-bin-vendored = "^3.0.0"
 quiche = {version = "^0.20.0"}
+quote = "^1.0"
 rand = {version = "^0.8", features = ["getrandom"]}
 ring = "0.17.6"
 serde = {version = "^1.0", features = ["derive"]}
 serde_json = {version = "^1.0"}
+syn = {version = "^2.0", features = ["full", "parsing"]}
 thiserror = "^1.0.50"
 thiserror-no-std = "^2.0"
 url = "^2.5.0"
-uuid = "^1.6.1"
+uuid = {version = "^1.7", features = ["v4"]}
 
 hala-future = {path = "crates/future", version = "^0.1"}
 hala-io = {path = "crates/io", version = "^0.1"}
@@ -74,6 +76,7 @@ hala-tcp = {path = "crates/net/tcp", version = "^0.1"}
 hala-test = {path = "crates/test", version = "^0.1"}
 hala-tls = {path = "crates/net/tls", version = "^0.1"}
 hala-tracing = {path = "crates/tracing", version = "^0.1"}
+hala-tracing-derive = {path = "crates/tracing/derive", version = "^0.1"}
 hala-udp = {path = "crates/net/udp", version = "^0.1"}
 
 hala-rs = {path = "hala", version = "^0.1"}

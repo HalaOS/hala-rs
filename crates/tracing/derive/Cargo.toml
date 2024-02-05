@@ -1,9 +1,9 @@
 [package]
-description = "Hala test derive crate"
-documentation = "https://docs.rs/hala-test"
+description = "proc-macro crate for hala-tracing."
+documentation = "https://docs.rs/hala-tracing-derive"
 edition.workspace = true
 license = "MIT"
-name = "hala-test"
+name = "hala-tracing-derive"
 repository.workspace = true
 version.workspace = true
 
@@ -12,6 +12,7 @@ version.workspace = true
 [dependencies]
 quote = {workspace = true}
 syn = {workspace = true}
+uuid = {workspace = true}
 
 [lib]
 proc-macro = true

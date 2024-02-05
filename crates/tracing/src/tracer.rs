@@ -22,6 +22,7 @@ type BoxSubscriber = Box<dyn Subscriber + Sync + Send + 'static>;
 pub struct Tracer {
     level: AtomicUsize,
     subs: DashMap<Target, BoxSubscriber>,
+    sink: OnceLock<BoxSubscriber>,
 }
 
 impl Tracer {
@@ -29,6 +30,7 @@ impl Tracer {
         Self {
             level: AtomicUsize::new(Level::Trace as usize),
             subs: Default::default(),
+            sink: Default::default(),
         }
     }
 
@@ -55,10 +57,12 @@ impl Tracer {
 
         if let Some(target) = target {
             if let Some(sub) = self.subs.get(target) {
-                sub.is_on()
-            } else {
-                false
+                return sub.is_on();
             }
+        }
+
+        if let Some(sink) = self.sink.get() {
+            sink.is_on()
         } else {
             false
         }
@@ -75,6 +79,12 @@ impl Tracer {
                 if sub.is_on() {
                     sub.write(&record);
                 }
+            }
+        }
+
+        if let Some(sink) = self.sink.get() {
+            if sink.is_on() {
+                sink.write(&record);
             }
         }
     }
