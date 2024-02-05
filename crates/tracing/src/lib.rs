@@ -2,7 +2,8 @@ pub mod record;
 pub mod tracer;
 
 pub use hala_tracing_derive::*;
-pub use record::Level;
+pub use record::*;
+pub use tracer::*;
 pub use uuid::Uuid;
 
 /// Target for CPU profiling

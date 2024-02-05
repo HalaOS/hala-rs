@@ -13,6 +13,18 @@ version.workspace = true
 bson = {workspace = true}
 dashmap = {workspace = true}
 hala-tracing-derive = {workspace = true}
-log = {workspace = true}
+
 serde = {workspace = true}
 uuid = {workspace = true}
+
+[dev-dependencies]
+divan = {workspace = true}
+log = {workspace = true}
+
+[[bench]]
+harness = false
+name = "tracing"
+
+[[bench]]
+harness = false
+name = "log"

@@ -1,7 +1,11 @@
-use std::borrow::Cow;
+use std::{
+    borrow::Cow,
+    fmt::{Arguments, Display},
+    time::SystemTime,
+};
 
-use bson::Timestamp;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 #[repr(usize)]
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Hash, Serialize, Deserialize)]
@@ -32,25 +36,27 @@ pub enum Level {
     Trace,
 }
 
-impl From<usize> for Level {
-    fn from(value: usize) -> Self {
-        match value {
-            5 => Self::Trace,
-            4 => Self::Debug,
-            3 => Self::Info,
-            2 => Self::Warn,
-            1 => Self::Error,
-            0 => Self::Off,
-            _ => panic!("Invalid level value cast."),
-        }
-    }
-}
-
 /// The output target, either as a string or as a uuid.
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Clone)]
 pub enum Target {
     CowStr(Cow<'static, str>),
     Uuid(uuid::Uuid),
+}
+
+impl Display for Target {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Target::CowStr(val) => write!(f, "target={}", val),
+            Target::Uuid(uuid) => write!(f, "target={}", uuid),
+        }
+    }
+}
+
+impl Target {
+    /// Create target from [`Uuid`]
+    pub const fn from_uuid(uuid: Uuid) -> Self {
+        Self::Uuid(uuid)
+    }
 }
 
 impl From<uuid::Uuid> for Target {
@@ -72,22 +78,22 @@ impl From<&'static str> for Target {
 }
 
 /// The payload of a log message.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Record {
+#[derive(Debug)]
+pub struct Record<'a> {
     /// The timestamp of this record created.
-    pub ts: Timestamp,
+    pub ts: SystemTime,
     /// Record target string.
     pub target: Option<Target>,
     /// The line containing the message.
     pub line: Option<u32>,
     /// The source code file that this record generated.
-    pub file: Option<Cow<'static, str>>,
+    pub file: Option<Cow<'a, str>>,
     /// rust module path that this record generated.
-    pub module_path: Option<Cow<'static, str>>,
+    pub module_path: Option<Cow<'a, str>>,
     /// The verbosity level of the record.
     pub level: Level,
     /// The message body.
-    pub message: Option<Cow<'static, str>>,
+    pub message: Arguments<'a>,
     /// kv data in bson format
     pub kv: Option<bson::Document>,
 }

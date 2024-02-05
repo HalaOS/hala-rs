@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{parse_macro_input, Ident};
+use syn::{parse_macro_input, Ident, ItemFn};
 use uuid::Uuid;
 
 #[proc_macro]
@@ -17,5 +17,19 @@ pub fn target(item: TokenStream) -> TokenStream {
 
 #[proc_macro_attribute]
 pub fn cpu_profiling(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    item
+    let ItemFn {
+        attrs,
+        vis,
+        sig,
+        block,
+    } = parse_macro_input!(item as ItemFn);
+
+    quote! {
+        #(#attrs)*
+        #vis #sig {
+            let r = #block;
+            return r
+        }
+    }
+    .into()
 }
