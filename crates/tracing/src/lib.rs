@@ -1,9 +1,10 @@
+pub mod log;
 pub mod record;
-pub mod tracer;
+pub mod subscriber;
 
 pub use hala_tracing_derive::*;
 pub use record::*;
-pub use tracer::*;
+pub use subscriber::*;
 pub use uuid::Uuid;
 
 /// Target for CPU profiling
