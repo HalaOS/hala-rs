@@ -6,8 +6,6 @@ use std::{
     },
 };
 
-use dashmap::DashMap;
-
 use crate::{
     record::{Record, Target},
     Level,
@@ -15,84 +13,26 @@ use crate::{
 
 /// The subscriber of Record target
 pub trait Subscriber {
-    fn is_on(&self) -> bool;
-    fn write(&self, record: &Record);
+    fn is_on(&self, target: Option<&Target>) -> bool;
+    fn write(&self, record: Record);
 }
 
-type BoxSubscriber = Box<dyn Subscriber + Sync + Send + 'static>;
-
-/// The main enter of tracing facade.
-pub struct Tracer {
-    subs: DashMap<Target, BoxSubscriber>,
-    sink: OnceLock<BoxSubscriber>,
-}
-
-impl Tracer {
-    fn new() -> Self {
-        Self {
-            subs: Default::default(),
-            sink: Default::default(),
-        }
-    }
-
-    /// Register new target subsciber.
-    pub fn register_subscriber<S: Subscriber + Sync + Send + 'static, T: Into<Target>>(
-        &self,
-        target: T,
-        s: S,
-    ) {
-        self.subs.insert(target.into(), Box::new(s));
-    }
-
-    /// Check if need record message.
-    #[inline(always)]
-    pub fn need_record(&self, level: Level, target: Option<&Target>) -> bool {
-        if level > max_level() {
-            return false;
-        }
-
-        if let Some(target) = target {
-            if let Some(sub) = self.subs.get(target) {
-                return sub.is_on();
-            }
-        }
-
-        if let Some(sink) = self.sink.get() {
-            sink.is_on()
-        } else {
-            false
-        }
-    }
-
-    /// Write new tracing message.
-    pub fn write(&self, record: Record) {
-        if record.level > max_level() {
-            return;
-        }
-
-        if let Some(target) = record.target.as_ref() {
-            if let Some(sub) = self.subs.get(target) {
-                if sub.is_on() {
-                    sub.write(&record);
-                }
-            }
-        }
-
-        if let Some(sink) = self.sink.get() {
-            if sink.is_on() {
-                sink.write(&record);
-            }
-        }
-    }
-}
+type BoxSubscriber = Box<dyn Subscriber + Sync + Send>;
 
 static GLOBAL_LEVEL: AtomicUsize = AtomicUsize::new(Level::Off as usize);
 
-static GLOBAL_TRACER: OnceLock<Tracer> = OnceLock::new();
+static GLOBAL_SUB: OnceLock<BoxSubscriber> = OnceLock::new();
 
 /// Get global tracer instance.
-pub fn get_tracer() -> &'static Tracer {
-    GLOBAL_TRACER.get_or_init(|| Tracer::new())
+pub fn get_subscriber() -> Option<&'static BoxSubscriber> {
+    GLOBAL_SUB.get()
+}
+
+/// Set global tracing subscriber.
+pub fn set_subscriber<S: Subscriber + Sync + Send + 'static>(s: S) {
+    if GLOBAL_SUB.set(Box::new(s)).is_err() {
+        panic!("Call set_subscriber more than once")
+    }
 }
 
 /// Sets the global maximum log level.
@@ -116,21 +56,23 @@ macro_rules! log {
 
         if !(level > $crate::max_level()) {
             let target = ($target).into();
-            let tracer = $crate::get_tracer();
+            if let Some(sub) = $crate::get_subscriber() {
+                if sub.is_on(Some(&target)) {
 
-            if tracer.need_record(level, Some(&target)) {
-
-                tracer.write($crate::Record {
-                    ts:std::time::SystemTime::now(),
-                    target: Some(target),
-                    file: Some(file!().into()),
-                    line: Some(line!()),
-                    level,
-                    module_path: Some(module_path!().into()),
-                    kv: None,
-                    message: format_args!($($arg)+)
-                })
+                    sub.write($crate::Record {
+                        ts:std::time::SystemTime::now(),
+                        target: Some(target),
+                        file: Some(file!().into()),
+                        line: Some(line!()),
+                        level,
+                        module_path: Some(module_path!().into()),
+                        kv: None,
+                        message: format_args!($($arg)+)
+                    })
+                }
             }
+
+
         }
     };
     // ($lvl:expr, $($arg:tt)+) => {};
@@ -140,42 +82,19 @@ macro_rules! log {
 mod tests {
     use std::sync::Arc;
 
-    use crate::TARGET_CPU_PROFILING;
-
     use super::*;
 
     #[derive(Debug, Default)]
     struct MockSub(Arc<AtomicUsize>);
 
     impl Subscriber for MockSub {
-        fn is_on(&self) -> bool {
+        fn is_on(&self, _target: Option<&Target>) -> bool {
             true
         }
 
-        fn write(&self, _record: &crate::record::Record) {
+        fn write(&self, _record: crate::record::Record) {
             self.0.fetch_add(1, Ordering::Relaxed);
         }
-    }
-
-    #[test]
-    fn test_need_record() {
-        let target = "".into();
-
-        set_max_level(crate::Level::Info);
-
-        assert!(!get_tracer().need_record(crate::Level::Trace, Some(&target)));
-        assert!(!get_tracer().need_record(crate::Level::Debug, Some(&target)));
-        assert!(!get_tracer().need_record(crate::Level::Info, Some(&target)));
-        assert!(!get_tracer().need_record(crate::Level::Warn, Some(&target)));
-        assert!(!get_tracer().need_record(crate::Level::Error, Some(&target)));
-
-        get_tracer().register_subscriber(target.clone(), MockSub::default());
-
-        assert!(!get_tracer().need_record(crate::Level::Trace, Some(&target)));
-        assert!(!get_tracer().need_record(crate::Level::Debug, Some(&target)));
-        assert!(get_tracer().need_record(crate::Level::Info, Some(&target)));
-        assert!(get_tracer().need_record(crate::Level::Warn, Some(&target)));
-        assert!(get_tracer().need_record(crate::Level::Error, Some(&target)));
     }
 
     #[test]
@@ -184,9 +103,9 @@ mod tests {
 
         let counter = Arc::new(AtomicUsize::new(0));
 
-        get_tracer().register_subscriber(TARGET_CPU_PROFILING, MockSub(counter.clone()));
+        set_subscriber(MockSub(counter.clone()));
 
-        log!(target: TARGET_CPU_PROFILING, Level::Debug,"{:?} {}",MockSub::default(),1);
+        log!(target: "hello", Level::Debug,"{:?} {}",MockSub::default(),1);
 
         assert_eq!(counter.load(Ordering::Relaxed), 1);
     }
