@@ -93,7 +93,7 @@ pub struct Record<'a> {
     /// The verbosity level of the record.
     pub level: Level,
     /// The message body.
-    pub message: Arguments<'a>,
+    pub message: Option<Arguments<'a>>,
     /// kv data in bson format
     pub kv: Option<bson::Document>,
 }

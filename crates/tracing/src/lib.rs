@@ -2,6 +2,7 @@ pub mod log;
 pub mod record;
 pub mod subscriber;
 
+pub use bson;
 pub use hala_tracing_derive::*;
 pub use record::*;
 pub use subscriber::*;
