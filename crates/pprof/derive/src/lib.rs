@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 struct TargetInput {
     ident: Ident,
+    #[allow(unused)]
     token: Token![,],
     doc: LitStr,
 }
