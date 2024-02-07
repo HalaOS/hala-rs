@@ -1,5 +1,5 @@
 [package]
-description = "A structured logging facade for rust programming."
+description = "Event tracing for rust"
 documentation = "https://docs.rs/hala-tracing"
 edition.workspace = true
 license = "MIT"

@@ -16,3 +16,6 @@ uuid = {workspace = true}
 
 [lib]
 proc-macro = true
+
+[toolchain]
+channel = "nightly"

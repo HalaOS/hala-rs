@@ -100,12 +100,18 @@ pub struct Record<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::Level;
+    use std::any::Any;
 
     #[test]
-    fn test_level() {
-        assert!(Level::Debug > Level::Info);
+    fn test_as_any() {
+        let a = "hello world";
 
-        assert_eq!(Level::Debug as usize, 4);
+        let b = (&a) as &dyn Any;
+
+        let v = b.downcast_ref::<&str>().unwrap();
+
+        assert_eq!(*v, a);
+
+        log::trace!(a = "hello"; "");
     }
 }
