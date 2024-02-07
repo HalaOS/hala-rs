@@ -10,8 +10,8 @@ members = [
   "crates/net/*",
   "crates/ops",
   "crates/pprof",
+  "crates/pprof/derive",
   "crates/leveldb",
-  "crates/tracing",
 ]
 resolver = "2"
 
@@ -69,14 +69,13 @@ hala-leveldb = {path = "crates/leveldb", version = "^0.1"}
 hala-lockfree = {path = "crates/lockfree", version = "^0.1"}
 hala-ops = {path = "crates/ops", version = "^0.1"}
 hala-pprof = {path = "crates/pprof", version = "^0.1"}
+hala-pprof-derive = {path = "crates/pprof/derive", version = "^0.1"}
 hala-quic = {path = "crates/net/quic", version = "^0.1"}
 hala-rproxy = {path = "crates/net/rproxy", version = "^0.1"}
 hala-sync = {path = "crates/sync", version = "^0.1"}
 hala-tcp = {path = "crates/net/tcp", version = "^0.1"}
 hala-test = {path = "crates/test", version = "^0.1"}
 hala-tls = {path = "crates/net/tls", version = "^0.1"}
-hala-tracing = {path = "crates/tracing", version = "^0.1"}
-hala-tracing-derive = {path = "crates/tracing/derive", version = "^0.1"}
 hala-udp = {path = "crates/net/udp", version = "^0.1"}
 
 hala-rs = {path = "hala", version = "^0.1"}

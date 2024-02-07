@@ -4,7 +4,7 @@ pub use hala_lockfree as lockfree;
 pub use hala_ops as ops;
 pub use hala_rproxy as rproxy;
 pub use hala_tls as tls;
-pub use hala_tracing as tracing;
+
 pub mod net {
     pub use hala_quic as quic;
     pub use hala_tcp as tcp;

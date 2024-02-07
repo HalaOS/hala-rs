@@ -1,9 +1,9 @@
 [package]
-description = "proc-macro crate for hala-tracing."
-documentation = "https://docs.rs/hala-tracing-derive"
+description = "proc-macro crate for hala pprof"
+documentation = "https://docs.rs/hala-pprof-derive"
 edition.workspace = true
 license = "MIT"
-name = "hala-tracing-derive"
+name = "hala-pprof-derive"
 repository.workspace = true
 version.workspace = true
 

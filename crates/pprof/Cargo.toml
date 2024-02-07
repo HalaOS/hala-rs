@@ -20,6 +20,7 @@ protobuf = {workspace = true}
 serde = {workspace = true}
 
 hala-leveldb = {workspace = true, optional = true}
+hala-pprof-derive = {workspace = true}
 hala-sync = {workspace = true}
 
 [dev-dependencies]
@@ -43,3 +44,7 @@ name = "pprof"
 [[bench]]
 harness = false
 name = "standard"
+
+[[bench]]
+harness = false
+name = "log"
