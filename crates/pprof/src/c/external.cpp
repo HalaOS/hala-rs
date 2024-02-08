@@ -37,4 +37,24 @@ extern "C"
     {
         backtrace_mutex.unlock();
     }
+
+    void *recursive_mutex_create()
+    {
+        return new std::recursive_mutex();
+    }
+
+    void recursive_mutex_destroy(void *mutex)
+    {
+        delete reinterpret_cast<std::recursive_mutex *>(mutex);
+    }
+
+    void recursive_mutex_lock(void *mutex)
+    {
+        reinterpret_cast<std::recursive_mutex *>(mutex)->lock();
+    }
+
+    void recursive_mutex_unlock(void *mutex)
+    {
+        reinterpret_cast<std::recursive_mutex *>(mutex)->unlock();
+    }
 }

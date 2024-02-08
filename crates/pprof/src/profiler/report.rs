@@ -12,7 +12,7 @@ pub trait HeapReport {
     /// * frames: frame list top-to-bottom of the [`alloc`](std::alloc::GlobalAlloc::alloc) call stack.
     ///
     /// Return false will break the report loop.
-    fn report_heap_sample(&self, ptr: *mut u8, size: usize, frames: &[Symbol]) -> bool;
+    fn report_block_info(&self, ptr: *mut u8, size: usize, frames: &[Symbol]) -> bool;
 }
 
 /// To generate cpu profiling report, use should implement this trait.

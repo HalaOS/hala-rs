@@ -1,7 +1,13 @@
-use super::HeapReport;
+use crate::c::RecursiveMutex;
+
+use super::{frames_to_symbols, get_backtrace, HeapReport};
 use std::{
     alloc::{GlobalAlloc, Layout, System},
-    sync::OnceLock,
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        OnceLock,
+    },
 };
 
 /// The heap profiler statistics.
@@ -13,22 +19,78 @@ pub struct HeapProfilerStats {
     pub memory_size: usize,
 }
 
-struct HeapProfiler {}
+#[derive(Clone)]
+struct Block {
+    size: usize,
+    frames: Vec<usize>,
+}
+
+struct HeapProfiler {
+    blocks: RecursiveMutex<HashMap<usize, Block>>,
+    counter: AtomicUsize,
+    memory_size: AtomicUsize,
+}
 
 #[allow(unused)]
 impl HeapProfiler {
     fn new() -> Self {
-        Self {}
+        Self {
+            blocks: Default::default(),
+            counter: Default::default(),
+            memory_size: Default::default(),
+        }
     }
-    fn register(&self, ptr: *mut u8, layout: Layout) {}
 
-    fn unregister(&self, ptr: *mut u8, layout: Layout) {}
+    /// Register metadata for [`alloc`](GlobalAlloc::alloc) memeory block.
+    fn register(&self, ptr: *mut u8, layout: Layout) {
+        let frames = get_backtrace();
 
+        let block = Block {
+            size: layout.size(),
+            frames,
+        };
+
+        self.blocks.lock().insert(ptr as usize, block);
+
+        self.counter.fetch_add(1, Ordering::Relaxed);
+        self.memory_size.fetch_add(layout.size(), Ordering::Relaxed);
+    }
+
+    /// Unregister metadata when memory block was [`dealloc`](GlobalAlloc::dealloc).
+    fn unregister(&self, ptr: *mut u8, layout: Layout) {
+        if self.blocks.lock().remove(&(ptr as usize)).is_some() {
+            self.counter.fetch_sub(1, Ordering::Relaxed);
+            self.memory_size.fetch_sub(layout.size(), Ordering::Relaxed);
+        }
+    }
+
+    /// Generate heap stats
     fn generate_stats(&self) -> HeapProfilerStats {
-        todo!()
+        HeapProfilerStats {
+            blocks: self.counter.load(Ordering::Relaxed),
+            memory_size: self.memory_size.load(Ordering::Relaxed),
+        }
     }
 
-    fn report<R: HeapReport>(&self, report: &mut R) {}
+    fn report<R: HeapReport>(&self, report: &mut R) {
+        let mut tmp = vec![];
+
+        {
+            let blocks = self.blocks.lock();
+
+            for (ptr, block) in blocks.iter() {
+                tmp.push((*ptr, block.clone()));
+            }
+        }
+
+        for (ptr, bt) in tmp {
+            let frames = frames_to_symbols(&bt.frames);
+
+            if !report.report_block_info(ptr as *mut u8, bt.size, &frames) {
+                break;
+            }
+        }
+    }
 }
 
 static GLOBAL_HEAP_PROFILER: OnceLock<HeapProfiler> = OnceLock::new();
