@@ -72,18 +72,22 @@ impl HeapProfiler {
         }
     }
 
-    fn report<R: HeapReport>(&self, report: &mut R) {
-        let mut tmp = vec![];
+    fn snapshot(&self) -> Vec<(usize, Block)> {
+        let mut snapshot = vec![];
 
-        {
-            let blocks = self.blocks.lock();
+        let blocks = self.blocks.lock();
 
-            for (ptr, block) in blocks.iter() {
-                tmp.push((*ptr, block.clone()));
-            }
+        for (ptr, block) in blocks.iter() {
+            snapshot.push((*ptr, block.clone()));
         }
 
-        for (ptr, bt) in tmp {
+        snapshot
+    }
+
+    fn report<R: HeapReport>(&self, report: &mut R) {
+        let snapshot = self.snapshot();
+
+        for (ptr, bt) in snapshot {
             let frames = frames_to_symbols(&bt.frames);
 
             if !report.report_block_info(ptr as *mut u8, bt.size, &frames) {

@@ -53,7 +53,7 @@ pub fn cpu_profiling(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
             let r = #block;
 
-            hala_pprof::cpu::cpu_profiling(instant);
+            hala_pprof::profiler::cpu_profiler_sample(instant);
 
             return r
         }
