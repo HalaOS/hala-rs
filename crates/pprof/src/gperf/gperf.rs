@@ -19,7 +19,7 @@
 #![allow(unused_results)]
 #![allow(unused_mut)]
 
-//! Generated file from `profile.proto`
+//! Generated file from `gperf.proto`
 
 /// Generated files are compatible only with the same version
 /// of protobuf runtime.
@@ -1703,7 +1703,7 @@ impl ::protobuf::reflect::ProtobufValue for Function {
 }
 
 static file_descriptor_proto_data: &'static [u8] = b"\
-    \n\rprofile.proto\x12\x12perftools.profiles\"\xf5\x04\n\x07Profile\x12>\
+    \n\x0bgperf.proto\x12\x12perftools.profiles\"\xf5\x04\n\x07Profile\x12>\
     \n\x0bsample_type\x18\x01\x20\x03(\x0b2\x1d.perftools.profiles.ValueType\
     R\nsampleType\x122\n\x06sample\x18\x02\x20\x03(\x0b2\x1a.perftools.profi\
     les.SampleR\x06sample\x125\n\x07mapping\x18\x03\x20\x03(\x0b2\x1b.perfto\

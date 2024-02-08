@@ -35,12 +35,13 @@ protobuf-codegen = {workspace = true}
 protoc-bin-vendored = {workspace = true}
 
 [features]
-default = ["leveldb"]
+default = ["leveldb", "gperf"]
+gperf = []
 leveldb = ["hala-leveldb", "bson"]
 
-[[bench]]
-harness = false
-name = "pprof"
+# [[bench]]
+# harness = false
+# name = "pprof"
 
 [[bench]]
 harness = false

@@ -1,13 +1,14 @@
-pub use protobuf;
-mod external;
+mod c;
 
-mod proto;
-pub use proto::*;
+#[cfg(feature = "gperf")]
+mod gperf;
 
 mod prolog;
-pub use prolog::*;
+
+pub mod profiler;
 
 pub use hala_pprof_derive::*;
+pub use prolog::*;
 
 target!(CPU_PROFILING, "The cpu profiling target of profiling log.");
 
