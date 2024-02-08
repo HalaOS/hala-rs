@@ -7,10 +7,15 @@ use std::{
     time::Instant,
 };
 
+use backtrace::Symbol;
+use protobuf::well_known_types::duration::Duration;
+
 use crate::{backtrace::CpuSample, external::backtrace_lock};
 
 /// Cpu profiling report writer.
-pub trait CpuProfilingReport {}
+pub trait CpuProfilingReport {
+    fn sample(&self, cpu_times: Duration, frames: &[Symbol]) -> bool;
+}
 
 /// Cpu profiling storage.
 struct CpuProfiling {
@@ -42,6 +47,23 @@ fn get_cpu_profiling() -> &'static CpuProfiling {
     GLOBAL_CPU_PROFILING.get_or_init(|| CpuProfiling::new())
 }
 
+/// Get backtrace frame stack.
+fn generate_backtrace() -> io::Result<Vec<usize>> {
+    let mut stack = vec![];
+
+    unsafe {
+        let _gurad = backtrace_lock();
+
+        backtrace::trace_unsynchronized(|frame| {
+            stack.push(frame.symbol_address() as usize);
+
+            true
+        });
+    }
+
+    Ok(stack)
+}
+
 /// Set cpu profiling flag.
 ///
 /// True for open, false for close.
@@ -63,19 +85,4 @@ pub fn cpu_profiling(start: Instant) {
     }
 }
 
-/// Get backtrace frame stack.
-fn generate_backtrace() -> io::Result<Vec<usize>> {
-    let mut stack = vec![];
-
-    unsafe {
-        let _gurad = backtrace_lock();
-
-        backtrace::trace_unsynchronized(|frame| {
-            stack.push(frame.symbol_address() as usize);
-
-            true
-        });
-    }
-
-    Ok(stack)
-}
+pub fn cpu_profiling_report<R: CpuProfilingReport>(report: &R) {}
