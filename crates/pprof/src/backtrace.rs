@@ -1,4 +1,4 @@
-use std::io;
+use std::{io, time::Duration};
 
 use hala_leveldb::{KeyValue, KeyValueReturn};
 
@@ -12,13 +12,19 @@ pub struct Symbol {
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
-pub struct HeapBacktrace {
+pub struct HeapSample {
     pub block_size: usize,
     pub frames: Vec<usize>,
 }
 
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct CpuSample {
+    pub duration: Duration,
+    pub frames: Vec<usize>,
+}
+
 #[cfg(feature = "leveldb")]
-impl KeyValue for HeapBacktrace {
+impl KeyValue for HeapSample {
     type Bytes = Vec<u8>;
 
     fn to_bytes(self) -> io::Result<Self::Bytes> {
@@ -27,7 +33,7 @@ impl KeyValue for HeapBacktrace {
 }
 
 #[cfg(feature = "leveldb")]
-impl KeyValueReturn for HeapBacktrace {
+impl KeyValueReturn for HeapSample {
     fn from_bytes(buf: &[u8]) -> io::Result<Self>
     where
         Self: Sized,

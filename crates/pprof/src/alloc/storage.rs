@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use hala_leveldb::ReadOps;
 
 use crate::{
-    backtrace::{HeapBacktrace, Symbol},
+    backtrace::{HeapSample, Symbol},
     external::{backtrace_lock, Reentrancy},
 };
 
@@ -18,7 +18,7 @@ use super::HeapProfilingReport;
 pub struct HeapProfilingStorage {
     #[cfg(not(feature = "leveldb"))]
     /// memory cached allocated heap block list.
-    alloc_blocks: UnsafeCell<HashMap<usize, HeapBacktrace>>,
+    alloc_blocks: UnsafeCell<HashMap<usize, HeapSample>>,
 
     #[cfg(feature = "leveldb")]
     level_db: hala_leveldb::Database,
@@ -61,7 +61,7 @@ impl HeapProfilingStorage {
         // create
         let frames = self.generate_backtrace()?;
 
-        let proto_heap_backtrace = HeapBacktrace { block_size, frames };
+        let proto_heap_backtrace = HeapSample { block_size, frames };
 
         #[cfg(not(feature = "leveldb"))]
         {
@@ -112,7 +112,7 @@ impl HeapProfilingStorage {
 
         for item in iter {
             let ptr = item.key::<usize>()?;
-            let bt = item.value::<HeapBacktrace>()?;
+            let bt = item.value::<HeapSample>()?;
 
             let frames = self.get_frames(&bt)?;
 
@@ -155,11 +155,11 @@ impl HeapProfilingStorage {
 
 impl HeapProfilingStorage {
     #[cfg(not(feature = "leveldb"))]
-    fn get_alloc_blocks(&self) -> &mut HashMap<usize, HeapBacktrace> {
+    fn get_alloc_blocks(&self) -> &mut HashMap<usize, HeapSample> {
         unsafe { &mut *self.alloc_blocks.get() }
     }
 
-    fn get_frames(&self, heap: &HeapBacktrace) -> io::Result<Vec<Symbol>> {
+    fn get_frames(&self, heap: &HeapSample) -> io::Result<Vec<Symbol>> {
         let mut symbols = vec![];
 
         let _guard = backtrace_lock();

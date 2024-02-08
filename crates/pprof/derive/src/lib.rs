@@ -49,7 +49,12 @@ pub fn cpu_profiling(_attr: TokenStream, item: TokenStream) -> TokenStream {
     quote! {
         #(#attrs)*
         #vis #sig {
+            let instant = std::time::Instant::now();
+
             let r = #block;
+
+            hala_pprof::cpu::cpu_profiling(instant);
+
             return r
         }
     }

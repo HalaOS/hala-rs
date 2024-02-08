@@ -6,3 +6,6 @@ fn test_macros() {
     error!(target: "my_target", "hello {}",1);
     debug!(target: "my_target", "hello {}",1);
 }
+
+#[cpu_profiling]
+fn test_cpu_profiling() {}
