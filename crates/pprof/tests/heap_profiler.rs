@@ -1,8 +1,10 @@
-use std::sync::Once;
+use std::{fs, sync::Once};
 
 use hala_pprof::profiler::{
-    heap_profiler_report, heap_profiler_start, HeapProfilerAlloc, HeapProfilerReport,
+    gperf::GperfHeapProfilerReport, heap_profiler_report, heap_profiler_start, HeapProfilerAlloc,
+    HeapProfilerReport,
 };
+use protobuf::{text_format::print_to_string_pretty, Message};
 
 #[global_allocator]
 static ALLOC: HeapProfilerAlloc = HeapProfilerAlloc;
@@ -12,7 +14,7 @@ struct MockReport;
 #[allow(unused)]
 impl HeapProfilerReport for MockReport {
     fn report_block_info(
-        &self,
+        &mut self,
         ptr: *mut u8,
         size: usize,
         frames: &[hala_pprof::profiler::Symbol],
@@ -66,4 +68,23 @@ fn may_not_use_tls() {
     for handle in handles {
         handle.join().unwrap();
     }
+}
+
+#[test]
+fn test_pprof_build() {
+    init_heap_profiler();
+
+    let mut _a = Vec::<i32>::with_capacity(10);
+
+    let mut _b = "hello".to_string();
+
+    let mut report = GperfHeapProfilerReport::new();
+
+    heap_profiler_report(&mut report);
+
+    let profile = report.build();
+
+    fs::write("./pprof.json", print_to_string_pretty(&profile)).unwrap();
+
+    fs::write("./pprof.pb", profile.write_to_bytes().unwrap()).unwrap();
 }
