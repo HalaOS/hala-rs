@@ -1,9 +1,15 @@
+#[cfg(feature = "cpu_profiler")]
 mod cpu;
-mod frames;
-mod heap;
-mod report;
-
+#[cfg(feature = "cpu_profiler")]
 pub use cpu::*;
-pub use frames::*;
+
+#[cfg(feature = "heap_profiler")]
+mod heap;
+#[cfg(feature = "heap_profiler")]
 pub use heap::*;
+
+mod frames;
+pub use frames::*;
+
+mod report;
 pub use report::*;

@@ -11,18 +11,13 @@ version.workspace = true
 
 [dependencies]
 backtrace = {workspace = true}
-boxcar = {workspace = true}
 bson = {workspace = true, optional = true}
-bytes = {workspace = true}
-dashmap = {workspace = true}
-libc = {workspace = true}
-log = {workspace = true}
-protobuf = {workspace = true}
-serde = {workspace = true}
-
 hala-leveldb = {workspace = true, optional = true}
 hala-pprof-derive = {workspace = true}
 hala-sync = {workspace = true}
+log = {workspace = true, optional = true}
+protobuf = {workspace = true, optional = true}
+serde = {workspace = true}
 
 [dev-dependencies]
 divan = {workspace = true}
@@ -35,9 +30,13 @@ protobuf-codegen = {workspace = true}
 protoc-bin-vendored = {workspace = true}
 
 [features]
-default = ["leveldb", "gperf"]
-gperf = []
+default = ["gperf", "prolog", "cpu_profiler", "heap_profiler"]
+
+cpu_profiler = []
+gperf = ["protobuf"]
+heap_profiler = []
 leveldb = ["hala-leveldb", "bson"]
+prolog = ["log"]
 
 # [[bench]]
 # harness = false

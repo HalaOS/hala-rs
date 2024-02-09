@@ -9,7 +9,7 @@ use std::{
 
 use hala_sync::{Lockable, SpinMutex};
 
-use super::{frames_to_symbols, get_backtrace, CpuReport};
+use super::{frames_to_symbols, get_backtrace, CpuProfilerReport};
 
 struct CpuSample {
     cpu_times: Duration,
@@ -35,9 +35,9 @@ impl CpuProfiler {
             .expect("calling `cpu_profiler_start` again without calling `cpu_profiler_stop`");
     }
 
-    fn report<R: CpuReport>(&self, report: &mut R) {
+    fn report<R: CpuProfilerReport>(&self, report: &mut R) {
         self.flag
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+            .compare_exchange(true, false, Ordering::AcqRel, Ordering::Relaxed)
             .expect("calling `cpu_profiler_stop` again without calling `cpu_profiler_start`");
 
         let samples = self.samples.lock().drain(..).collect::<Vec<_>>();
@@ -76,7 +76,7 @@ pub fn cpu_profiler_start() {
 }
 
 /// Stop the global cpu profiler and use provided [`CpuReport`] to generate a cpu profiling report.
-pub fn cpu_profiler_stop<R: CpuReport>(report: &mut R) {
+pub fn cpu_profiler_stop<R: CpuProfilerReport>(report: &mut R) {
     global_cpu_profiler().report(report)
 }
 

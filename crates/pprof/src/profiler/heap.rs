@@ -1,6 +1,6 @@
 use crate::c::{RecursiveMutex, Reentrancy};
 
-use super::{frames_to_symbols, get_backtrace, HeapReport};
+use super::{frames_to_symbols, get_backtrace, HeapProfilerReport};
 use std::{
     alloc::{GlobalAlloc, Layout, System},
     collections::HashMap,
@@ -43,7 +43,8 @@ impl HeapProfiler {
 
     /// Register metadata for [`alloc`](GlobalAlloc::alloc) memeory block.
     fn register(&self, ptr: *mut u8, layout: Layout) {
-        if Reentrancy::new().is_ok() {
+        let _reentrancy = Reentrancy::new();
+        if _reentrancy.is_ok() {
             let frames = get_backtrace();
 
             let block = Block {
@@ -86,14 +87,18 @@ impl HeapProfiler {
         snapshot
     }
 
-    fn report<R: HeapReport>(&self, report: &mut R) {
-        let snapshot = self.snapshot();
+    fn report<R: HeapProfilerReport>(&self, report: &mut R) {
+        let _reentrancy = Reentrancy::new();
 
-        for (ptr, bt) in snapshot {
-            let frames = frames_to_symbols(&bt.frames);
+        if _reentrancy.is_ok() {
+            let snapshot = self.snapshot();
 
-            if !report.report_block_info(ptr as *mut u8, bt.size, &frames) {
-                break;
+            for (ptr, bt) in snapshot {
+                let frames = frames_to_symbols(&bt.frames);
+
+                if !report.report_block_info(ptr as *mut u8, bt.size, &frames) {
+                    break;
+                }
             }
         }
     }
@@ -148,7 +153,7 @@ pub fn heap_profiler_stats() -> HeapProfilerStats {
 }
 
 /// Use provided [`HeapReport`] to generate a global heap profiling report.
-pub fn heap_profiler_report<R: HeapReport>(report: &mut R) {
+pub fn heap_profiler_report<R: HeapProfilerReport>(report: &mut R) {
     global_heap_profiler()
         .expect("may not call `heap_profiler_report` before heap_profiler_start.")
         .report(report)

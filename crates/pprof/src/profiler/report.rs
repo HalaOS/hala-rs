@@ -3,7 +3,8 @@ use std::time::Duration;
 use super::Symbol;
 
 /// To generate heap profiling report, use should implement this trait.
-pub trait HeapReport {
+#[cfg(feature = "heap_profiler")]
+pub trait HeapProfilerReport {
     /// Report one allocated heap block.
     ///
     /// # Parameters
@@ -16,7 +17,8 @@ pub trait HeapReport {
 }
 
 /// To generate cpu profiling report, use should implement this trait.
-pub trait CpuReport {
+#[cfg(feature = "cpu_profiler")]
+pub trait CpuProfilerReport {
     /// Report a fn calling sampling
     ///
     /// # Parameters
