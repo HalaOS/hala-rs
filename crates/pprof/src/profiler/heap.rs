@@ -121,18 +121,18 @@ unsafe impl GlobalAlloc for HeapProfilerAlloc {
     unsafe fn alloc(&self, layout: std::alloc::Layout) -> *mut u8 {
         let ptr = System.alloc(layout);
 
-        if let Some(profiler) = global_heap_profiler() {
-            profiler.register(ptr, layout);
-        }
+        // if let Some(profiler) = global_heap_profiler() {
+        //     profiler.register(ptr, layout);
+        // }
 
         ptr
     }
 
     #[inline]
     unsafe fn dealloc(&self, ptr: *mut u8, layout: std::alloc::Layout) {
-        if let Some(profiler) = global_heap_profiler() {
-            profiler.unregister(ptr, layout);
-        }
+        // if let Some(profiler) = global_heap_profiler() {
+        //     profiler.unregister(ptr, layout);
+        // }
 
         System.dealloc(ptr, layout);
     }

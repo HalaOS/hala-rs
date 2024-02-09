@@ -1,23 +1,23 @@
 #[macro_export]
-macro_rules! log {
+macro_rules! prolog {
     (target: $target:expr, $lvl:expr, $fmt:expr, $($arg:expr)+) => {
 
-        if $crate::profiling_filter($target) {
-            $crate::profiling($target, &[$(&($arg) as &dyn std::any::Any),+])
+        if $crate::prolog_filter($target) {
+            $crate::prolog_write($target, &[$(&($arg) as &dyn std::any::Any),+]);
         }
 
-        $crate::syslog::log!(target: $target, $lvl, $fmt, $($arg)+)
+        $crate::syslog::log!(target: $target, $lvl, $fmt, $($arg)+);
     };
     (target: $target:expr, $lvl:expr, $fmt:expr) => {
 
-        if $crate::profiling_filter($target) {
-            $crate::profiling($target, &[])
+        if $crate::prolog_filter($target) {
+            $crate::prolog_write($target, &[]);
         }
 
-        $crate::syslog::log!(target: $target, $lvl, $fmt)
+        $crate::syslog::log!(target: $target, $lvl, $fmt);
     };
     ($lvl:expr, $($arg:tt)+) => {
-        $crate::syslog::log!($lvl, $($arg)+)
+        $crate::syslog::log!($lvl, $($arg)+);
     };
 }
 
@@ -39,10 +39,10 @@ macro_rules! log {
 macro_rules! error {
     // error!(target: "my_target", key1 = 42, key2 = true; "a {} event", "log")
     // error!(target: "my_target", "a {} event", "log")
-    (target: $target:expr, $($arg:tt)+) => ($crate::log!(target: $target, $crate::Level::Error, $($arg)+));
+    (target: $target:expr, $($arg:tt)+) => ($crate::prolog!(target: $target, $crate::Level::Error, $($arg)+));
 
     // error!("a {} event", "log")
-    ($($arg:tt)+) => ($crate::log!($crate::Level::Error, $($arg)+))
+    ($($arg:tt)+) => ($crate::prolog!($crate::Level::Error, $($arg)+))
 }
 
 /// Logs a message at the warn level.
@@ -63,10 +63,10 @@ macro_rules! error {
 macro_rules! warn {
     // warn!(target: "my_target", key1 = 42, key2 = true; "a {} event", "log")
     // warn!(target: "my_target", "a {} event", "log")
-    (target: $target:expr, $($arg:tt)+) => ($crate::log!(target: $target, $crate::Level::Warn, $($arg)+));
+    (target: $target:expr, $($arg:tt)+) => ($crate::prolog!(target: $target, $crate::Level::Warn, $($arg)+));
 
     // warn!("a {} event", "log")
-    ($($arg:tt)+) => ($crate::log!($crate::Level::Warn, $($arg)+))
+    ($($arg:tt)+) => ($crate::prolog!($crate::Level::Warn, $($arg)+))
 }
 
 /// Logs a message at the info level.
@@ -89,10 +89,10 @@ macro_rules! warn {
 macro_rules! info {
     // info!(target: "my_target", key1 = 42, key2 = true; "a {} event", "log")
     // info!(target: "my_target", "a {} event", "log")
-    (target: $target:expr, $($arg:tt)+) => ($crate::log!(target: $target, $crate::Level::Info, $($arg)+));
+    (target: $target:expr, $($arg:tt)+) => ($crate::prolog!(target: $target, $crate::Level::Info, $($arg)+));
 
     // info!("a {} event", "log")
-    ($($arg:tt)+) => ($crate::log!($crate::Level::Info, $($arg)+))
+    ($($arg:tt)+) => ($crate::prolog!($crate::Level::Info, $($arg)+))
 }
 
 /// Logs a message at the debug level.
@@ -114,10 +114,10 @@ macro_rules! info {
 macro_rules! debug {
     // debug!(target: "my_target", key1 = 42, key2 = true; "a {} event", "log")
     // debug!(target: "my_target", "a {} event", "log")
-    (target: $target:expr, $($arg:tt)+) => ($crate::log!(target: $target, $crate::Level::Debug, $($arg)+));
+    (target: $target:expr, $($arg:tt)+) => ($crate::prolog!(target: $target, $crate::Level::Debug, $($arg)+));
 
     // debug!("a {} event", "log")
-    ($($arg:tt)+) => ($crate::log!($crate::Level::Debug, $($arg)+))
+    ($($arg:tt)+) => ($crate::prolog!($crate::Level::Debug, $($arg)+))
 }
 
 /// Logs a message at the trace level.
@@ -141,8 +141,8 @@ macro_rules! debug {
 macro_rules! trace {
     // trace!(target: "my_target", key1 = 42, key2 = true; "a {} event", "log")
     // trace!(target: "my_target", "a {} event", "log")
-    (target: $target:expr, $($arg:tt)+) => ($crate::log!(target: $target, $crate::Level::Trace, $($arg)+));
+    (target: $target:expr, $($arg:tt)+) => ($crate::prolog!(target: $target, $crate::Level::Trace, $($arg)+));
 
     // trace!("a {} event", "log")
-    ($($arg:tt)+) => ($crate::log!($crate::Level::Trace, $($arg)+))
+    ($($arg:tt)+) => ($crate::prolog!($crate::Level::Trace, $($arg)+))
 }

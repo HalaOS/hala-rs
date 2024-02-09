@@ -38,13 +38,13 @@ heap_profiler = []
 leveldb = ["hala-leveldb", "bson"]
 prolog = ["log"]
 
-# [[bench]]
-# harness = false
-# name = "pprof"
+[[bench]]
+harness = false
+name = "prof_alloc"
 
 [[bench]]
 harness = false
-name = "standard"
+name = "sysm_alloc"
 
 [[bench]]
 harness = false

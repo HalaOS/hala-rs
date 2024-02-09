@@ -21,7 +21,7 @@ impl Parse for TargetInput {
 }
 
 #[proc_macro]
-pub fn target(item: TokenStream) -> TokenStream {
+pub fn def_target(item: TokenStream) -> TokenStream {
     let TargetInput {
         ident,
         token: _,

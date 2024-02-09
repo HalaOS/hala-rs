@@ -7,7 +7,7 @@ pub trait ProfilingLog {
 
 static PROFILING_LOG: OnceLock<Box<dyn ProfilingLog + Sync + Send>> = OnceLock::new();
 
-pub fn set_profiling_log<P: ProfilingLog + Sync + Send + 'static>(log: P) {
+pub fn set_prolog<P: ProfilingLog + Sync + Send + 'static>(log: P) {
     if PROFILING_LOG.set(Box::new(log)).is_err() {
         panic!("Call init_profiling_log more than once")
     }
@@ -15,7 +15,7 @@ pub fn set_profiling_log<P: ProfilingLog + Sync + Send + 'static>(log: P) {
 
 /// filter profiling target.
 #[inline(always)]
-pub fn profiling_filter(target: &'static str) -> bool {
+pub fn prolog_filter(target: &'static str) -> bool {
     if let Some(log) = PROFILING_LOG.get() {
         log.filter(target)
     } else {
@@ -24,7 +24,7 @@ pub fn profiling_filter(target: &'static str) -> bool {
 }
 
 #[inline(always)]
-pub fn profiling(target: &'static str, args: &[&dyn Any]) {
+pub fn prolog_write(target: &'static str, args: &[&dyn Any]) {
     if let Some(log) = PROFILING_LOG.get() {
         log.profiling(target, args)
     }
