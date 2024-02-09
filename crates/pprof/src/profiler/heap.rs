@@ -1,4 +1,4 @@
-use crate::c::RecursiveMutex;
+use crate::c::{RecursiveMutex, Reentrancy};
 
 use super::{frames_to_symbols, get_backtrace, HeapReport};
 use std::{
@@ -43,17 +43,19 @@ impl HeapProfiler {
 
     /// Register metadata for [`alloc`](GlobalAlloc::alloc) memeory block.
     fn register(&self, ptr: *mut u8, layout: Layout) {
-        let frames = get_backtrace();
+        if Reentrancy::new().is_ok() {
+            let frames = get_backtrace();
 
-        let block = Block {
-            size: layout.size(),
-            frames,
-        };
+            let block = Block {
+                size: layout.size(),
+                frames,
+            };
 
-        self.blocks.lock().insert(ptr as usize, block);
+            self.blocks.lock().insert(ptr as usize, block);
 
-        self.counter.fetch_add(1, Ordering::Relaxed);
-        self.memory_size.fetch_add(layout.size(), Ordering::Relaxed);
+            self.counter.fetch_add(1, Ordering::Relaxed);
+            self.memory_size.fetch_add(layout.size(), Ordering::Relaxed);
+        }
     }
 
     /// Unregister metadata when memory block was [`dealloc`](GlobalAlloc::dealloc).
