@@ -3,6 +3,9 @@ mod c;
 #[cfg(feature = "gperf")]
 mod gperf;
 
+#[cfg(feature = "gperf")]
+pub use protobuf;
+
 mod prolog;
 
 pub mod profiler;

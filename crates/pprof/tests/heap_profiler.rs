@@ -1,8 +1,8 @@
 use std::{fs, sync::Once};
 
 use hala_pprof::profiler::{
-    gperf::GperfHeapProfilerReport, heap_profiler_report, heap_profiler_start, HeapProfilerAlloc,
-    HeapProfilerReport,
+    gperf::GperfHeapProfilerReport, heap_profiler_report, heap_profiler_start, heap_profiler_stats,
+    HeapProfilerAlloc, HeapProfilerReport,
 };
 use protobuf::{text_format::print_to_string_pretty, Message};
 
@@ -87,4 +87,6 @@ fn test_pprof_build() {
     fs::write("./pprof.json", print_to_string_pretty(&profile)).unwrap();
 
     fs::write("./pprof.pb", profile.write_to_bytes().unwrap()).unwrap();
+
+    println!("{:?}", heap_profiler_stats());
 }

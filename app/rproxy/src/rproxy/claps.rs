@@ -100,7 +100,7 @@ pub struct ReverseProxy {
     pub profile_interval: Duration,
 
     /// Specifies whether open heap pprof.
-    #[arg(long, default_value_t = false)]
+    #[arg(long, default_value_t = true)]
     pub pprof: bool,
 
     /// Dump heap pprof file when memory increment exceeds `pprof_memory_increases`, the default value is `1M`.
