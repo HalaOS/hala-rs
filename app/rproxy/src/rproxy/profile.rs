@@ -1,7 +1,5 @@
 use std::fmt::Debug;
 
-use hala_rs::rproxy::profile::{ProfileEvent, Sample};
-
 #[derive(Default)]
 pub struct ReverseProxyProfile {
     active_conns: u64,
@@ -12,33 +10,33 @@ pub struct ReverseProxyProfile {
 }
 
 impl ReverseProxyProfile {
-    pub fn update(&mut self, sample: Sample) {
-        for event in sample.events_update {
-            match event {
-                ProfileEvent::Connect(_) => {
-                    self.active_conns += 1;
-                }
-                ProfileEvent::Disconnect(_) => {
-                    self.active_conns -= 1;
-                    self.closed_conns += 1;
-                }
-                ProfileEvent::Prohibited(_) => {
-                    self.prohibited_conns += 1;
-                }
-                ProfileEvent::OpenStream(_) => {
-                    self.active_conns += 1;
-                }
-                ProfileEvent::CloseStream(_) => {
-                    self.active_conns -= 1;
-                    self.closed_conns += 1;
-                }
-                ProfileEvent::Transport(transport) => {
-                    self.backwarding_datas += transport.backwarding_data;
-                    self.forwarding_datas += transport.forwarding_data;
-                }
-            }
-        }
-    }
+    // pub fn update(&mut self, sample: Sample) {
+    //     for event in sample.events_update {
+    //         match event {
+    //             ProfileEvent::Connect(_) => {
+    //                 self.active_conns += 1;
+    //             }
+    //             ProfileEvent::Disconnect(_) => {
+    //                 self.active_conns -= 1;
+    //                 self.closed_conns += 1;
+    //             }
+    //             ProfileEvent::Prohibited(_) => {
+    //                 self.prohibited_conns += 1;
+    //             }
+    //             ProfileEvent::OpenStream(_) => {
+    //                 self.active_conns += 1;
+    //             }
+    //             ProfileEvent::CloseStream(_) => {
+    //                 self.active_conns -= 1;
+    //                 self.closed_conns += 1;
+    //             }
+    //             ProfileEvent::Transport(transport) => {
+    //                 self.backwarding_datas += transport.backwarding_data;
+    //                 self.forwarding_datas += transport.forwarding_data;
+    //             }
+    //         }
+    //     }
+    // }
 }
 
 impl Debug for ReverseProxyProfile {

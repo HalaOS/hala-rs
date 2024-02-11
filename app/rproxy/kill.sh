@@ -1,1 +1,1 @@
-pkill rgnix
+pkill rproxy

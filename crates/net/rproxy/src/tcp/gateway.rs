@@ -1,4 +1,4 @@
-use std::{io, net::SocketAddr, sync::Arc};
+use std::{io, net::SocketAddr, sync::Arc, time::Instant};
 
 use async_trait::async_trait;
 use bytes::BytesMut;
@@ -13,9 +13,8 @@ use hala_tls::{accept, SslAcceptor};
 use uuid::Uuid;
 
 use crate::{
-    profile::{ProfileBuilder, ProfileTransportBuilder, Sample},
-    Gateway, GatewayConfig, GatewayFactory, HandshakeContext, Protocol, TransportConfig,
-    TunnelFactoryManager,
+    profile::ProfileConnect, Gateway, GatewayConfig, GatewayFactory, HandshakeContext, Protocol,
+    TransportConfig, TunnelFactoryManager,
 };
 
 struct TcpGateway {
@@ -58,19 +57,11 @@ impl Gateway for TcpGateway {
 /// The factory to create quic gateway.
 pub struct TcpGatewayFactory {
     id: String,
-    profile_builder: Arc<ProfileBuilder>,
 }
 
 impl TcpGatewayFactory {
     pub fn new<ID: ToString>(id: ID) -> Self {
-        Self {
-            id: id.to_string(),
-            profile_builder: Arc::new(ProfileBuilder::new(
-                id.to_string(),
-                vec![Protocol::Tcp, Protocol::TcpSsl],
-                true,
-            )),
-        }
+        Self { id: id.to_string() }
     }
 }
 
@@ -99,7 +90,6 @@ impl GatewayFactory for TcpGatewayFactory {
                     protocol_config.max_cache_len,
                     laddrs,
                     tunnel_factory_manager,
-                    self.profile_builder.clone(),
                 )
                 .await
             }
@@ -110,7 +100,6 @@ impl GatewayFactory for TcpGatewayFactory {
                     laddrs,
                     ssl_acceptor,
                     tunnel_factory_manager,
-                    self.profile_builder.clone(),
                 )
                 .await
             }
@@ -122,10 +111,6 @@ impl GatewayFactory for TcpGatewayFactory {
             }
         }
     }
-
-    fn sample(&self) -> Sample {
-        self.profile_builder.sample()
-    }
 }
 
 async fn start_tcp_ssl_gateway(
@@ -134,7 +119,6 @@ async fn start_tcp_ssl_gateway(
     laddrs: Vec<SocketAddr>,
     ssl_acceptor: SslAcceptor,
     tunnel_factory_manager: TunnelFactoryManager,
-    profile_builder: Arc<ProfileBuilder>,
 ) -> io::Result<Box<dyn Gateway + Send + Sync + 'static>> {
     let listener = Arc::new(TcpListener::bind(laddrs.as_slice())?);
 
@@ -148,7 +132,6 @@ async fn start_tcp_ssl_gateway(
         listener,
         ssl_acceptor,
         tunnel_factory_manager,
-        profile_builder,
     ));
 
     Ok(Box::new(gateway))
@@ -159,7 +142,6 @@ async fn start_tcp_gateway(
     max_cache_len: usize,
     laddrs: Vec<SocketAddr>,
     tunnel_factory_manager: TunnelFactoryManager,
-    profile_builder: Arc<ProfileBuilder>,
 ) -> io::Result<Box<dyn Gateway + Send + Sync + 'static>> {
     let listener = Arc::new(TcpListener::bind(laddrs.as_slice())?);
 
@@ -172,7 +154,6 @@ async fn start_tcp_gateway(
         max_cache_len,
         listener,
         tunnel_factory_manager,
-        profile_builder,
     ));
 
     Ok(Box::new(gateway))
@@ -184,7 +165,6 @@ async fn run_tcp_gateway_loop(
     max_cache_len: usize,
     listener: Arc<TcpListener>,
     tunnel_factory_manager: TunnelFactoryManager,
-    profile_builder: Arc<ProfileBuilder>,
 ) {
     log::trace!("quic gateway started, id={}", id);
 
@@ -197,7 +177,12 @@ async fn run_tcp_gateway_loop(
             }
         };
 
-        let builder = profile_builder.open_conn(Uuid::new_v4(), laddr, raddr);
+        ProfileConnect {
+            uuid: Uuid::new_v4(),
+            laddr,
+            raddr,
+            at: Instant::now(),
+        };
 
         future_spawn(gateway_handle_stream(
             id.clone(),
@@ -207,8 +192,6 @@ async fn run_tcp_gateway_loop(
             laddr,
             raddr,
             tunnel_factory_manager.clone(),
-            profile_builder.clone(),
-            builder,
         ));
     }
 
@@ -222,7 +205,6 @@ async fn run_tcp_ssl_gateway_loop(
     listener: Arc<TcpListener>,
     ssl_acceptor: SslAcceptor,
     tunnel_factory_manager: TunnelFactoryManager,
-    profile_builder: Arc<ProfileBuilder>,
 ) {
     log::trace!("quic gateway started, id={}", id);
 
@@ -235,7 +217,7 @@ async fn run_tcp_ssl_gateway_loop(
             }
         };
 
-        let builder = profile_builder.open_conn(Uuid::new_v4(), laddr, raddr);
+        // let builder = profile_builder.open_conn(Uuid::new_v4(), laddr, raddr);
 
         let stream = match accept(&ssl_acceptor, stream).await {
             Ok(stream) => stream,
@@ -258,8 +240,6 @@ async fn run_tcp_ssl_gateway_loop(
             laddr,
             raddr,
             tunnel_factory_manager.clone(),
-            profile_builder.clone(),
-            builder,
         ));
     }
 
@@ -274,13 +254,9 @@ async fn gateway_handle_stream<S>(
     laddr: SocketAddr,
     raddr: SocketAddr,
     tunnel_factory_manager: TunnelFactoryManager,
-    profile_builder: Arc<ProfileBuilder>,
-    builder: ProfileTransportBuilder,
 ) where
     S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
 {
-    let uuid = builder.uuid.clone();
-
     let (forward_sender, forward_receiver) = mpsc::channel(max_cache_len);
     let (backward_sender, backward_receiver) = mpsc::channel(max_cache_len);
 
@@ -300,7 +276,6 @@ async fn gateway_handle_stream<S>(
         max_packet_len,
         read,
         forward_sender,
-        builder.clone(),
     ));
 
     future_spawn(gatway_backward_loop(
@@ -309,7 +284,6 @@ async fn gateway_handle_stream<S>(
         raddr,
         write,
         backward_receiver,
-        builder,
     ));
 
     match tunnel_factory_manager.handshake(cx).await {
@@ -322,8 +296,6 @@ async fn gateway_handle_stream<S>(
             );
         }
         Err(err) => {
-            profile_builder.prohibited(uuid);
-
             log::trace!(
                 "gateway={}, laddr={:?}, raddr={:?}, handshake error, {}",
                 id,
@@ -342,7 +314,6 @@ async fn gatway_forward_loop<S>(
     max_packet_len: usize,
     mut stream: S,
     mut sender: Sender<BytesMut>,
-    builder: ProfileTransportBuilder,
 ) where
     S: AsyncRead + Unpin,
 {
@@ -380,8 +351,6 @@ async fn gatway_forward_loop<S>(
 
             break;
         }
-
-        builder.update_forwarding_data(read_size as u64);
     }
 }
 
@@ -391,7 +360,6 @@ async fn gatway_backward_loop<S>(
     raddr: SocketAddr,
     mut stream: S,
     mut receiver: Receiver<BytesMut>,
-    builder: ProfileTransportBuilder,
 ) where
     S: AsyncWrite + Unpin,
 {
@@ -407,12 +375,9 @@ async fn gatway_backward_loop<S>(
                     err,
                 );
 
-                builder.close();
                 return;
             }
         }
-
-        builder.update_backwarding_data(buf.len() as u64);
     }
 
     log::trace!(
@@ -423,8 +388,6 @@ async fn gatway_backward_loop<S>(
     );
 
     _ = stream.close().await;
-
-    builder.close();
 }
 
 #[cfg(test)]

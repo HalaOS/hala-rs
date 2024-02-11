@@ -3,11 +3,7 @@ use std::{io, net::SocketAddr, sync::Arc};
 use async_trait::async_trait;
 use dashmap::DashMap;
 
-use crate::{
-    profile::{get_profile_config, Sample},
-    tunnel::TunnelFactoryManager,
-    GatewayConfig, Protocol,
-};
+use crate::{tunnel::TunnelFactoryManager, GatewayConfig, Protocol};
 
 /// The gateway is responsible for accepting new connections and forwarding data.
 #[async_trait]
@@ -36,9 +32,6 @@ pub trait GatewayFactory {
         protocol_config: GatewayConfig,
         tunnel_factory_manager: TunnelFactoryManager,
     ) -> io::Result<Box<dyn Gateway + Send + Sync + 'static>>;
-
-    /// generate sample data.
-    fn sample(&self) -> Sample;
 }
 
 /// The manager for [`GatewayFactory`]
@@ -112,22 +105,5 @@ impl GatewayFactoryManager {
                 format!("gateway not found, id={}", id),
             ))
         }
-    }
-
-    /// Generate sample datas.
-    pub fn sample(&self) -> Vec<Sample> {
-        let mut samples = vec![];
-
-        if !get_profile_config().is_on() {
-            return samples;
-        }
-
-        for factory in self.gateway_factories.iter() {
-            samples.push(factory.sample());
-        }
-
-        samples.append(&mut self.tunnel_factory_manager.sample());
-
-        samples
     }
 }

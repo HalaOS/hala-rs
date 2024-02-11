@@ -1,21 +1,16 @@
-use std::{collections::HashMap, io, net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, io, net::SocketAddr};
 
 use async_trait::async_trait;
 use hala_quic::QuicConnPool;
 use hala_sync::{AsyncLockable, AsyncSpinMutex};
-use uuid::Uuid;
 
-use crate::{
-    profile::{ProfileBuilder, Sample},
-    Protocol, TransportConfig, Tunnel, TunnelFactory, TunnelOpenConfig,
-};
+use crate::{TransportConfig, Tunnel, TunnelFactory, TunnelOpenConfig};
 
 /// The tunnel factory for quic protocol.
 pub struct QuicTunnelFactory {
     id: String,
     max_conns: usize,
     conn_pools: AsyncSpinMutex<HashMap<Vec<SocketAddr>, QuicConnPool>>,
-    profile_builder: Arc<ProfileBuilder>,
 }
 
 impl QuicTunnelFactory {
@@ -24,11 +19,6 @@ impl QuicTunnelFactory {
             id: id.to_string(),
             max_conns,
             conn_pools: AsyncSpinMutex::new(HashMap::default()),
-            profile_builder: Arc::new(ProfileBuilder::new(
-                id.to_string(),
-                vec![Protocol::Quic],
-                false,
-            )),
         }
     }
 
@@ -73,22 +63,7 @@ impl TunnelFactory for QuicTunnelFactory {
 
         let stream = conn_pool.open_stream().await?;
 
-        let uuid = Uuid::new_v4();
-
-        let builder = self.profile_builder.open_stream(
-            uuid,
-            stream.conn.source_id().clone(),
-            stream.conn.destination_id().clone(),
-            stream.stream_id,
-        );
-
-        event_loops::run_tunnel_loops(
-            config.session_id,
-            config.max_packet_len,
-            stream,
-            rhs_tunnel,
-            builder,
-        );
+        event_loops::run_tunnel_loops(config.session_id, config.max_packet_len, stream, rhs_tunnel);
 
         Ok(())
     }
@@ -96,10 +71,6 @@ impl TunnelFactory for QuicTunnelFactory {
     /// Get tunnel service id.
     fn id(&self) -> &str {
         &self.id
-    }
-
-    fn sample(&self) -> Sample {
-        self.profile_builder.sample()
     }
 }
 
@@ -115,28 +86,21 @@ mod event_loops {
     use hala_quic::QuicStream;
     use uuid::Uuid;
 
-    use crate::{profile::ProfileTransportBuilder, Tunnel};
+    use crate::Tunnel;
 
     pub(super) fn run_tunnel_loops(
         session_id: Uuid,
         max_packet_len: usize,
         stream: QuicStream,
         tunnel: Tunnel,
-        profile_transport_builder: ProfileTransportBuilder,
     ) {
         future_spawn(run_tunnel_backward_loop(
             session_id.clone(),
             max_packet_len,
             stream.clone(),
             tunnel.sender,
-            profile_transport_builder.clone(),
         ));
-        future_spawn(run_tunnel_forward_loop(
-            session_id,
-            stream,
-            tunnel.receiver,
-            profile_transport_builder,
-        ));
+        future_spawn(run_tunnel_forward_loop(session_id, stream, tunnel.receiver));
     }
 
     async fn run_tunnel_backward_loop(
@@ -144,7 +108,6 @@ mod event_loops {
         max_packet_len: usize,
         stream: QuicStream,
         mut sender: Sender<BytesMut>,
-        profile_transport_builder: ProfileTransportBuilder,
     ) {
         log::trace!(
             "session_id={}, {:?}, start backwarding loop",
@@ -177,8 +140,6 @@ mod event_loops {
 
                         return;
                     }
-
-                    profile_transport_builder.update_backwarding_data(read_size as u64);
                 }
                 Err(err) => {
                     log::trace!(
@@ -197,7 +158,6 @@ mod event_loops {
         session_id: Uuid,
         mut stream: QuicStream,
         mut receiver: Receiver<BytesMut>,
-        profile_transport_builder: ProfileTransportBuilder,
     ) {
         log::trace!(
             "session_id={}, {:?}, start forwarding loop",
@@ -217,17 +177,12 @@ mod event_loops {
                 // stop stream read loop
                 _ = stream.close().await;
 
-                profile_transport_builder.close();
                 return;
             }
-
-            profile_transport_builder.update_forwarding_data(buf.len() as u64);
         }
 
         // stop stream read loop
         _ = stream.close().await;
-
-        profile_transport_builder.close();
 
         log::trace!(
             "session_id={}, {:?}, stop forwarding loop, forward tunnel broken.",

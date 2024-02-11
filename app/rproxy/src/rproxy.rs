@@ -17,7 +17,6 @@ mod tunnel;
 pub use tunnel::*;
 
 mod profile;
-pub use profile::*;
 
 use std::{
     fs::{self, create_dir_all},
@@ -31,7 +30,7 @@ use hala_rs::{
         gperf::GperfHeapProfilerReport, heap_profiler_report, heap_profiler_start,
         heap_profiler_stats, HeapProfilerAlloc,
     },
-    rproxy::{profile::get_profile_config, GatewayFactoryManager},
+    rproxy::GatewayFactoryManager,
 };
 
 #[global_allocator]
@@ -69,30 +68,11 @@ pub async fn rproxy_main() -> io::Result<()> {
         None
     };
 
-    get_profile_config().on(true);
-
-    let mut gateway_profile: ReverseProxyProfile = ReverseProxyProfile::default();
-
-    let mut tunnel_profile = ReverseProxyProfile::default();
-
     let mut i = 0;
     let process_id = process::id();
 
     loop {
         sleep(profile_interval).await.unwrap();
-
-        let samples = gateway_factory_manager.sample();
-
-        for sample in samples {
-            if sample.is_gateway {
-                gateway_profile.update(sample);
-            } else {
-                tunnel_profile.update(sample);
-            }
-        }
-
-        log::info!("gateway: {:?}", gateway_profile);
-        log::info!("tunnel: {:?}", tunnel_profile);
 
         if !rproxy_config.pprof {
             continue;
