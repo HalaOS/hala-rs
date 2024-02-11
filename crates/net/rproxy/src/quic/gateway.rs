@@ -116,7 +116,7 @@ async fn run_gateway_loop(
     listener: QuicListener,
     tunnel_factory_manager: TunnelFactoryManager,
 ) {
-    log::trace!("quic gateway started, id={}", id);
+    hala_pprof::trace!("quic gateway started, id={}", id);
 
     while let Some(conn) = listener.accept().await {
         future_spawn(gateway_handle_conn(
@@ -128,7 +128,7 @@ async fn run_gateway_loop(
         ));
     }
 
-    log::trace!("quic gateway stopped, id={}", id);
+    hala_pprof::trace!("quic gateway stopped, id={}", id);
 }
 
 async fn gateway_handle_conn(
@@ -186,10 +186,10 @@ async fn gateway_handle_stream(
 
     match tunnel_factory_manager.handshake(cx).await {
         Ok(_) => {
-            log::trace!("{:?}, gateway={}, handshake succesfully", stream, id);
+            hala_pprof::trace!("{:?}, gateway={}, handshake succesfully", stream, id);
         }
         Err(err) => {
-            log::trace!("{:?}, gateway={}, handshake error, {}", stream, id, err);
+            hala_pprof::trace!("{:?}, gateway={}, handshake error, {}", stream, id, err);
         }
     }
 }
@@ -207,7 +207,7 @@ async fn gatway_forward_loop(
         let (read_size, fin) = match stream.stream_recv(buf.as_mut()).await {
             Ok(r) => r,
             Err(err) => {
-                log::trace!(
+                hala_pprof::trace!(
                     "{:?}, session_id={:?}, stopped forwarding loop, {}",
                     stream,
                     session_id,
@@ -219,7 +219,7 @@ async fn gatway_forward_loop(
         };
 
         if fin {
-            log::trace!(
+            hala_pprof::trace!(
                 "{:?}, session_id={}, stopped forwarding loop, stream send fin({}) or forwarding broken",
                 stream,
                 session_id,
@@ -236,7 +236,7 @@ async fn gatway_forward_loop(
         let buf = buf.into_bytes_mut(Some(read_size));
 
         if sender.send(buf).await.is_err() {
-            log::trace!(
+            hala_pprof::trace!(
                 "{:?}, session_id={}, stopped recv loop, stream send fin({}) or forwarding broken",
                 stream,
                 session_id,
@@ -258,7 +258,7 @@ async fn gatway_backward_loop(
         match stream.write_all(&buf).await {
             Ok(_) => {}
             Err(err) => {
-                log::trace!(
+                hala_pprof::trace!(
                     "{:?}, session_id={}, stopped send loop, {}",
                     stream,
                     session_id,
@@ -271,7 +271,7 @@ async fn gatway_backward_loop(
         }
     }
 
-    log::trace!(
+    hala_pprof::trace!(
         "{:?}, session_id={}, stopped send loop, backwarding broken",
         stream,
         session_id

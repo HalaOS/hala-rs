@@ -50,7 +50,10 @@ mod event_loops {
     use hala_tls::{connect, ConnectConfiguration};
     use uuid::Uuid;
 
-    use crate::{TransportConfig, Tunnel};
+    use crate::{
+        profile::{ProfileConnect, ProfileEvent, TUNNEL_EVENT},
+        TransportConfig, Tunnel,
+    };
 
     pub(super) async fn start(
         session_id: Uuid,
@@ -80,8 +83,16 @@ mod event_loops {
     ) -> io::Result<()> {
         let stream = TcpStream::connect(raddrs.as_slice())?;
 
-        // let laddr = stream.local_addr()?;
-        // let raddr = stream.remote_addr()?;
+        let laddr = stream.local_addr()?;
+        let raddr = stream.remote_addr()?;
+
+        let event = ProfileEvent::Connect(Box::new(ProfileConnect {
+            uuid: session_id,
+            laddr,
+            raddr,
+        }));
+
+        hala_pprof::trace!(target: TUNNEL_EVENT, "tunnel=tcp, {:?}", event);
 
         let (read, write) = stream.split();
 
@@ -106,8 +117,8 @@ mod event_loops {
     ) -> io::Result<()> {
         let stream = TcpStream::connect(raddrs.as_slice())?;
 
-        // let laddr = stream.local_addr()?;
-        // let raddr = stream.remote_addr()?;
+        let laddr = stream.local_addr()?;
+        let raddr = stream.remote_addr()?;
 
         let stream = connect(config, &domain, stream).await.map_err(|err| {
             io::Error::new(
@@ -115,6 +126,14 @@ mod event_loops {
                 format!("Ssl handshake fail: {}", err),
             )
         })?;
+
+        let event = ProfileEvent::Connect(Box::new(ProfileConnect {
+            uuid: session_id,
+            laddr,
+            raddr,
+        }));
+
+        hala_pprof::trace!(target: TUNNEL_EVENT, "tunnel=tcpssl, {:?}", event);
 
         let (read, write) = stream.split();
 
@@ -138,7 +157,7 @@ mod event_loops {
     ) where
         S: AsyncRead + Unpin,
     {
-        log::trace!("session_id={:?}, start recv loop", uuid);
+        hala_pprof::trace!("session_id={:?}, start recv loop", uuid);
 
         loop {
             let mut buf = ReadBuf::with_capacity(max_packet_len);
@@ -146,19 +165,28 @@ mod event_loops {
             match stream.read(buf.as_mut()).await {
                 Ok(read_size) => {
                     if read_size == 0 {
-                        log::trace!("session_id={:?}, stop recv loop", uuid);
+                        hala_pprof::trace!("session_id={:?}, stop recv loop", uuid);
                         return;
                     }
 
                     let buf = buf.into_bytes_mut(Some(read_size));
 
+                    let buf_len = buf.len();
+
                     if sender.send(buf).await.is_err() {
-                        log::trace!("session_id={:?}, stop recv loop, broken backward", uuid);
+                        hala_pprof::trace!(
+                            "session_id={:?}, stop recv loop, broken backward",
+                            uuid
+                        );
                         return;
                     }
+
+                    let event = ProfileEvent::Backward(uuid, buf_len);
+
+                    hala_pprof::trace!(target: TUNNEL_EVENT, "{:?}", event);
                 }
                 Err(err) => {
-                    log::trace!("session_id={:?}, stop recv loop, err={}", uuid, err);
+                    hala_pprof::trace!("session_id={:?}, stop recv loop, err={}", uuid, err);
                     return;
                 }
             }
@@ -169,11 +197,11 @@ mod event_loops {
     where
         S: AsyncWrite + Unpin,
     {
-        log::trace!("session_id={:?}, start send loop", uuid);
+        hala_pprof::trace!("session_id={:?}, start send loop", uuid);
 
         while let Some(buf) = receiver.next().await {
             if let Err(err) = stream.write_all(&buf).await {
-                log::trace!("{:?}, stop send loop, err={}", uuid, err);
+                hala_pprof::trace!("{:?}, stop send loop, err={}", uuid, err);
 
                 // stop stream read loop
                 _ = stream.close().await;
@@ -185,7 +213,7 @@ mod event_loops {
         // stop stream read loop
         _ = stream.close().await;
 
-        log::trace!(
+        hala_pprof::trace!(
             "session_id={:?}, stop send loop, forward tunnel broken.",
             uuid
         );

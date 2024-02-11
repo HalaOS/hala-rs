@@ -1,4 +1,4 @@
-use std::{io, net::SocketAddr, sync::Arc, time::Instant};
+use std::{io, net::SocketAddr, sync::Arc};
 
 use async_trait::async_trait;
 use bytes::BytesMut;
@@ -13,8 +13,9 @@ use hala_tls::{accept, SslAcceptor};
 use uuid::Uuid;
 
 use crate::{
-    profile::ProfileConnect, Gateway, GatewayConfig, GatewayFactory, HandshakeContext, Protocol,
-    TransportConfig, TunnelFactoryManager,
+    profile::{ProfileEvent, GATEWAY_EVENT},
+    Gateway, GatewayConfig, GatewayFactory, HandshakeContext, Protocol, TransportConfig,
+    TunnelFactoryManager,
 };
 
 struct TcpGateway {
@@ -166,26 +167,24 @@ async fn run_tcp_gateway_loop(
     listener: Arc<TcpListener>,
     tunnel_factory_manager: TunnelFactoryManager,
 ) {
-    log::trace!("quic gateway started, id={}", id);
+    hala_pprof::trace!("quic gateway started, id={}", id);
 
     while let Ok((stream, raddr)) = listener.accept().await {
         let laddr = match stream.local_addr() {
             Ok(laddr) => laddr,
             Err(err) => {
-                log::trace!("Get incoming tcp stream laddr error,{}", err);
+                hala_pprof::trace!("Get incoming tcp stream laddr error,{}", err);
                 continue;
             }
         };
 
-        ProfileConnect {
-            uuid: Uuid::new_v4(),
-            laddr,
-            raddr,
-            at: Instant::now(),
-        };
+        let (uuid, conn_event) = ProfileEvent::connect(laddr, raddr);
+
+        hala_pprof::trace!(target: GATEWAY_EVENT,"Gateway, protocol=tcp, incoming={:?}",conn_event);
 
         future_spawn(gateway_handle_stream(
             id.clone(),
+            uuid,
             max_packet_len,
             max_cache_len,
             stream,
@@ -195,7 +194,7 @@ async fn run_tcp_gateway_loop(
         ));
     }
 
-    log::trace!("quic gateway stopped, id={}", id);
+    hala_pprof::trace!("quic gateway stopped, id={}", id);
 }
 
 async fn run_tcp_ssl_gateway_loop(
@@ -206,13 +205,13 @@ async fn run_tcp_ssl_gateway_loop(
     ssl_acceptor: SslAcceptor,
     tunnel_factory_manager: TunnelFactoryManager,
 ) {
-    log::trace!("quic gateway started, id={}", id);
+    hala_pprof::trace!("quic gateway started, id={}", id);
 
     while let Ok((stream, raddr)) = listener.accept().await {
         let laddr = match stream.local_addr() {
             Ok(laddr) => laddr,
             Err(err) => {
-                log::trace!("Get incoming tcp stream laddr error,{}", err);
+                hala_pprof::trace!("Get incoming tcp stream laddr error,{}", err);
                 continue;
             }
         };
@@ -222,7 +221,7 @@ async fn run_tcp_ssl_gateway_loop(
         let stream = match accept(&ssl_acceptor, stream).await {
             Ok(stream) => stream,
             Err(err) => {
-                log::trace!(
+                hala_pprof::trace!(
                     "ssl handshake error, laddr={:?}, raddr={}, {}",
                     laddr,
                     raddr,
@@ -232,8 +231,13 @@ async fn run_tcp_ssl_gateway_loop(
             }
         };
 
+        let (uuid, conn_event) = ProfileEvent::connect(laddr, raddr);
+
+        hala_pprof::trace!(target: GATEWAY_EVENT, "Gateway, protocol=tcp_ssl, incoming={:?}", conn_event);
+
         future_spawn(gateway_handle_stream(
             id.clone(),
+            uuid,
             max_packet_len,
             max_cache_len,
             stream,
@@ -243,11 +247,12 @@ async fn run_tcp_ssl_gateway_loop(
         ));
     }
 
-    log::trace!("quic gateway stopped, id={}", id);
+    hala_pprof::trace!("quic gateway stopped, id={}", id);
 }
 
 async fn gateway_handle_stream<S>(
     id: String,
+    session_id: Uuid,
     max_packet_len: usize,
     max_cache_len: usize,
     stream: S,
@@ -261,7 +266,7 @@ async fn gateway_handle_stream<S>(
     let (backward_sender, backward_receiver) = mpsc::channel(max_cache_len);
 
     let cx = HandshakeContext {
-        session_id: Uuid::new_v4(),
+        session_id,
         path: crate::PathInfo::Tcp(laddr, raddr),
         backward: backward_sender,
         forward: forward_receiver,
@@ -288,7 +293,7 @@ async fn gateway_handle_stream<S>(
 
     match tunnel_factory_manager.handshake(cx).await {
         Ok(_) => {
-            log::trace!(
+            hala_pprof::trace!(
                 "gateway={}, laddr={:?}, raddr={:?}, handshake succesfully",
                 id,
                 laddr,
@@ -296,13 +301,9 @@ async fn gateway_handle_stream<S>(
             );
         }
         Err(err) => {
-            log::trace!(
-                "gateway={}, laddr={:?}, raddr={:?}, handshake error, {}",
-                id,
-                laddr,
-                raddr,
-                err
-            );
+            let event = ProfileEvent::prohibited(session_id);
+
+            hala_pprof::trace!(target: GATEWAY_EVENT, "{:?}, prohibited, err={}", event, err);
         }
     }
 }
@@ -323,13 +324,13 @@ async fn gatway_forward_loop<S>(
         let read_size = match stream.read(buf.as_mut()).await {
             Ok(r) => r,
             Err(err) => {
-                log::trace!("session_id={}, stopped forward loop, {}", session_id, err);
+                hala_pprof::trace!("session_id={}, stopped forward loop, {}", session_id, err);
                 return;
             }
         };
 
         if read_size == 0 {
-            log::trace!(
+            hala_pprof::trace!(
                 "session_id={}, laddr={:?}, raddr={:?}, stopped forward loop, tcp stream broken",
                 session_id,
                 laddr,
@@ -341,8 +342,10 @@ async fn gatway_forward_loop<S>(
 
         let buf = buf.into_bytes_mut(Some(read_size));
 
+        let buf_len = buf.len();
+
         if sender.send(buf).await.is_err() {
-            log::trace!(
+            hala_pprof::trace!(
                 "session_id={}, laddr={:?}, raddr={:?}, stopped forward loop, forward tunnel broken",
                 session_id,
                 laddr,
@@ -351,6 +354,10 @@ async fn gatway_forward_loop<S>(
 
             break;
         }
+
+        let event = ProfileEvent::Forward(session_id, buf_len);
+
+        hala_pprof::trace!(target: GATEWAY_EVENT, "gateway=tcp/tcpssl forward data, {:?}", event);
     }
 }
 
@@ -365,22 +372,22 @@ async fn gatway_backward_loop<S>(
 {
     while let Some(buf) = receiver.next().await {
         match stream.write_all(&buf).await {
-            Ok(_) => {}
+            Ok(_) => {
+                let event = ProfileEvent::Backward(session_id, buf.len());
+
+                hala_pprof::trace!(target: GATEWAY_EVENT, "{:?}", event);
+            }
             Err(err) => {
-                log::trace!(
-                    "gateway={}, laddr={:?}, raddr={:?} stopped backward loop, {}",
-                    session_id,
-                    laddr,
-                    raddr,
-                    err,
-                );
+                let event = ProfileEvent::Disconnect(session_id);
+
+                hala_pprof::trace!(target: GATEWAY_EVENT, "stopped backward loop, {:?}, {}", event, err);
 
                 return;
             }
         }
     }
 
-    log::trace!(
+    hala_pprof::trace!(
         "gateway={}, laddr={:?}, raddr={:?}, stopped backward loop, backwarding broken",
         session_id,
         laddr,
@@ -388,6 +395,10 @@ async fn gatway_backward_loop<S>(
     );
 
     _ = stream.close().await;
+
+    let event = ProfileEvent::Disconnect(session_id);
+
+    hala_pprof::trace!(target: GATEWAY_EVENT, "stopped backward loop, {:?}", event);
 }
 
 #[cfg(test)]
@@ -519,7 +530,7 @@ mod tests {
         // wait gateway close channel
         sleep(Duration::from_secs(1)).await.unwrap();
 
-        log::trace!("Write stream again.");
+        hala_pprof::trace!("Write stream again.");
 
         // stream.write_all(send_data).await.unwrap();
 

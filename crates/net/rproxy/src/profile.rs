@@ -1,4 +1,4 @@
-use std::{fmt::Debug, net::SocketAddr, time::Instant};
+use std::{fmt::Debug, net::SocketAddr};
 
 use hala_pprof::def_target;
 use hala_quic::QuicConnectionId;
@@ -18,7 +18,23 @@ pub enum ProfileEvent {
     /// mux stream closed.
     CloseStream(Uuid),
     /// Transmisson stats updated.
-    Transport(Box<ProfileTransport>),
+    Forward(Uuid, usize),
+    Backward(Uuid, usize),
+}
+
+impl ProfileEvent {
+    pub fn connect(laddr: SocketAddr, raddr: SocketAddr) -> (Uuid, Self) {
+        let uuid = Uuid::new_v4();
+
+        (
+            uuid,
+            ProfileEvent::Connect(Box::new(ProfileConnect { uuid, laddr, raddr })),
+        )
+    }
+
+    pub fn prohibited(uuid: Uuid) -> Self {
+        ProfileEvent::Prohibited(uuid)
+    }
 }
 
 /// Profile event `Connect` content
@@ -30,8 +46,6 @@ pub struct ProfileConnect {
     pub laddr: SocketAddr,
     /// Connection remote address.
     pub raddr: SocketAddr,
-    /// Timestamp of this event.
-    pub at: Instant,
 }
 
 /// Profile event `OpenStream` content.
@@ -45,23 +59,6 @@ pub struct ProfileOpenStream {
     pub dcid: QuicConnectionId<'static>,
     /// Stream id .
     pub stream_id: u64,
-    /// Timestamp of this event.
-    pub at: Instant,
-}
-
-/// Transmission statistics
-#[derive(Debug)]
-pub struct ProfileTransport {
-    /// The unique id of this connection / stream.
-    pub uuid: Uuid,
-    /// forwarding data in bytes.
-    pub forwarding_data: u64,
-    /// backwarding data in bytes
-    pub backwarding_data: u64,
-    /// True if this is the last update for this connection's transport stats.
-    pub is_final_update: bool,
-    /// Timestamp of this event.
-    pub at: Instant,
 }
 
 def_target!(GATEWAY_EVENT, "Gateway profiling event");

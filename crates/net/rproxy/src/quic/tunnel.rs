@@ -109,7 +109,7 @@ mod event_loops {
         stream: QuicStream,
         mut sender: Sender<BytesMut>,
     ) {
-        log::trace!(
+        hala_pprof::trace!(
             "session_id={}, {:?}, start backwarding loop",
             session_id,
             stream
@@ -121,7 +121,7 @@ mod event_loops {
             match stream.stream_recv(buf.as_mut()).await {
                 Ok((read_size, fin)) => {
                     if fin {
-                        log::trace!(
+                        hala_pprof::trace!(
                             "session_id={}, {:?}, stop backwarding loop, peer sent fin",
                             session_id,
                             stream
@@ -132,7 +132,7 @@ mod event_loops {
                     let buf = buf.into_bytes_mut(Some(read_size));
 
                     if sender.send(buf).await.is_err() {
-                        log::trace!(
+                        hala_pprof::trace!(
                             "session_id={}, {:?}, stop backwarding loop, backward tunnel broken",
                             session_id,
                             stream
@@ -142,7 +142,7 @@ mod event_loops {
                     }
                 }
                 Err(err) => {
-                    log::trace!(
+                    hala_pprof::trace!(
                         "session_id={}, {:?}, stop backwarding loop, err={}",
                         session_id,
                         stream,
@@ -159,7 +159,7 @@ mod event_loops {
         mut stream: QuicStream,
         mut receiver: Receiver<BytesMut>,
     ) {
-        log::trace!(
+        hala_pprof::trace!(
             "session_id={}, {:?}, start forwarding loop",
             session_id,
             stream
@@ -167,7 +167,7 @@ mod event_loops {
 
         while let Some(buf) = receiver.next().await {
             if let Err(err) = stream.write_all(&buf).await {
-                log::trace!(
+                hala_pprof::trace!(
                     "session_id={}, {:?}, stop forwarding loop, err={}",
                     session_id,
                     stream,
@@ -184,7 +184,7 @@ mod event_loops {
         // stop stream read loop
         _ = stream.close().await;
 
-        log::trace!(
+        hala_pprof::trace!(
             "session_id={}, {:?}, stop forwarding loop, forward tunnel broken.",
             session_id,
             stream

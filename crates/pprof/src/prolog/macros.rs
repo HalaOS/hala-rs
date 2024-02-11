@@ -1,20 +1,23 @@
+pub fn __to_any<T: 'static>(t: &T) -> &dyn std::any::Any {
+    t as &dyn std::any::Any
+}
+
 #[macro_export]
 macro_rules! prolog {
-    (target: $target:expr, $lvl:expr, $fmt:expr, $($arg:expr)+) => {
+    (target: $target:expr, $lvl:expr, $fmt:tt $(,$arg:expr)+) => {
 
         if $crate::prolog_filter($target) {
             $crate::prolog_write($target, &[$(&($arg) as &dyn std::any::Any),+]);
         }
 
-        $crate::syslog::log!(target: $target, $lvl, $fmt, $($arg)+);
+        $crate::syslog::log!(target: $target, $lvl,$fmt $(,$arg)+);
     };
-    (target: $target:expr, $lvl:expr, $fmt:expr) => {
-
+    (target: $target:expr, $lvl:expr, $fmt:tt) => {
         if $crate::prolog_filter($target) {
             $crate::prolog_write($target, &[]);
         }
 
-        $crate::syslog::log!(target: $target, $lvl, $fmt);
+        $crate::syslog::log!(target: $target, $lvl,$fmt);
     };
     ($lvl:expr, $($arg:tt)+) => {
         $crate::syslog::log!($lvl, $($arg)+);

@@ -23,7 +23,6 @@ bytes = {workspace = true}
 clap = {workspace = true}
 dashmap = {workspace = true}
 futures = {workspace = true}
-log = {workspace = true}
 uuid = {workspace = true, features = ["v4", "fast-rng", "macro-diagnostics"]}
 
 [dev-dependencies]

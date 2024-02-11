@@ -22,7 +22,7 @@ pub(crate) fn mock_config(is_server: bool, max_datagram_size: usize) -> hala_qui
     // if is_server {
     let root_path = Path::new(env!("CARGO_MANIFEST_DIR"));
 
-    log::debug!("test run dir {:?}", root_path);
+    hala_pprof::debug!("test run dir {:?}", root_path);
 
     if is_server {
         config
