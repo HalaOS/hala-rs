@@ -10,6 +10,10 @@ version = "0.1.3"
 [workspace.dependencies]
 async-trait = "^0.1"
 clap = {version = "^4.4", features = ["derive"]}
+dashmap = "^5.5"
 futures = {version = "^0.3.29", features = ["executor", "thread-pool"]}
 hala-rs = {path = "../hala", version = "^0.1"}
+thiserror = "^1.0"
 uuid = {version = "^1.7", features = ["v4"]}
+
+hala-rproxy2 = {path = "./crates/rproxy", version = "^0.1"}

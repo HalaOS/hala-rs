@@ -11,6 +11,8 @@ version.workspace = true
 
 [dependencies]
 async-trait = {workspace = true}
+dashmap = {workspace = true}
 futures = {workspace = true}
 hala-rs = {workspace = true}
+thiserror = {workspace = true}
 uuid = {workspace = true}
