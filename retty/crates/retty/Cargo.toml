@@ -1,9 +1,9 @@
 [package]
-description = "Hala rproxy framework."
-documentation = "https://docs.rs/hala-rproxy2"
+description = "high-performance network architecture for general purpose server-side rust application"
+documentation = "https://docs.rs/hala-retty"
 edition.workspace = true
 license = "MIT"
-name = "hala-rproxy2"
+name = "hala-retty"
 repository.workspace = true
 version.workspace = true
 
@@ -14,5 +14,6 @@ async-trait = {workspace = true}
 dashmap = {workspace = true}
 futures = {workspace = true}
 hala-rs = {workspace = true}
+multiaddr = {workspace = true}
 thiserror = {workspace = true}
 uuid = {workspace = true}

@@ -1,5 +1,5 @@
 [workspace]
-exclude = ["app/rproxy", "rproxy"]
+exclude = ["app/rproxy", "retty"]
 members = [
   "hala",
   "crates/lockfree",
