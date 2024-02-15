@@ -1,9 +1,9 @@
 [package]
-description = "high-performance network architecture for general purpose server-side rust application"
-documentation = "https://docs.rs/hala-retty"
+description = "High Performance network service engine"
+documentation = "https://docs.rs/rgnix"
 edition.workspace = true
 license = "MIT"
-name = "hala-retty"
+name = "rgnix"
 repository.workspace = true
 version.workspace = true
 
