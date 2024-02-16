@@ -1,5 +1,6 @@
 use std::{
     io,
+    net::SocketAddr,
     sync::Arc,
     task::{Poll, Waker},
 };
@@ -9,16 +10,16 @@ use hala_rs::{
     net::quic::QuicConnectionId,
     sync::{spin_simple, Lockable},
 };
-use multiaddr::Multiaddr;
+
 use uuid::Uuid;
 
 /// The connection path of transport layer
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ConnPath {
     /// The connection from endpoint.
-    pub from: Multiaddr,
+    pub from: SocketAddr,
     /// The connection to endpoint
-    pub to: Multiaddr,
+    pub to: SocketAddr,
 }
 
 /// The connection id of transport layer.
