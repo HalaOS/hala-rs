@@ -103,10 +103,10 @@ where
         r
     }
     /// Start reverse proxy accept loop.
-    pub async fn accept<G: StreamListener + Debug>(&self, mut gateway: G) {
-        log::info!(target: "ReverseProxy", "{:?}, start gateway loop", gateway);
+    pub async fn accept<L: StreamListener + Debug>(&self, mut listener: L) {
+        log::info!(target: "ReverseProxy", "{:?}, start gateway loop", listener);
 
-        while let Some((id, conn)) = gateway.accept().await {
+        while let Some((id, conn)) = listener.accept().await {
             let this = self.clone();
 
             // A new task should be started to perform the handshake.
@@ -124,7 +124,7 @@ where
             });
         }
 
-        log::info!(target: "ReverseProxy", "{:?}, stop gateway loop", gateway);
+        log::info!(target: "ReverseProxy", "{:?}, stop gateway loop", listener);
     }
 }
 
