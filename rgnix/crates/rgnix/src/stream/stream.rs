@@ -14,12 +14,15 @@ use crate::{ConnId, Session};
 
 /// The inbound connection handshaker.
 pub trait StreamHandshaker {
+    type Handshake<'a>: Future<Output = io::Result<Session>> + Send + 'a
+    where
+        Self: 'a;
     /// Invoke inbound connection handshake processing and returns [`Session`] object.
-    fn handshake<C: AsyncWrite + AsyncRead>(
+    fn handshake<C: AsyncWrite + AsyncRead + Send + 'static>(
         &self,
         conn_id: &ConnId<'_>,
         conn: C,
-    ) -> io::Result<Session>;
+    ) -> Self::Handshake<'_>;
 }
 
 /// Gateway protocol should implement this trait.
@@ -64,12 +67,12 @@ where
     }
 
     /// Invoke inbound connection handshake.
-    async fn handshake<C: AsyncWrite + AsyncRead>(
+    async fn handshake<C: AsyncWrite + AsyncRead + Send + 'static>(
         &self,
         conn_id: &ConnId<'_>,
         conn: C,
     ) -> io::Result<()> {
-        let session = self.handshaker.handshake(conn_id, conn)?;
+        let session = self.handshaker.handshake(conn_id, conn).await?;
 
         self.conns.fetch_add(1, Ordering::Relaxed);
 

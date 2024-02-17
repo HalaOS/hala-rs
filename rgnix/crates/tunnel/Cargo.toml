@@ -1,9 +1,9 @@
 [package]
-description = "High Performance network service engine"
-documentation = "https://docs.rs/rgnix"
+description = "quic tunnel framework base on rgnix."
+documentation = "https://docs.rs/quictun"
 edition.workspace = true
 license = "MIT"
-name = "rgnix"
+name = "quictun"
 repository.workspace = true
 version.workspace = true
 
@@ -13,4 +13,5 @@ version.workspace = true
 futures = {workspace = true}
 hala-rs = {workspace = true}
 log = {workspace = true}
+rgnix = {workspace = true}
 uuid = {workspace = true}

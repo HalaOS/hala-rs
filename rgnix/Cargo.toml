@@ -18,4 +18,4 @@ multiaddr = {version = "^0.18"}
 thiserror = "^1.0"
 uuid = {version = "^1.7", features = ["v4"]}
 
-hala-rproxy2 = {path = "./crates/rproxy", version = "^0.1"}
+rgnix = {path = "./crates/rgnix", version = "^0.1"}
