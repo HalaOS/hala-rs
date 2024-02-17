@@ -7,11 +7,7 @@ use std::{
 };
 
 use clap::Parser;
-use hala_rs::{
-    future::executor::{block_on, future_spawn},
-    io::sleep,
-    net::quic::Config,
-};
+use hala_rs::{future::executor::future_spawn, io::sleep, net::quic::Config};
 use rgnix::{StreamHandshaker, StreamRProxy};
 
 type SocketAddrs = Vec<SocketAddr>;
@@ -144,9 +140,7 @@ fn make_config(quic_tunn_config: &QuicTunnelConfig) -> Config {
             .unwrap();
     }
 
-    config
-        .set_application_protos(&[b"hq-interop", b"hq-29", b"hq-28", b"hq-27", b"http/0.9"])
-        .unwrap();
+    config.set_application_protos(&[b"qtun"]).unwrap();
 
     config.set_max_idle_timeout(quic_tunn_config.timeout.as_millis() as u64);
     config.set_max_recv_udp_payload_size(quic_tunn_config.mtu);
@@ -181,10 +175,10 @@ fn print_stats<H: StreamHandshaker + Sync + Send + 'static>(
 }
 
 #[cfg(feature = "server")]
-async fn run_server() -> io::Result<()> {
+pub async fn run_server() -> io::Result<()> {
+    use crate::server::TcpForwardHandshaker;
     use hala_rs::net::quic::QuicListener;
     use rgnix::quic::QuicStreamListener;
-    use rgnix_tunnel::server::TcpForwardHandshaker;
 
     let quic_tun_config = QuicTunnelConfig::parse();
 
@@ -204,10 +198,10 @@ async fn run_server() -> io::Result<()> {
 }
 
 #[cfg(feature = "client")]
-async fn run_client() -> io::Result<()> {
+pub async fn run_client() -> io::Result<()> {
     use hala_rs::net::{quic::QuicConnPool, tcp::TcpListener};
 
-    use rgnix_tunnel::client::QuicTunnHandshaker;
+    use crate::client::QuicTunnHandshaker;
 
     let quic_tun_config = QuicTunnelConfig::parse();
 
@@ -228,18 +222,4 @@ async fn run_client() -> io::Result<()> {
     rproxy.accept(tcp_listener).await;
 
     Ok(())
-}
-
-fn main() {
-    pretty_env_logger::init_timed();
-
-    #[cfg(feature = "server")]
-    if let Err(err) = block_on(run_server()) {
-        log::error!("{}", err);
-    }
-
-    #[cfg(feature = "client")]
-    if let Err(err) = block_on(run_client()) {
-        log::error!("{}", err);
-    }
 }
