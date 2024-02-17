@@ -15,22 +15,9 @@ duration-str = {workspace = true}
 futures = {workspace = true}
 hala-rs = {workspace = true}
 log = {workspace = true}
-pretty_env_logger = {workspace = true}
 rgnix = {workspace = true}
 uuid = {workspace = true}
 
 [features]
 client = []
 server = []
-
-[[bin]]
-bench = false
-name = "qtun-server"
-path = "qtun/main.rs"
-required-features = ["server"]
-
-[[bin]]
-bench = false
-name = "qtun-client"
-path = "qtun/main.rs"
-required-features = ["client"]

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/*"]
+members = ["app/*", "crates/*"]
 resolver = "2"
 
 [workspace.package]
@@ -21,3 +21,4 @@ thiserror = "^1.0"
 uuid = {version = "^1.7", features = ["v4"]}
 
 rgnix = {path = "./crates/rgnix", version = "^0.1"}
+rgnix-tunnel = {path = "./crates/tunnel", version = "^0.1"}
