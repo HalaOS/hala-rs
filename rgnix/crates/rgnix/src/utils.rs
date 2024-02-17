@@ -1,6 +1,5 @@
 use std::{
     io,
-    net::SocketAddr,
     sync::Arc,
     task::{Poll, Waker},
 };
@@ -13,15 +12,6 @@ use hala_rs::{
 
 use uuid::Uuid;
 
-/// The connection path of transport layer
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ConnPath {
-    /// The connection from endpoint.
-    pub from: SocketAddr,
-    /// The connection to endpoint
-    pub to: SocketAddr,
-}
-
 /// The connection id of transport layer.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -29,7 +19,7 @@ pub enum ConnId<'a> {
     /// Connection id for tcp.
     Tcp(Uuid),
     /// Connection id for quic stream.
-    QuicStream(QuicConnectionId<'a>, u64),
+    QuicStream(QuicConnectionId<'a>, QuicConnectionId<'a>, u64),
 }
 
 impl<'a> ConnId<'a> {
@@ -38,7 +28,9 @@ impl<'a> ConnId<'a> {
     pub fn into_owned(self) -> ConnId<'static> {
         match self {
             ConnId::Tcp(uuid) => ConnId::Tcp(uuid),
-            ConnId::QuicStream(cid, stream_id) => ConnId::QuicStream(cid.into_owned(), stream_id),
+            ConnId::QuicStream(scid, dcid, stream_id) => {
+                ConnId::QuicStream(scid.into_owned(), dcid.into_owned(), stream_id)
+            }
         }
     }
 }
@@ -56,16 +48,14 @@ struct SessionFlag {
 #[derive(Clone)]
 pub struct Session {
     pub id: ConnId<'static>,
-    pub path: ConnPath,
     flag: Arc<spin_simple::SpinMutex<SessionFlag>>,
 }
 
 impl Session {
     /// Create new [`ConnContext`] with provided [`ConnId`] and [`ConnPath`]
-    pub fn new(id: ConnId<'static>, path: ConnPath) -> Self {
+    pub fn new(id: ConnId<'static>) -> Self {
         Self {
             id,
-            path,
             flag: Default::default(),
         }
     }

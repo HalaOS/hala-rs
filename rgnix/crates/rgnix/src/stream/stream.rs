@@ -10,7 +10,7 @@ use std::{
 use futures::{AsyncRead, AsyncWrite, Future};
 use hala_rs::future::executor::future_spawn;
 
-use crate::{ConnId, ConnPath, Session};
+use crate::{ConnId, Session};
 
 /// The inbound connection handshaker.
 pub trait StreamHandshaker {
@@ -18,7 +18,6 @@ pub trait StreamHandshaker {
     fn handshake<C: AsyncWrite + AsyncRead>(
         &self,
         conn_id: &ConnId<'_>,
-        conn_path: &ConnPath,
         conn: C,
     ) -> io::Result<Session>;
 }
@@ -29,12 +28,12 @@ pub trait StreamListener {
     type Conn: AsyncRead + AsyncWrite + Send + 'static;
 
     /// Future created by [`accept`](Gateway::accept)
-    type Accept<'a>: Future<Output = Option<(ConnId<'static>, ConnPath, Self::Conn)>> + 'a
+    type Accept<'a>: Future<Output = Option<(ConnId<'static>, Self::Conn)>> + 'a
     where
         Self: 'a;
 
     /// Accept next inbound connection.
-    fn accept(&self) -> Self::Accept<'_>;
+    fn accept(&mut self) -> Self::Accept<'_>;
 }
 
 /// rgnix reverse proxy config.
@@ -68,10 +67,9 @@ where
     async fn handshake<C: AsyncWrite + AsyncRead>(
         &self,
         conn_id: &ConnId<'_>,
-        conn_path: &ConnPath,
         conn: C,
     ) -> io::Result<()> {
-        let session = self.handshaker.handshake(conn_id, conn_path, conn)?;
+        let session = self.handshaker.handshake(conn_id, conn)?;
 
         self.conns.fetch_add(1, Ordering::Relaxed);
 
@@ -82,22 +80,22 @@ where
         r
     }
     /// Start reverse proxy accept loop.
-    pub async fn accept<G: StreamListener + Display>(&self, gateway: G) {
+    pub async fn accept<G: StreamListener + Display>(&self, mut gateway: G) {
         log::info!(target: "ReverseProxy", "{}, start gateway loop", gateway);
 
-        while let Some((id, path, conn)) = gateway.accept().await {
+        while let Some((id, conn)) = gateway.accept().await {
             let this = self.clone();
 
             // A new task should be started to perform the handshake.
             // Because the function will not return until this inbound
             // connection session is closed.
             future_spawn(async move {
-                match this.handshake(&id, &path, conn).await {
+                match this.handshake(&id, conn).await {
                     Ok(_) => {
-                        log::info!(target: "ReverseProxy", "handshake successfully, id={:?}, path={:?}", id, path);
+                        log::info!(target: "ReverseProxy", "handshake successfully, id={:?}", id);
                     }
                     Err(err) => {
-                        log::info!(target: "ReverseProxy", "handshake error, id={:?}, path={:?}, {}", id, path, err);
+                        log::info!(target: "ReverseProxy", "handshake error, id={:?}, {}", id, err);
                     }
                 }
             });

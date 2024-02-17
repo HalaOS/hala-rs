@@ -5,24 +5,17 @@ use hala_rs::{
 };
 use uuid::Uuid;
 
-use crate::{ConnId, ConnPath, StreamListener};
+use crate::{ConnId, StreamListener};
 
 impl StreamListener for TcpListener {
     type Conn = TcpStream;
 
-    type Accept<'a> = BoxFuture<'a, Option<(ConnId<'static>, ConnPath, Self::Conn)>>;
+    type Accept<'a> = BoxFuture<'a, Option<(ConnId<'static>, Self::Conn)>>;
 
-    fn accept(&self) -> Self::Accept<'_> {
+    fn accept(&mut self) -> Self::Accept<'_> {
         let fut = async {
-            if let Ok((conn, raddr)) = self.accept().await {
-                Some((
-                    ConnId::Tcp(Uuid::new_v4()),
-                    ConnPath {
-                        from: raddr,
-                        to: self.local_addr().unwrap(),
-                    },
-                    conn,
-                ))
+            if let Ok((conn, _)) = (self as &TcpListener).accept().await {
+                Some((ConnId::Tcp(Uuid::new_v4()), conn))
             } else {
                 None
             }
@@ -35,9 +28,9 @@ impl StreamListener for TcpListener {
 impl StreamListener for (TcpListener, SslAcceptor) {
     type Conn = SslStream<TcpStream>;
 
-    type Accept<'a> = BoxFuture<'a, Option<(ConnId<'static>, ConnPath, Self::Conn)>>;
+    type Accept<'a> = BoxFuture<'a, Option<(ConnId<'static>, Self::Conn)>>;
 
-    fn accept(&self) -> Self::Accept<'_> {
+    fn accept(&mut self) -> Self::Accept<'_> {
         let fut = async {
             loop {
                 if let Ok((conn, raddr)) = self.0.accept().await {
@@ -49,14 +42,7 @@ impl StreamListener for (TcpListener, SslAcceptor) {
                         }
                     };
 
-                    return Some((
-                        ConnId::Tcp(Uuid::new_v4()),
-                        ConnPath {
-                            from: raddr,
-                            to: self.0.local_addr().unwrap(),
-                        },
-                        conn,
-                    ));
+                    return Some((ConnId::Tcp(Uuid::new_v4()), conn));
                 } else {
                     return None;
                 }
