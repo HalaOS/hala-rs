@@ -33,7 +33,7 @@ impl StreamHandshaker for TcpForwardHandshaker {
         Box::pin(async move {
             let stream = TcpStream::connect(self.0.as_slice())?;
 
-            log::info!("{:?}, tcp forward: {:?}", conn_id, self.0);
+            log::debug!("{:?}, tcp forward: {:?}", conn_id, self.0);
 
             let session = Session::new(conn_id);
 

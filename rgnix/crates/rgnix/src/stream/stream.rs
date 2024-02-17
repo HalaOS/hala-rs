@@ -104,7 +104,7 @@ where
     }
     /// Start reverse proxy accept loop.
     pub async fn accept<L: StreamListener + Debug>(&self, mut listener: L) {
-        log::info!(target: "ReverseProxy", "{:?}, start gateway loop", listener);
+        log::debug!(target: "ReverseProxy", "{:?}, start gateway loop", listener);
 
         while let Some((id, conn)) = listener.accept().await {
             let this = self.clone();
@@ -115,16 +115,16 @@ where
             future_spawn(async move {
                 match this.handshake(&id, conn).await {
                     Ok(_) => {
-                        log::info!(target: "ReverseProxy", "handshake successfully, id={:?}", id);
+                        log::debug!(target: "ReverseProxy", "handshake successfully, id={:?}", id);
                     }
                     Err(err) => {
-                        log::info!(target: "ReverseProxy", "handshake error, id={:?}, {}", id, err);
+                        log::debug!(target: "ReverseProxy", "handshake error, id={:?}, {}", id, err);
                     }
                 }
             });
         }
 
-        log::info!(target: "ReverseProxy", "{:?}, stop gateway loop", listener);
+        log::debug!(target: "ReverseProxy", "{:?}, stop gateway loop", listener);
     }
 }
 

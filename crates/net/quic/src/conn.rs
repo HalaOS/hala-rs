@@ -296,7 +296,16 @@ pub mod async_read_write {
         ) -> std::task::Poll<io::Result<usize>> {
             Box::pin(self.conn.state.stream_recv(self.stream_id, buf))
                 .poll_unpin(cx)
-                .map(|r| r.map(|(read_size, _)| read_size))
+                .map(|r| match r {
+                    Ok((readsize, _)) => Ok(readsize),
+                    Err(err) => {
+                        if err.kind() == io::ErrorKind::BrokenPipe {
+                            Ok(0)
+                        } else {
+                            Err(err)
+                        }
+                    }
+                })
         }
     }
 }

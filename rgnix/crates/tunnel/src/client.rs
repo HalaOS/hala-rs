@@ -29,7 +29,7 @@ impl StreamHandshaker for QuicTunnHandshaker {
         Box::pin(async move {
             let stream = self.0.open_stream().await?;
 
-            log::info!("{:?}, quic forward: {:?}", conn_id, stream);
+            log::debug!("{:?}, quic forward: {:?}", conn_id, stream);
 
             let session = Session::new(conn_id);
 

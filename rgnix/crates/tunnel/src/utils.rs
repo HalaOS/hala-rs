@@ -8,11 +8,11 @@ where
 {
     let r = match copy(reader, &mut writer).await {
         Ok(bytes) => {
-            log::info!(target: target, "{:?}, EOF with transferred {}", session.id, bytes);
+            log::debug!(target: target, "{:?}, EOF with transferred {}", session.id, bytes);
             Ok(())
         }
         Err(err) => {
-            log::info!(target: target, "{:?}, broken with error, {}", session.id, err);
+            log::debug!(target: target, "{:?}, broken with error, {}", session.id, err);
             Err(err)
         }
     };

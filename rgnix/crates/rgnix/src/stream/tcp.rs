@@ -43,9 +43,9 @@ impl StreamListener for (TcpListener, SslAcceptor) {
                     };
 
                     return Some((ConnId::Tcp(Uuid::new_v4()), conn));
-                } else {
-                    return None;
                 }
+
+                return None;
             }
         };
 

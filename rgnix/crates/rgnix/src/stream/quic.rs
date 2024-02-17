@@ -34,7 +34,7 @@ impl From<QuicListener> for QuicStreamListener {
                 let mut sx = sx.clone();
 
                 future_spawn(async move {
-                    log::info!("{:?}, established", conn);
+                    log::debug!("{:?}, established", conn);
 
                     while let Some(stream) = conn.accept_stream().await {
                         let id = ConnId::QuicStream(
@@ -43,15 +43,15 @@ impl From<QuicListener> for QuicStreamListener {
                             stream.stream_id,
                         );
 
-                        log::info!("{:?}, established", stream);
+                        log::debug!("{:?}, established", stream);
 
                         if sx.send((id, stream)).await.is_err() {
-                            log::info!("{:?}, stream channel broken.", conn);
+                            log::debug!("{:?}, stream channel broken.", conn);
                             break;
                         }
                     }
 
-                    log::info!("{:?}, dropped", conn);
+                    log::debug!("{:?}, dropped", conn);
                 });
             }
         });
