@@ -56,6 +56,15 @@ jobs:
           zip: windows
           # Comma-separated list of algorithms to be used for checksum (sha256, sha512, sha1, or md5)
           checksum: md5
+          # (optional) Archive name (non-extension portion of filename) to be uploaded.
+          # [default value: $bin-$target]
+          # [possible values: the following variables and any string]
+          #   variables:
+          #     - $bin    - Binary name (non-extension portion of filename).
+          #     - $target - Target triple.
+          #     - $tag    - Tag of this release.
+          # When multiple binary names are specified, default archive name or $bin variable cannot be used.
+          archive: app-$target
           # (required) GitHub token for uploading assets to GitHub Releases.
           token: ${{ secrets.GITHUB_TOKEN }}
 
