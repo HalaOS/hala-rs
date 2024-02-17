@@ -103,7 +103,7 @@ pub struct QuicTunnelConfig {
     #[arg(long, default_value_t = 1370)]
     pub mtu: usize,
 
-    /// Bytes of incoming stream data to be buffered for each quic stream, set '0' to prevent sending any data.
+    /// Bytes of incoming stream data to be buffered for each quic stream, set '0' to prevent receiving any data.
     #[arg(long, default_value_t = 1024*1024)]
     pub buf: u64,
 
