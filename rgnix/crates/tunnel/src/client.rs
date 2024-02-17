@@ -24,24 +24,26 @@ impl StreamHandshaker for QuicTunnHandshaker {
         conn_id: &rgnix::ConnId<'_>,
         conn: C,
     ) -> Self::Handshake<'_> {
-        let id = conn_id.clone().into_owned();
+        let conn_id = conn_id.clone().into_owned();
 
         Box::pin(async move {
             let stream = self.0.open_stream().await?;
 
-            let session = Session::new(id.clone());
+            log::info!("{:?}, quic forward: {:?}", conn_id, stream);
+
+            let session = Session::new(conn_id);
 
             let (forward_read, backward_write) = conn.split();
 
             future_spawn(tunnel_copy(
-                "QuicTunn(Forward)",
+                "QuicTunn(forward)",
                 session.clone(),
                 forward_read,
                 stream.clone(),
             ));
 
             future_spawn(tunnel_copy(
-                "QuicTunn(Forward)",
+                "QuicTunn(backward)",
                 session.clone(),
                 stream,
                 backward_write,

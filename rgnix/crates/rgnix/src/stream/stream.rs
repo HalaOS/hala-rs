@@ -1,5 +1,5 @@
 use std::{
-    fmt::Display,
+    fmt::{Debug, Display},
     io,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -39,22 +39,40 @@ pub trait StreamListener {
     fn accept(&mut self) -> Self::Accept<'_>;
 }
 
-/// rgnix reverse proxy config.
-pub struct StreamReverseProxy<H> {
-    handshaker: Arc<H>,
-    conns: Arc<AtomicUsize>,
+/// The stats of [`StreamRProxy`], created by [`stats`](StreamRProxy::stats) fn
+pub struct StreamRProxyStats {
+    pub actived: usize,
+    pub closed: usize,
 }
 
-impl<H> Clone for StreamReverseProxy<H> {
+impl Display for StreamRProxyStats {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "stream reverse proxy: actived={}, closed={}",
+            self.actived, self.closed
+        )
+    }
+}
+
+/// rgnix reverse proxy config.
+pub struct StreamRProxy<H> {
+    handshaker: Arc<H>,
+    conns: Arc<AtomicUsize>,
+    closed_conns: Arc<AtomicUsize>,
+}
+
+impl<H> Clone for StreamRProxy<H> {
     fn clone(&self) -> Self {
         Self {
             handshaker: self.handshaker.clone(),
             conns: self.conns.clone(),
+            closed_conns: self.closed_conns.clone(),
         }
     }
 }
 
-impl<H> StreamReverseProxy<H>
+impl<H> StreamRProxy<H>
 where
     H: StreamHandshaker + Sync + Send + 'static,
 {
@@ -63,6 +81,7 @@ where
         Self {
             handshaker: Arc::new(handshaker),
             conns: Default::default(),
+            closed_conns: Default::default(),
         }
     }
 
@@ -79,12 +98,13 @@ where
         let r = session.await;
 
         self.conns.fetch_sub(1, Ordering::Relaxed);
+        self.closed_conns.fetch_add(1, Ordering::Relaxed);
 
         r
     }
     /// Start reverse proxy accept loop.
-    pub async fn accept<G: StreamListener + Display>(&self, mut gateway: G) {
-        log::info!(target: "ReverseProxy", "{}, start gateway loop", gateway);
+    pub async fn accept<G: StreamListener + Debug>(&self, mut gateway: G) {
+        log::info!(target: "ReverseProxy", "{:?}, start gateway loop", gateway);
 
         while let Some((id, conn)) = gateway.accept().await {
             let this = self.clone();
@@ -104,6 +124,16 @@ where
             });
         }
 
-        log::info!(target: "ReverseProxy", "{}, stop gateway loop", gateway);
+        log::info!(target: "ReverseProxy", "{:?}, stop gateway loop", gateway);
+    }
+}
+
+impl<H> StreamRProxy<H> {
+    /// Get reverse proxy stats.
+    pub fn stats(&self) -> StreamRProxyStats {
+        StreamRProxyStats {
+            actived: self.conns.load(Ordering::Relaxed),
+            closed: self.closed_conns.load(Ordering::Relaxed),
+        }
     }
 }

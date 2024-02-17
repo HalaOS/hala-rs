@@ -1,17 +1,36 @@
 [package]
 description = "quic tunnel framework base on rgnix."
-documentation = "https://docs.rs/quictun"
+documentation = "https://docs.rs/rgnix-tunnel"
 edition.workspace = true
 license = "MIT"
-name = "quictun"
+name = "rgnix-tunnel"
 repository.workspace = true
 version.workspace = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+clap = {workspace = true}
+duration-str = {workspace = true}
 futures = {workspace = true}
 hala-rs = {workspace = true}
 log = {workspace = true}
+pretty_env_logger = {workspace = true}
 rgnix = {workspace = true}
 uuid = {workspace = true}
+
+[features]
+client = []
+server = []
+
+[[bin]]
+bench = false
+name = "qtun-server"
+path = "qtun/main.rs"
+required-features = ["server"]
+
+[[bin]]
+bench = false
+name = "qtun-client"
+path = "qtun/main.rs"
+required-features = ["client"]
