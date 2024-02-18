@@ -1,0 +1,15 @@
+[workspace]
+members = ["crates/*"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+repository = "https://github.com/HalaOS/hala-rs.git"
+version = "0.1.4"
+
+[workspace.dependencies]
+hala-qtun = {path = "../crates/rproxy/qtun", version = "^0.1"}
+hala-rs = {path = "../hala", version = "^0.1"}
+
+log = {version = "^0.4"}
+pretty_env_logger = "^0.5"

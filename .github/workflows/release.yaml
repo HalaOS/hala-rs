@@ -40,10 +40,10 @@ jobs:
         if: startsWith(matrix.os, 'windows')
       - uses: taiki-e/upload-rust-binary-action@v1
         with:
-          manifest-path: rgnix/Cargo.toml
+          manifest-path: apps/Cargo.toml
           # (required) Comma-separated list of binary names (non-extension portion of filename) to build and upload.
           # Note that glob pattern is not supported yet.
-          bin: qtun-server
+          bin: qtun-server,qtun-client
           # (optional) Target triple, default is host triple.
           target: ${{ matrix.target }}
           # (optional) On which platform to distribute the `.tar.gz` file.
@@ -64,36 +64,7 @@ jobs:
           #     - $target - Target triple.
           #     - $tag    - Tag of this release.
           # When multiple binary names are specified, default archive name or $bin variable cannot be used.
-          # archive: app-$target
-          # (required) GitHub token for uploading assets to GitHub Releases.
-          token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: taiki-e/upload-rust-binary-action@v1
-        with:
-          manifest-path: rgnix/Cargo.toml
-          # (required) Comma-separated list of binary names (non-extension portion of filename) to build and upload.
-          # Note that glob pattern is not supported yet.
-          bin: qtun-client
-          # (optional) Target triple, default is host triple.
-          target: ${{ matrix.target }}
-          # (optional) On which platform to distribute the `.tar.gz` file.
-          # [default value: unix]
-          # [possible values: all, unix, windows, none]
-          tar: unix
-          # (optional) On which platform to distribute the `.zip` file.
-          # [default value: windows]
-          # [possible values: all, unix, windows, none]
-          zip: windows
-          # Comma-separated list of algorithms to be used for checksum (sha256, sha512, sha1, or md5)
-          checksum: md5
-          # (optional) Archive name (non-extension portion of filename) to be uploaded.
-          # [default value: $bin-$target]
-          # [possible values: the following variables and any string]
-          #   variables:
-          #     - $bin    - Binary name (non-extension portion of filename).
-          #     - $target - Target triple.
-          #     - $tag    - Tag of this release.
-          # When multiple binary names are specified, default archive name or $bin variable cannot be used.
-          # archive: app-$target
+          archive: hala-utils-$target
           # (required) GitHub token for uploading assets to GitHub Releases.
           token: ${{ secrets.GITHUB_TOKEN }}
 

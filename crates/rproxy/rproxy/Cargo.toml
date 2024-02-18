@@ -1,0 +1,25 @@
+[package]
+description = "reverse proxy for hala os"
+documentation = "https://docs.rs/hala-rproxy"
+edition.workspace = true
+license = "MIT"
+name = "hala-rproxy"
+repository.workspace = true
+version.workspace = true
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+futures = {workspace = true}
+hala-future = {workspace = true}
+hala-quic = {workspace = true}
+hala-sync = {workspace = true}
+hala-tcp = {workspace = true}
+hala-tls = {workspace = true}
+
+log = {workspace = true}
+uuid = {workspace = true}
+
+[features]
+default = ["listener"]
+listener = []
