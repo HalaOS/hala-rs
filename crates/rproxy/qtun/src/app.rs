@@ -129,11 +129,11 @@ pub struct QuicTunnelConfig {
     pub cc: QuicCongestionControlAlgorithm,
 
     /// Bytes of incoming stream data to be buffered for each quic stream, set '0' to prevent receiving any data.
-    #[arg(long, default_value_t = 1024*1024)]
+    #[arg(long, default_value_t = 13700)]
     pub buf: u64,
 
     /// Only allow `mux` number of concurrent quic streams to be open in one quic connection, set '0' to prevent open any quic stream.
-    #[arg(long, default_value_t = 100)]
+    #[arg(long, default_value_t = 20)]
     pub mux: u64,
 
     /// Quic connection max idle timeout.
