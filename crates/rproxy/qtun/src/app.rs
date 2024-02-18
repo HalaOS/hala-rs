@@ -6,10 +6,10 @@ use std::{
     time::Duration,
 };
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use hala_future::executor::future_spawn;
 use hala_io::sleep;
-use hala_quic::Config;
+use hala_quic::{Config, CongestionControlAlgorithm};
 use hala_rproxy::{Handshaker, Rproxy};
 
 type SocketAddrs = Vec<SocketAddr>;
@@ -18,6 +18,29 @@ fn clap_parse_duration(s: &str) -> Result<Duration, String> {
     let duration = duration_str::parse(s).map_err(|err| format!("{}", err))?;
 
     Ok(duration)
+}
+
+#[derive(ValueEnum, Clone, Debug)]
+pub enum QuicCongestionControlAlgorithm {
+    /// Reno congestion control algorithm. `reno` in a string form.
+    Reno = 0,
+    /// CUBIC congestion control algorithm (default). `cubic` in a string form.
+    CUBIC = 1,
+    /// BBR congestion control algorithm. `bbr` in a string form.
+    BBR = 2,
+    /// BBRv2 congestion control algorithm. `bbr2` in a string form.
+    BBR2 = 3,
+}
+
+impl From<QuicCongestionControlAlgorithm> for CongestionControlAlgorithm {
+    fn from(value: QuicCongestionControlAlgorithm) -> Self {
+        match value {
+            QuicCongestionControlAlgorithm::Reno => CongestionControlAlgorithm::Reno,
+            QuicCongestionControlAlgorithm::CUBIC => CongestionControlAlgorithm::CUBIC,
+            QuicCongestionControlAlgorithm::BBR => CongestionControlAlgorithm::BBR,
+            QuicCongestionControlAlgorithm::BBR2 => CongestionControlAlgorithm::BBR2,
+        }
+    }
 }
 
 /// parse
@@ -101,6 +124,10 @@ pub struct QuicTunnelConfig {
     #[arg(long, default_value_t = 1370)]
     pub mtu: usize,
 
+    /// Specifies the quic congestion control algorithm.
+    #[arg(long, value_enum, default_value_t = QuicCongestionControlAlgorithm::CUBIC)]
+    pub cc: QuicCongestionControlAlgorithm,
+
     /// Bytes of incoming stream data to be buffered for each quic stream, set '0' to prevent receiving any data.
     #[arg(long, default_value_t = 1024*1024)]
     pub buf: u64,
@@ -110,7 +137,7 @@ pub struct QuicTunnelConfig {
     pub mux: u64,
 
     /// Quic connection max idle timeout.
-    #[arg(long, value_parser = clap_parse_duration, default_value="5s")]
+    #[arg(long, value_parser = clap_parse_duration, default_value="20s")]
     pub timeout: Duration,
 
     /// Maximum number of connections between client and server
@@ -153,6 +180,7 @@ fn make_config(quic_tunn_config: &QuicTunnelConfig) -> Config {
     config.set_initial_max_streams_bidi(quic_tunn_config.mux);
     config.set_initial_max_streams_uni(quic_tunn_config.mux);
     config.set_disable_active_migration(false);
+    config.set_cc_algorithm(quic_tunn_config.cc.clone().into());
 
     config
 }

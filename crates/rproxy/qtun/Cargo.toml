@@ -16,12 +16,12 @@ hala-quic = {workspace = true}
 hala-rproxy = {workspace = true}
 hala-tcp = {workspace = true}
 
-clap = {workspace = true}
+clap = {workspace = true, optional = true}
 duration-str = {workspace = true}
 futures = {workspace = true}
 log = {workspace = true}
 
 [features]
-app = []
+app = ["clap"]
 client = []
 server = []
