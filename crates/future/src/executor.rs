@@ -25,6 +25,10 @@ where
     Fut: Future<Output = ()> + Send + 'static,
 {
     let spawner = REGISTER.get_or_init(|| {
+        #[cfg(not(feature = "futures-executor"))]
+        panic!("Call register_spawner first");
+
+        #[cfg(feature = "futures-executor")]
         Box::new(
             ThreadPool::builder()
                 .pool_size(num_cpus::get())

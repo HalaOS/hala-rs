@@ -11,10 +11,8 @@ use std::{
 };
 
 use dashmap::DashMap;
-use futures::{
-    future::{poll_fn, BoxFuture},
-    FutureExt,
-};
+use futures::future::{poll_fn, BoxFuture};
+
 use hala_lockfree::queue::Queue;
 
 /// A set to handle the reigstration/deregistration of pending future.
@@ -299,7 +297,7 @@ impl<R> Future for Wait<R> {
             let waker = new_batcher_waker(future_id, self.clone());
 
             // poll if
-            match future.poll_unpin(&mut Context::from_waker(&waker)) {
+            match future.as_mut().poll(&mut Context::from_waker(&waker)) {
                 std::task::Poll::Pending => {
                     self.pending_futures.insert(future_id, future);
 

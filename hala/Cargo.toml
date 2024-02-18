@@ -27,7 +27,8 @@ hala-io = {workspace = true, features = ["mio-driver"]}
 pretty_env_logger = {workspace = true}
 
 [features]
-default = ["mio-driver"]
+default = ["mio-driver", "futures-executor"]
+futures-executor = ["hala-future/futures-executor"]
 mio-driver = ["hala-io/mio-driver"]
 
 [[bench]]
