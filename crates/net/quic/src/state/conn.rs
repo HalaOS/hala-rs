@@ -179,7 +179,10 @@ impl QuicConnState {
     where
         Guard: DerefMut<Target = RawQuicConnState>,
     {
-        if state.quiche_conn.is_closed() || state.quiche_conn.is_draining() {
+        if state.quiche_conn.is_closed()
+            || state.quiche_conn.is_draining()
+            || state.quiche_conn.is_timed_out()
+        {
             self.mediator.notify_any(event_map::Reason::Cancel);
 
             return Err(io::Error::new(
