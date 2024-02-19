@@ -121,7 +121,7 @@ pub struct QuicTunnelConfig {
     pub key_file: PathBuf,
 
     /// Specifies the quic max transfer packet length
-    #[arg(long, default_value_t = 1300)]
+    #[arg(long, default_value_t = 1350)]
     pub mtu: usize,
 
     /// Specifies the quic congestion control algorithm.
