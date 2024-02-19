@@ -71,7 +71,7 @@ hala-lockfree = {path = "crates/lockfree", version = "^0.1"}
 hala-ops = {path = "crates/ops", version = "^0.1"}
 hala-pprof = {path = "crates/pprof", version = "^0.1"}
 hala-pprof-derive = {path = "crates/pprof/derive", version = "^0.1"}
-hala-qtun = {path = "crates/rproxy/qtun", version = "^0.1"}
+hala-qtun = {path = "crates/rproxy/qtun", default-features = false, version = "^0.1"}
 hala-quic = {path = "crates/net/quic", version = "^0.1"}
 hala-rproxy = {path = "crates/rproxy/rproxy", version = "^0.1"}
 hala-sync = {path = "crates/sync", version = "^0.1"}

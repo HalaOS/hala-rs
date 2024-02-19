@@ -136,7 +136,7 @@ pub struct QuicTunnelConfig {
     #[arg(long, default_value_t = 100)]
     pub mux: u64,
 
-    /// Quic connection max idle timeout.
+    /// Quic connection max idle timeout, e.g., `10s`,`1m`
     #[arg(long, value_parser = clap_parse_duration, default_value="5s")]
     pub timeout: Duration,
 

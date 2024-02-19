@@ -13,6 +13,7 @@ hala-io = {workspace = true}
 hala-lockfree = {workspace = true}
 hala-ops = {workspace = true}
 hala-pprof = {workspace = true}
+hala-qtun = {workspace = true}
 hala-quic = {workspace = true}
 hala-sync = {workspace = true}
 hala-tcp = {workspace = true}
@@ -30,6 +31,9 @@ pretty_env_logger = {workspace = true}
 default = ["mio-driver", "futures-executor"]
 futures-executor = ["hala-future/futures-executor"]
 mio-driver = ["hala-io/mio-driver"]
+qtun-app = ["hala-qtun/app"]
+qtun-client = ["hala-qtun/client"]
+qtun-server = ["hala-qtun/server"]
 
 [[bench]]
 harness = false
