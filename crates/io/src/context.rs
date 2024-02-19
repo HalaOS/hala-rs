@@ -110,9 +110,8 @@ pub fn register_io_context<C: RawIoContext + Send + Sync + 'static>(context: C) 
 /// or the `mio-driver` is available
 pub fn io_context() -> &'static IoContext {
     #[cfg(feature = "mio-driver")]
-    return REGISTER.get_or_init(|| {
-        return IoContext(Box::new(default_context::MioContext::new().unwrap()));
-    });
+    return REGISTER
+        .get_or_init(|| IoContext(Box::new(default_context::MioContext::new().unwrap())));
 
     #[cfg(not(feature = "mio-driver"))]
     REGISTER
