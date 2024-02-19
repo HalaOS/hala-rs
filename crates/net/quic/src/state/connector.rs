@@ -107,7 +107,7 @@ impl QuicConnectorState {
 
     /// Returns the amount of time until the next timeout event.
     ///
-    /// Once the given duration has elapsed, the [`on_timeout()`] method should
+    /// Once the given duration has elapsed, the [`on_timeout`](QuicConnectorState::on_timeout) method should
     /// be called. A timeout of `None` means that the timer should be disarmed.
     ///
     pub fn timeout(&self) -> Option<Duration> {

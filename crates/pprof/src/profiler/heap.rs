@@ -152,7 +152,7 @@ pub fn heap_profiler_stats() -> HeapProfilerStats {
         .generate_stats()
 }
 
-/// Use provided [`HeapReport`] to generate a global heap profiling report.
+/// Use provided [`HeapProfilerReport`] to generate a global heap profiling report.
 pub fn heap_profiler_report<R: HeapProfilerReport>(report: &mut R) {
     global_heap_profiler()
         .expect("may not call `heap_profiler_report` before heap_profiler_start.")

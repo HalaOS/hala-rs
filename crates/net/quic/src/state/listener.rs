@@ -23,7 +23,7 @@ use crate::{errors::into_io_error, Config};
 
 use super::QuicConnState;
 
-/// [`handshake`](Acceptor::handshake) result.
+/// [`handshake`](QuicAcceptor::handshake) result.
 pub enum QuicAcceptorHandshake {
     Unhandled(quiche::ConnectionId<'static>),
     Incoming {
@@ -66,7 +66,7 @@ impl QuicAcceptor {
         })
     }
 
-    /// Try to process quic init/handshake protocol and returns [`Handshake`] result
+    /// Try to process quic init/handshake protocol and returns [`QuicAcceptorHandshake`] result
     pub fn handshake<'a>(
         &mut self,
         buf: &'a mut [u8],

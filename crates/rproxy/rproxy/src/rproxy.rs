@@ -25,12 +25,12 @@ pub trait Handshaker {
     ) -> Self::Handshake<'_>;
 }
 
-/// Gateway protocol should implement this trait.
+/// [Rproxy] listener should implement this trait.
 pub trait Listener {
     /// Inbound connection type.
     type Conn: AsyncRead + AsyncWrite + Send + 'static;
 
-    /// Future created by [`accept`](Gateway::accept)
+    /// Future created by [`accept`](Rproxy::accept)
     type Accept<'a>: Future<Output = Option<(ConnId<'static>, Self::Conn)>> + 'a
     where
         Self: 'a;
@@ -39,7 +39,7 @@ pub trait Listener {
     fn accept(&mut self) -> Self::Accept<'_>;
 }
 
-/// The stats of [`StreamRProxy`], created by [`stats`](StreamRProxy::stats) fn
+/// The stats of [`Rproxy`], created by [`stats`](Rproxy::stats) fn
 pub struct RproxyStats {
     pub actived: usize,
     pub closed: usize,
@@ -76,7 +76,7 @@ impl<H> Rproxy<H>
 where
     H: Handshaker + Sync + Send + 'static,
 {
-    /// Create new [`ReverseProxy`] instance.
+    /// Create new [`Rproxy`] instance.
     pub fn new(handshaker: H) -> Self {
         Self {
             handshaker: Arc::new(handshaker),
@@ -86,7 +86,7 @@ where
     }
 
     /// Invoke inbound connection handshake.
-    async fn handshake<C: AsyncWrite + AsyncRead + Send + 'static>(
+    pub async fn handshake<C: AsyncWrite + AsyncRead + Send + 'static>(
         &self,
         conn_id: &ConnId<'_>,
         conn: C,

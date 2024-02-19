@@ -24,4 +24,8 @@ log = {workspace = true}
 [features]
 app = ["clap"]
 client = []
+default = ["app", "client", "server"]
 server = []
+
+[package.metadata.docs.rs]
+all-features = true

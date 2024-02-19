@@ -40,7 +40,7 @@ struct SessionFlag {
 }
 
 /// The session object that represent the inbound connection session which
-/// created by [`handshake`](super::handshaker::handshake)
+/// created by [`handshake`](super::Rproxy::handshake)
 ///
 /// Using this object to wait session closed.
 #[derive(Clone)]
@@ -50,7 +50,7 @@ pub struct Session {
 }
 
 impl Session {
-    /// Create new [`ConnContext`] with provided [`ConnId`] and [`ConnPath`]
+    /// Create new [`Rproxy`](crate::Rproxy) session with provided [`ConnId`]
     pub fn new(id: ConnId<'static>) -> Self {
         Self {
             id,

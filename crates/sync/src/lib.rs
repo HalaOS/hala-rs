@@ -1,6 +1,6 @@
 mod api;
 pub use api::*;
-/// [`AyncLockable`] type maker
+/// [`AsyncLockable`] type maker
 pub mod maker;
 
 mod spin;

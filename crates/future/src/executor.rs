@@ -19,7 +19,7 @@ pub fn register_spawner<S: FutureSpawner + Send + Sync + 'static>(spawner: S) {
     }
 }
 
-/// Using global register [`Spawner`] to start a new future task.
+/// Using global register [`FutureSpawner`] to start a new future task.
 pub fn future_spawn<Fut>(fut: Fut)
 where
     Fut: Future<Output = ()> + Send + 'static,

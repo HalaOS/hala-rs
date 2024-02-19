@@ -75,7 +75,7 @@ pub fn cpu_profiler_start() {
     global_cpu_profiler().start();
 }
 
-/// Stop the global cpu profiler and use provided [`CpuReport`] to generate a cpu profiling report.
+/// Stop the global cpu profiler and use provided [`CpuProfilerReport`] to generate a cpu profiling report.
 pub fn cpu_profiler_stop<R: CpuProfilerReport>(report: &mut R) {
     global_cpu_profiler().report(report)
 }
