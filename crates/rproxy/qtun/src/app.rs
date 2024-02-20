@@ -133,7 +133,7 @@ pub struct QuicTunnelConfig {
     pub buf: u64,
 
     /// Only allow `mux` number of concurrent quic streams to be open in one quic connection, set '0' to prevent open any quic stream.
-    #[arg(long, default_value_t = 10)]
+    #[arg(long, default_value_t = 400)]
     pub mux: u64,
 
     /// Quic connection max idle timeout, e.g., `10s`,`1m`
@@ -141,15 +141,15 @@ pub struct QuicTunnelConfig {
     pub timeout: Duration,
 
     /// Maximum number of connections between client and server
-    #[arg(long, default_value_t = 200)]
+    #[arg(long, default_value_t = 100)]
     pub max_conns: usize,
 
     /// Sets the maximum size of the connection window.
-    #[arg(long, default_value_t = 1024 * 1024 * 24)]
+    #[arg(long, default_value_t = 1024 * 1024 * 16)]
     pub max_conn_win: u64,
 
     /// Sets the maximum size of the stream window.
-    #[arg(long, default_value_t = 1024 * 1024 * 16)]
+    #[arg(long, default_value_t = 32 * 1024)]
     pub max_stream_win: u64,
 
     /// The interval at which reverse proxy statistics are printed,
@@ -180,8 +180,7 @@ fn make_config(quic_tunn_config: &QuicTunnelConfig) -> Config {
     config.set_application_protos(&[b"qtun"]).unwrap();
 
     config.set_max_idle_timeout(quic_tunn_config.timeout.as_millis() as u64);
-    config.set_max_recv_udp_payload_size(quic_tunn_config.mtu);
-    config.set_max_send_udp_payload_size(quic_tunn_config.mtu);
+    config.set_max_datagram_size(quic_tunn_config.mtu);
     config.set_initial_max_data(quic_tunn_config.buf * quic_tunn_config.mux);
     config.set_initial_max_stream_data_bidi_local(quic_tunn_config.buf);
     config.set_initial_max_stream_data_bidi_remote(quic_tunn_config.buf);

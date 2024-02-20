@@ -30,7 +30,7 @@ impl Config {
         Ok(Self {
             send_ping_interval: Duration::from_secs(2),
             quiche_config,
-            max_datagram_size: 1350,
+            max_datagram_size,
             max_conn_state_cache_len: 1024,
         })
     }

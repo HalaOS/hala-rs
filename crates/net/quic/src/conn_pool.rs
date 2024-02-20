@@ -49,7 +49,9 @@ impl RawConnPool {
                 continue;
             }
 
-            if conn.peer_streams_left_bidi().await > 0 {
+            let left_bidi = conn.peer_streams_left_bidi().await;
+
+            if left_bidi > 0 {
                 return Ok(conn.clone());
             }
         }
