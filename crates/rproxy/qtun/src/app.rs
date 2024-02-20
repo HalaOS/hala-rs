@@ -144,6 +144,14 @@ pub struct QuicTunnelConfig {
     #[arg(long, default_value_t = 200)]
     pub max_conns: usize,
 
+    /// Sets the maximum size of the connection window.
+    #[arg(long, default_value_t = 1024 * 1024 * 24)]
+    pub max_conn_win: u64,
+
+    /// Sets the maximum size of the stream window.
+    #[arg(long, default_value_t = 1024 * 1024 * 16)]
+    pub max_stream_win: u64,
+
     /// The interval at which reverse proxy statistics are printed,
     /// setting this value to `0s` stops the printing of statistics.
     #[arg(long, value_parser = clap_parse_duration, default_value="1m")]
@@ -181,6 +189,8 @@ fn make_config(quic_tunn_config: &QuicTunnelConfig) -> Config {
     config.set_initial_max_streams_uni(quic_tunn_config.mux);
     config.set_disable_active_migration(false);
     config.set_cc_algorithm(quic_tunn_config.cc.clone().into());
+    config.set_max_connection_window(quic_tunn_config.max_conn_win);
+    config.set_max_stream_window(quic_tunn_config.max_stream_win);
 
     config
 }
