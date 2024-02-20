@@ -10,7 +10,10 @@ use hala_future::executor::future_spawn;
 use hala_io::timeout;
 use hala_udp::UdpGroup;
 use quiche::{ConnectionId, RecvInfo};
-use rand::{seq::IteratorRandom, thread_rng};
+use rand::{
+    seq::{IteratorRandom, SliceRandom},
+    thread_rng,
+};
 
 use crate::{
     state::{QuicConnState, QuicConnectorState},
@@ -78,10 +81,15 @@ impl QuicConn {
 
         let mut lastest_error = None;
 
-        for raddr in raddrs.to_socket_addrs()? {
+        let mut raddrs = raddrs.to_socket_addrs()?.collect::<Vec<_>>();
+
+        raddrs.shuffle(&mut thread_rng());
+
+        for raddr in raddrs {
             match Self::connect_with(&udpsocket, raddr, config).await {
                 Err(err) => lastest_error = Some(err),
                 Ok(conn) => {
+                    log::info!("connect to {:?} successfully, {:?}", raddr, conn);
                     event_loop::run_client_loop(udpsocket, conn.clone(), config.max_datagram_size);
 
                     return Ok(conn);

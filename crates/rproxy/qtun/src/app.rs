@@ -133,7 +133,7 @@ pub struct QuicTunnelConfig {
     pub buf: u64,
 
     /// Only allow `mux` number of concurrent quic streams to be open in one quic connection, set '0' to prevent open any quic stream.
-    #[arg(long, default_value_t = 100)]
+    #[arg(long, default_value_t = 10)]
     pub mux: u64,
 
     /// Quic connection max idle timeout, e.g., `10s`,`1m`
