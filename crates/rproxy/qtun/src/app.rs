@@ -133,7 +133,7 @@ pub struct QuicTunnelConfig {
     pub buf: u64,
 
     /// Only allow `mux` number of concurrent quic streams to be open in one quic connection, set '0' to prevent open any quic stream.
-    #[arg(long, default_value_t = 400)]
+    #[arg(long, default_value_t = 100)]
     pub mux: u64,
 
     /// Quic connection max idle timeout, e.g., `10s`,`1m`
@@ -145,11 +145,11 @@ pub struct QuicTunnelConfig {
     pub max_conns: usize,
 
     /// Sets the maximum size of the connection window.
-    #[arg(long, default_value_t = 1024 * 1024 * 16)]
+    #[arg(long, default_value_t = 24 * 1024 * 1024)]
     pub max_conn_win: u64,
 
     /// Sets the maximum size of the stream window.
-    #[arg(long, default_value_t = 32 * 1024)]
+    #[arg(long, default_value_t = 16 * 1024 * 1024)]
     pub max_stream_win: u64,
 
     /// The interval at which reverse proxy statistics are printed,
