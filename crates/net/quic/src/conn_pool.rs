@@ -51,6 +51,8 @@ impl RawConnPool {
 
             let left_bidi = conn.peer_streams_left_bidi().await;
 
+            log::info!("left_bidi={}", left_bidi);
+
             if left_bidi > 0 {
                 return Ok(conn.clone());
             }
