@@ -10,3 +10,11 @@ version.workspace = true
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+futures = {workspace = true}
+http = {workspace = true}
+httparse = {workspace = true}
+
+hala-future = {workspace = true}
+hala-io = {workspace = true}
+hala-tcp = {workspace = true}
+hala-tls = {workspace = true}

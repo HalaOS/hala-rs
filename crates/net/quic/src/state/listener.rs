@@ -410,11 +410,11 @@ impl QuicListenerState {
                     }
 
                     return Ok(QuicListenerWriteResult::WriteSize(write_size));
-                } else {
-                    log::error!("Quic conn not found, scid={:?}", dcid);
-
-                    return Ok(QuicListenerWriteResult::WriteSize(write_size));
                 }
+
+                log::error!("Quic conn not found, scid={:?}", dcid);
+
+                return Ok(QuicListenerWriteResult::WriteSize(write_size));
             }
             QuicAcceptorHandshake::Incoming {
                 conn,

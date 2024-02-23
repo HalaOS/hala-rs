@@ -8,8 +8,6 @@ use std::{
 pub struct Config {
     /// Quic ping frame send interval.
     pub send_ping_interval: Duration,
-    /// Quic connection state machine event queue max length.
-    pub max_conn_state_cache_len: usize,
     /// Quic mtu.
     pub max_datagram_size: usize,
     /// mixin quiche configs.
@@ -31,7 +29,6 @@ impl Config {
             send_ping_interval: Duration::from_secs(2),
             quiche_config,
             max_datagram_size,
-            max_conn_state_cache_len: 1024,
         })
     }
 

@@ -39,6 +39,9 @@ divan = "^0.1"
 duration-str = "0.7.1"
 futures = {version = "^0.3.29", features = ["executor", "thread-pool"]}
 futures-test = "^0.3"
+http = "^1.0"
+httparse = "^1.8"
+hyper = {version = "1.2.0"}
 leveldb-sys = "2.0.9"
 libc = "0.2.153"
 lock_freedom = "0.1.0"
