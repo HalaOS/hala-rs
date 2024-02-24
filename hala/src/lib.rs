@@ -14,4 +14,4 @@ pub use hala_sync as sync;
 
 pub use hala_pprof as pprof;
 
-pub use hala_qtun as qtun;
+pub use hala_rproxy as rproxy;
