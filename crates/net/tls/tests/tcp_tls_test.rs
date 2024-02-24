@@ -6,7 +6,7 @@ use hala_io::test::io_test;
 use hala_tcp::{TcpListener, TcpStream};
 use hala_tls::{accept, connect, SslAcceptor, SslConnector, SslFiletype, SslMethod, SslStream};
 
-fn create_echo_server() -> SocketAddr {
+async fn create_echo_server() -> SocketAddr {
     let root_path = Path::new(env!("CARGO_MANIFEST_DIR"));
 
     let mut acceptor = SslAcceptor::mozilla_intermediate(SslMethod::tls()).unwrap();
@@ -21,7 +21,7 @@ fn create_echo_server() -> SocketAddr {
     acceptor.check_private_key().unwrap();
     let acceptor = Arc::new(acceptor.build());
 
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
 
     let raddr = listener.local_addr().unwrap();
 
@@ -58,7 +58,7 @@ async fn handle_echo_stream(mut stream: SslStream<TcpStream>) {
 async fn test_echo() {
     let root_path = Path::new(env!("CARGO_MANIFEST_DIR"));
 
-    let raddr = create_echo_server();
+    let raddr = create_echo_server().await;
 
     let stream = TcpStream::connect(raddr).unwrap();
 

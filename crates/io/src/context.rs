@@ -114,8 +114,8 @@ pub fn io_context() -> &'static IoContext {
         .get_or_init(|| IoContext(Box::new(default_context::MioContext::new().unwrap())));
 
     #[cfg(not(feature = "mio-driver"))]
-    REGISTER
+    return REGISTER
         .get()
         .as_ref()
-        .expect("Call register_io_context first")
+        .expect("Call register_io_context first");
 }

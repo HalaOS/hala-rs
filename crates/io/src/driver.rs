@@ -137,8 +137,12 @@ pub enum Cmd<'a> {
     Timeout(Waker),
     LocalAddr,
     RemoteAddr,
-
+    /// Socket shutdown ops.
     Shutdown(Shutdown),
+    /// Get the value of the `SO_BROADCAST` option for this socket.
+    BroadCast,
+    /// Sets the value of the `SO_BROADCAST` option for this socket.
+    SetBroadCast(bool),
 }
 
 /// The response of `fd_cntl` .
@@ -154,7 +158,10 @@ pub enum CmdResp {
     Timeout(bool),
     /// Command `TryClone` response data.
     Cloned(Handle),
+    /// Command [`LocalAddr`](Cmd::LocalAddr) / [`RemoteAddr`](Cmd::RemoteAddr) response data.
     SockAddr(SocketAddr),
+    /// The value of the `SO_BROADCAST` option for this socket.
+    BroadCast(bool),
 }
 
 impl CmdResp {
@@ -204,6 +211,26 @@ impl CmdResp {
             _ => Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!("Expect Timeout, but got {:?}", self),
+            )),
+        }
+    }
+
+    pub fn try_into_broadcast(self) -> io::Result<bool> {
+        match self {
+            Self::BroadCast(status) => Ok(status),
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("Expect Broadcast, but got {:?}", self),
+            )),
+        }
+    }
+
+    pub fn try_into_none(self) -> io::Result<()> {
+        match self {
+            Self::None => Ok(()),
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("Expect None, but got {:?}", self),
             )),
         }
     }

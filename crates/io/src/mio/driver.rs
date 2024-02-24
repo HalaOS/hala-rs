@@ -412,6 +412,20 @@ impl RawDriverExt for MioDriver {
         TypedHandle::<MioWithPoller<mio::net::TcpStream>>::new(handle)
             .with(|socket| socket.shutdown(how))
     }
+
+    fn udp_socket_set_broadcast(&self, handle: Handle, on: bool) -> io::Result<()> {
+        handle.expect(Description::UdpSocket)?;
+
+        TypedHandle::<MioWithPoller<mio::net::UdpSocket>>::new(handle)
+            .with(|socket| socket.set_broadcast(on))
+    }
+
+    fn udp_socket_get_broadcast(&self, handle: Handle) -> io::Result<bool> {
+        handle.expect(Description::UdpSocket)?;
+
+        TypedHandle::<MioWithPoller<mio::net::UdpSocket>>::new(handle)
+            .with(|socket| socket.broadcast())
+    }
 }
 
 pub fn mio_driver() -> Driver {

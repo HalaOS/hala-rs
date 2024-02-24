@@ -72,8 +72,14 @@ pub trait RawDriverExt {
         buf: &mut [u8],
     ) -> io::Result<(usize, SocketAddr)>;
 
-    /// Close `UdpSocket`
+    /// Close the udp socket.
     fn udp_socket_close(&self, handle: Handle) -> io::Result<()>;
+
+    /// Sets the value of the `SO_BROADCAST` option for this socket.
+    fn udp_socket_set_broadcast(&self, handle: Handle, on: bool) -> io::Result<()>;
+
+    /// Gets the value of the `SO_BROADCAST` option for this socket.
+    fn udp_socket_get_broadcast(&self, handle: Handle) -> io::Result<bool>;
 
     /// Create new readiness io event poller.
     fn poller_open(&self, duration: Option<Duration>) -> io::Result<Handle>;
@@ -318,6 +324,30 @@ impl<T: RawDriverExt + Clone> RawDriver for RawDriverExtProxy<T> {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidInput,
                         format!("Expect File / TcpStream , but got {:?}", handle.desc),
+                    ));
+                }
+            },
+            crate::Cmd::BroadCast => match handle.desc {
+                Description::UdpSocket => self
+                    .inner
+                    .udp_socket_get_broadcast(handle)
+                    .map(|_| CmdResp::None),
+                _ => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("Expect UdpSocket , but got {:?}", handle.desc),
+                    ));
+                }
+            },
+            crate::Cmd::SetBroadCast(on) => match handle.desc {
+                Description::UdpSocket => self
+                    .inner
+                    .udp_socket_set_broadcast(handle, on)
+                    .map(|_| CmdResp::None),
+                _ => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        format!("Expect UdpSocket , but got {:?}", handle.desc),
                     ));
                 }
             },

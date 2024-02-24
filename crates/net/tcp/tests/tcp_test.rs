@@ -5,8 +5,8 @@ use hala_future::executor::future_spawn;
 use hala_io::test::io_test;
 use hala_tcp::{TcpListener, TcpStream};
 
-fn create_echo_server() -> SocketAddr {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+async fn create_echo_server() -> SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
 
     let raddr = listener.local_addr().unwrap();
 
@@ -40,7 +40,7 @@ async fn handle_echo_stream(mut stream: TcpStream) {
 
 #[hala_test::test(io_test)]
 async fn test_echo() {
-    let raddr = create_echo_server();
+    let raddr = create_echo_server().await;
 
     let mut stream = TcpStream::connect(raddr).unwrap();
 

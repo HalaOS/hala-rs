@@ -11,7 +11,22 @@ use hala_io::{
 
 use super::TcpStream;
 
-/// A structure representing a socket tcp server
+/// A TCP socket server, listening for connections.
+///
+/// After creating a `TcpListener` by [`bind`]ing it to a socket address, it listens for incoming
+/// TCP connections. These can be accepted by awaiting elements from the async stream of
+/// `incoming` connections.
+///
+/// The socket will be closed when the value is dropped.
+///
+/// The Transmission Control Protocol is specified in [IETF RFC 793].
+///
+/// This type is an async version of [`std::net::TcpListener`].
+///
+/// [`bind`]: #method.bind
+/// [IETF RFC 793]: https://tools.ietf.org/html/rfc793
+/// [`std::net::TcpListener`]: https://doc.rust-lang.org/std/net/struct.TcpListener.html
+///
 pub struct TcpListener {
     fd: Handle,
     driver: Driver,
@@ -30,7 +45,20 @@ impl TcpListener {
     ///
     /// Binding with a port number of 0 will request that the OS assigns a port to this listener.
     /// The port allocated can be queried via the [`local_addr`](TcpListener::local_addr) method.
-    pub fn bind<S: ToSocketAddrs>(laddrs: S) -> io::Result<Self> {
+    ///
+    /// # Examples
+    /// Create a TCP listener bound to 127.0.0.1:0:
+    ///
+    /// ```no_run
+    /// # fn main() -> std::io::Result<()> { hala_future::executor::block_on(async {
+    /// #
+    /// use hala_tcp::TcpListener;
+    ///
+    /// let listener = TcpListener::bind("127.0.0.1:0").await?;
+    /// #
+    /// # Ok(()) }) }
+    /// ```
+    pub async fn bind<S: ToSocketAddrs>(laddrs: S) -> io::Result<Self> {
         let io_context = io_context();
 
         let driver = io_context.driver().clone();
@@ -57,13 +85,23 @@ impl TcpListener {
         Ok(Self { fd, driver })
     }
 
-    /// Accepts a new incoming connection from this listener.
+    /// Accepts a new incoming connection to this listener.
+    ///
+    /// When a connection is established, the corresponding stream and address will be returned.
+    ///
+    /// ## Examples
+    ///
+    /// ```no_run
+    /// # fn main() -> std::io::Result<()> { hala_future::executor::block_on(async {
+    /// #
+    /// use hala_tcp::TcpListener;
+    ///
+    /// let listener = TcpListener::bind("127.0.0.1:0").await?;
+    /// let (stream, addr) = listener.accept().await?;
+    /// #
+    /// # Ok(()) }) }
+    /// ```
     pub async fn accept(&self) -> io::Result<(TcpStream, SocketAddr)> {
-        self.accept_with(io_context().poller()).await
-    }
-
-    /// Accepts a new incoming connection with providing `poller`
-    pub async fn accept_with(&self, poller: Handle) -> io::Result<(TcpStream, SocketAddr)> {
         let (handle, raddr) = would_block(|cx| {
             self.driver
                 .fd_cntl(self.fd, Cmd::Accept(cx.waker().clone()))
@@ -71,23 +109,34 @@ impl TcpListener {
         .await?
         .try_into_incoming()?;
 
-        let stream = TcpStream::new_with(self.driver.clone(), handle, poller)?;
+        let stream = TcpStream::new_with(self.driver.clone(), handle, io_context().poller())?;
 
         log::trace!("tcp incoming token={:?}, raddr={}", handle.token, raddr);
 
         Ok((stream, raddr))
     }
 
-    /// Returns the local socket address of this listener.
+    /// Returns the local address that this listener is bound to.
+    ///
+    /// This can be useful, for example, to identify when binding to port 0 which port was assigned
+    /// by the OS.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn main() -> std::io::Result<()> { hala_future::executor::block_on(async {
+    /// #
+    /// use hala_tcp::TcpListener;
+    ///
+    /// let listener = TcpListener::bind("127.0.0.1:8080").await?;
+    /// let addr = listener.local_addr()?;
+    /// #
+    /// # Ok(()) }) }
+    /// ```
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
         self.driver
             .fd_cntl(self.fd, Cmd::LocalAddr)?
             .try_into_sockaddr()
-    }
-
-    /// Close and stop tcp server listener.
-    pub async fn close(&self) -> io::Result<()> {
-        Ok(())
     }
 }
 
