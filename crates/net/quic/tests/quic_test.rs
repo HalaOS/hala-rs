@@ -57,7 +57,9 @@ fn mock_config(is_server: bool, max_datagram_size: usize) -> Config {
 
 #[hala_test::test(io_test)]
 async fn test_establish() {
-    let listener = QuicListener::bind("127.0.0.1:0", mock_config(true, 1350)).unwrap();
+    let listener = QuicListener::bind("127.0.0.1:0", mock_config(true, 1350))
+        .await
+        .unwrap();
 
     let raddr = listener.local_addrs().next().unwrap().clone();
 
@@ -110,7 +112,9 @@ async fn test_connect_timeout() {
 
 #[hala_test::test(io_test)]
 async fn test_open_client_stream() {
-    let listener = QuicListener::bind("127.0.0.1:0", mock_config(true, 1350)).unwrap();
+    let listener = QuicListener::bind("127.0.0.1:0", mock_config(true, 1350))
+        .await
+        .unwrap();
 
     let raddr = listener.local_addrs().next().unwrap().clone();
 
@@ -150,7 +154,9 @@ async fn test_open_client_stream() {
 
 #[hala_test::test(io_test)]
 async fn test_open_server_stream() {
-    let listener = QuicListener::bind("127.0.0.1:0", mock_config(true, 1350)).unwrap();
+    let listener = QuicListener::bind("127.0.0.1:0", mock_config(true, 1350))
+        .await
+        .unwrap();
 
     let raddr = listener.local_addrs().next().unwrap().clone();
 
@@ -186,7 +192,7 @@ async fn test_server_max_streams_stream() {
 
     config.set_initial_max_streams_bidi(3);
 
-    let listener = QuicListener::bind("127.0.0.1:0", config).unwrap();
+    let listener = QuicListener::bind("127.0.0.1:0", config).await.unwrap();
 
     let raddr = listener.local_addrs().next().unwrap().clone();
 
@@ -233,7 +239,7 @@ async fn test_server_max_streams_stream() {
 async fn test_client_max_streams_stream() {
     let config = mock_config(true, 1350);
 
-    let listener = QuicListener::bind("127.0.0.1:0", config).unwrap();
+    let listener = QuicListener::bind("127.0.0.1:0", config).await.unwrap();
 
     let raddr = listener.local_addrs().next().unwrap().clone();
 
@@ -282,7 +288,7 @@ async fn test_dynamic_peer_streams_left_bid() {
 
     config.set_initial_max_streams_bidi(2);
 
-    let listener = QuicListener::bind("127.0.0.1:0", config).unwrap();
+    let listener = QuicListener::bind("127.0.0.1:0", config).await.unwrap();
 
     let raddr = listener.local_addrs().next().unwrap().clone();
 
@@ -368,7 +374,7 @@ async fn test_conn_pool() {
 
     config.set_initial_max_streams_bidi(2);
 
-    let listener = QuicListener::bind("127.0.0.1:0", config).unwrap();
+    let listener = QuicListener::bind("127.0.0.1:0", config).await.unwrap();
 
     let raddr = listener.local_addrs().next().unwrap().clone();
 
@@ -425,7 +431,7 @@ async fn test_conn_pool_reconnect() {
 
     config.set_initial_max_streams_bidi(2);
 
-    let listener = QuicListener::bind("127.0.0.1:0", config).unwrap();
+    let listener = QuicListener::bind("127.0.0.1:0", config).await.unwrap();
 
     let raddr = listener.local_addrs().next().unwrap().clone();
 

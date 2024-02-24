@@ -15,8 +15,8 @@ pub struct QuicListener {
 
 impl QuicListener {
     /// Create new quic server listener and bind to `laddrs`.
-    pub fn bind<L: ToSocketAddrs>(laddrs: L, config: Config) -> io::Result<Self> {
-        let udp_socket = UdpGroup::bind(laddrs)?;
+    pub async fn bind<L: ToSocketAddrs>(laddrs: L, config: Config) -> io::Result<Self> {
+        let udp_socket = UdpGroup::bind(laddrs).await?;
 
         let laddrs = udp_socket
             .local_addrs()

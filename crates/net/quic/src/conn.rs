@@ -77,7 +77,7 @@ impl QuicConn {
         raddrs: R,
         config: &mut Config,
     ) -> io::Result<Self> {
-        let udpsocket = UdpGroup::bind(laddrs)?;
+        let udpsocket = UdpGroup::bind(laddrs).await?;
 
         let mut lastest_error = None;
 

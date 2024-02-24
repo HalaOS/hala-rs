@@ -53,8 +53,10 @@ fn mock_config(is_server: bool, max_datagram_size: usize) -> Config {
     config
 }
 
-fn create_echo_server() -> SocketAddr {
-    let listener = QuicListener::bind("127.0.0.1:0", mock_config(true, 1370)).unwrap();
+async fn create_echo_server() -> SocketAddr {
+    let listener = QuicListener::bind("127.0.0.1:0", mock_config(true, 1370))
+        .await
+        .unwrap();
 
     let raddr = listener.local_addrs().next().unwrap().clone();
 
@@ -90,7 +92,7 @@ async fn handle_stream(mut stream: QuicStream) {
 fn main() {
     // pretty_env_logger::init_timed();
 
-    let raddr = block_on(async { create_echo_server() });
+    let raddr = block_on(create_echo_server());
 
     println!("quic_bench");
 

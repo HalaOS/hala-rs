@@ -10,8 +10,8 @@ use hala_io::{
 
 /// A UDP socket.
 ///
-/// After creating a `UdpSocket` by [`bind`]ing it to a socket address, data can be [sent to] and
-/// [received from] any other socket address.
+/// After creating a `UdpSocket` by [`bind`](Self::bind)ing it to a socket address, data can be [sent to](Self::send_to) and
+/// [received from](Self::recv_from) any other socket address.
 ///
 /// As stated in the User Datagram Protocol's specification in [IETF RFC 768], UDP is an unordered,
 /// unreliable protocol. Refer to `TcpListener` and `TcpStream` for async TCP primitives.

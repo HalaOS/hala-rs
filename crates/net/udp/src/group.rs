@@ -33,7 +33,7 @@ struct BatchWrite {
     result: io::Result<(usize, PathInfo)>,
 }
 
-/// The oatg information for transfered udp data.
+/// The routing information for transfered udp data.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct PathInfo {
     /// The packet from udp endpoint.
@@ -49,6 +49,10 @@ impl Debug for PathInfo {
 }
 
 /// An utility socket type which handle a group udp sockets's read/write ops.
+///
+/// After creating a group of `UdpSocket` by [`bind`](Self::bind) it to a range of socket addresses,
+/// data can be [`send to`](Self::send_to) and [`receved from`](Self::recv_from) any other socket address.
+///
 pub struct UdpGroup {
     /// hala io driver instance.
     driver: Driver,
@@ -76,7 +80,7 @@ impl Drop for UdpGroup {
 
 impl UdpGroup {
     /// Bind udp group on providing addresses group.
-    pub fn bind<S: ToSocketAddrs>(laddrs: S) -> io::Result<Self> {
+    pub async fn bind<S: ToSocketAddrs>(laddrs: S) -> io::Result<Self> {
         let io_context = io_context();
 
         let mut fds = HashMap::new();
@@ -337,6 +341,8 @@ impl UdpGroup {
     }
 
     /// Try send an udp packet to peer over the given [`path`](PathInfo)
+    ///
+    /// On successful, returns the number of bytes written.
     pub async fn send_to_on_path(&self, buf: &[u8], path_info: PathInfo) -> io::Result<usize> {
         let fd = self.laddr_to_handle(path_info.from).ok_or(io::Error::new(
             io::ErrorKind::NotFound,
@@ -360,7 +366,23 @@ impl UdpGroup {
         r
     }
 
-    /// Return the local bound socket addresses iterator.
+    /// Returns the local addresses that the group is bound to.
+    ///
+    /// This can be useful, for example, when binding to port 0 to figure out which port was
+    /// actually bound.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn main() -> std::io::Result<()> { hala_future::executor::block_on(async {
+    /// #
+    /// use hala_udp::UdpGroup;
+    ///
+    /// let socket = UdpGroup::bind("127.0.0.1:0").await?;
+    /// let addrs = socket.local_addrs().collect::<Vec<_>>();
+    /// #
+    /// # Ok(()) }) }
+    /// ```
     pub fn local_addrs(&self) -> impl Iterator<Item = &SocketAddr> {
         self.laddrs.values()
     }
@@ -379,9 +401,9 @@ mod tests {
     async fn test_send() {
         let laddrs = vec!["127.0.0.1:0".parse().unwrap(); 1];
 
-        let server_group = UdpGroup::bind(laddrs.as_slice()).unwrap();
+        let server_group = UdpGroup::bind(laddrs.as_slice()).await.unwrap();
 
-        let client_group = UdpGroup::bind(laddrs.as_slice()).unwrap();
+        let client_group = UdpGroup::bind(laddrs.as_slice()).await.unwrap();
 
         let raddrs = server_group
             .local_addrs()
@@ -432,9 +454,9 @@ mod tests {
     async fn test_sequence_send_recv() {
         let laddrs = vec!["127.0.0.1:0".parse().unwrap(); 1];
 
-        let server_group = UdpGroup::bind(laddrs.as_slice()).unwrap();
+        let server_group = UdpGroup::bind(laddrs.as_slice()).await.unwrap();
 
-        let client_group = UdpGroup::bind(laddrs.as_slice()).unwrap();
+        let client_group = UdpGroup::bind(laddrs.as_slice()).await.unwrap();
 
         let raddrs = server_group
             .local_addrs()
