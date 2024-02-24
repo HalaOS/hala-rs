@@ -24,7 +24,12 @@ impl Debug for TcpListener {
 }
 
 impl TcpListener {
-    /// Create new tcp listener with calling underly bind method.
+    /// Create new `TcpListener` which will be bound to the specified `laddrs`
+    ///
+    /// The returned listener is ready for accepting connections.
+    ///
+    /// Binding with a port number of 0 will request that the OS assigns a port to this listener.
+    /// The port allocated can be queried via the [`local_addr`](TcpListener::local_addr) method.
     pub fn bind<S: ToSocketAddrs>(laddrs: S) -> io::Result<Self> {
         let io_context = io_context();
 

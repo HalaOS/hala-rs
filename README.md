@@ -5,4 +5,4 @@
 [!["Crates.io version"](https://img.shields.io/crates/v/hala-rs.svg)](https://crates.io/crates/hala-rs)
 [!["docs.rs docs"](https://img.shields.io/badge/docs-latest-blue.svg)](https://docs.rs/hala-rs)
 
-hala std library for rust programming.
+Core crates for developing Hala rust applications.

@@ -1,5 +1,5 @@
 [package]
-description = "Hala test derive crate"
+description = "Proc macros for hala test"
 documentation = "https://docs.rs/hala-test"
 edition.workspace = true
 license = "MIT"
