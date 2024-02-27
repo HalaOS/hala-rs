@@ -527,7 +527,7 @@ impl QuicListenerState {
         self.conns_read.push(async move {
             let mut buf = ReadBuf::with_capacity(max_datagram_size);
 
-            let read = match conn.read(buf.as_mut()).await {
+            let read = match conn.read(buf.chunk_mut()).await {
                 Ok((read_size, send_info)) => {
                     QuicListnerConnRead::Ok(conn, buf.into_bytes_mut(Some(read_size)), send_info)
                 }

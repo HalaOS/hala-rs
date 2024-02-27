@@ -79,7 +79,28 @@ impl Drop for UdpGroup {
 }
 
 impl UdpGroup {
-    /// Bind udp group on providing addresses group.
+    /// Creates a UDP socket group from the given addresses.
+    ///
+    /// Binding with a port number of 0 will request that the OS assigns a port to this socket. The
+    /// ports allocated can be queried via the [`local_addrs`](Self::local_addrs) method.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # fn main() -> std::io::Result<()> { hala_future::executor::block_on(async {
+    /// #
+    /// use hala_udp::UdpGroup;
+    /// use std::str::FromStr;
+    ///
+    /// let addrs = [
+    ///         "127.0.0.1:0".parse().unwrap(),
+    ///         "127.0.0.1:0".parse().unwrap(),
+    /// ];
+    ///
+    /// let socket = UdpGroup::bind(addrs.as_slice()).await?;
+    /// #
+    /// # Ok(()) }) }
+    /// ```
     pub async fn bind<S: ToSocketAddrs>(laddrs: S) -> io::Result<Self> {
         let io_context = io_context();
 
