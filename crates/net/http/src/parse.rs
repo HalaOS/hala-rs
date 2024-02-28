@@ -1,5 +1,6 @@
 use std::io;
 
+use bytes::BytesMut;
 use futures::{AsyncRead, AsyncReadExt, AsyncWrite};
 use hala_io::ReadBuf;
 use http::{
@@ -11,11 +12,11 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ParseError {
-    #[error("Parse token error, offset({0})={1}")]
-    ParseToken(usize, u8),
+    #[error("Token length is zero.")]
+    Token,
 
-    #[error("Parse uri token error, offset({0})={1}")]
-    ParseUriToken(usize, u8),
+    #[error("Uri token length is zero.")]
+    UriToken,
 
     #[error("Input stream ")]
     Eof,
@@ -46,6 +47,9 @@ pub enum ParseError {
 
     #[error("{0}")]
     InvalidHeaderValue(#[from] InvalidHeaderValue),
+
+    #[error("{0}")]
+    HttpError(#[from] http::Error),
 }
 
 impl From<ParseError> for io::Error {
@@ -115,7 +119,7 @@ enum ParseHeader {
 }
 
 /// The parser which parse incoming `stream` into [`Request`](http::Request).
-pub struct RequestParser<S> {
+pub struct RequestBuilder<S> {
     /// tag for log information output.
     debug_info: String,
     /// http protocol parse config.
@@ -129,7 +133,7 @@ pub struct RequestParser<S> {
     parsing: RequestParsing,
 }
 
-impl<S> RequestParser<S> {
+impl<S> RequestBuilder<S> {
     /// Consume `stream` and generate a request parser.
     pub fn new(debug_info: &str, stream: S) -> Self {
         Self::new_with(debug_info, stream, Default::default())
@@ -149,7 +153,7 @@ impl<S> RequestParser<S> {
     }
 }
 
-impl<S> RequestParser<S>
+impl<S> RequestBuilder<S>
 where
     S: AsyncWrite + AsyncRead + Unpin,
 {
@@ -174,8 +178,12 @@ where
                     }
                     // parse uri
                     1 => {
-                        self.parse_uri()?;
-                        self.skip_spaces();
+                        if self.parse_uri()? {
+                            self.skip_spaces();
+                        } else {
+                            // incomplete uri.
+                            break 'inner;
+                        }
                     }
                     // parse version: HTTP/x.x
                     2 => {
@@ -197,7 +205,18 @@ where
             }
         }
 
-        todo!()
+        let mut builder = http::request::Builder::new()
+            .method(self.parsing.method.unwrap())
+            .uri(self.parsing.uri.unwrap())
+            .version(self.parsing.version.unwrap());
+
+        for (k, v) in self.parsing.headers.drain() {
+            if let Some(k) = k {
+                builder = builder.header(k.clone(), v.clone());
+            }
+        }
+
+        Ok(builder.body(self.stream)?)
     }
 
     fn skip_spaces(&mut self) {
@@ -220,6 +239,8 @@ where
     }
 
     fn parse_headers(&mut self) -> ParseResult<ParseHeader> {
+        self.skip_spaces();
+
         match self.skip_newline()? {
             SkipNewLine::Break => return Ok(ParseHeader::Last),
             SkipNewLine::Incomplete => return Ok(ParseHeader::Incomplete),
@@ -261,12 +282,15 @@ where
         for (offset, c) in buf.iter().cloned().enumerate() {
             if c == b'\r' {
                 if offset == 0 {
-                    return Err(ParseError::HeaderValue);
+                    header_value = Some(HeaderValue::from_static(""));
+                } else {
+                    let mut buf = self.read_buf.split_to(offset);
+
+                    // trim suffix spaces.
+                    trim_suffix_spaces(&mut buf);
+
+                    header_value = Some(HeaderValue::from_maybe_shared(buf)?);
                 }
-
-                let buf = self.read_buf.split_to(offset);
-
-                header_value = Some(HeaderValue::from_maybe_shared(buf)?);
 
                 break;
             }
@@ -312,11 +336,11 @@ where
         }
     }
 
-    fn parse_uri(&mut self) -> ParseResult<()> {
+    fn parse_uri(&mut self) -> ParseResult<bool> {
         let token = parse_uri(self.read_buf.chunk())?;
 
         if token.is_none() {
-            return Ok(());
+            return Ok(false);
         }
 
         let token = token.unwrap();
@@ -328,7 +352,7 @@ where
                 self.parsing.uri = Some(uri);
                 self.parsing.state += 1;
 
-                Ok(())
+                Ok(true)
             }
             Err(err) => Err(err.into()),
         }
@@ -353,36 +377,17 @@ where
     }
 }
 
-/// Determines if byte is a token char.
-///
-/// > ```notrust
-/// > token          = 1*tchar
-/// >
-/// > tchar          = "!" / "#" / "$" / "%" / "&" / "'" / "*"
-/// >                / "+" / "-" / "." / "^" / "_" / "`" / "|" / "~"
-/// >                / DIGIT / ALPHA
-/// >                ; any VCHAR, except delimiters
-/// > ```
-#[inline]
-fn is_token(b: u8) -> bool {
-    b > 0x1F && b < 0x7F
-}
-
 #[inline]
 fn parse_token(bytes: &[u8]) -> ParseResult<Option<&[u8]>> {
     assert!(bytes.len() > 0, "Check buf len before call parse_token");
 
-    if !is_token(bytes[0]) {
-        return Err(ParseError::ParseToken(0, bytes[0]));
-    }
-
-    for (offset, b) in bytes[1..].iter().cloned().enumerate() {
+    for (offset, b) in bytes.iter().cloned().enumerate() {
         if b == b' ' {
-            return Ok(Some(&bytes[0..(offset + 1)]));
-        }
+            if offset == 0 {
+                return Err(ParseError::Token);
+            }
 
-        if !is_token(b) {
-            return Err(ParseError::ParseToken(offset + 1, bytes[offset + 1]));
+            return Ok(Some(&bytes[0..offset]));
         }
     }
 
@@ -390,21 +395,28 @@ fn parse_token(bytes: &[u8]) -> ParseResult<Option<&[u8]>> {
     Ok(None)
 }
 
-macro_rules! byte_map {
-    ($($flag:expr,)*) => ([
-        $($flag != 0,)*
-    ])
-}
-
 #[inline]
 fn skip_spaces(buf: &[u8]) -> usize {
     for (offset, b) in buf.iter().cloned().enumerate() {
-        if b != b' ' || b != b'\t' {
+        if b != b' ' && b != b'\t' {
             return offset;
         }
     }
 
     buf.len()
+}
+
+#[inline]
+fn trim_suffix_spaces(buf: &mut BytesMut) {
+    for (offset, c) in buf.iter().rev().cloned().enumerate() {
+        if c != b' ' && c != b'\t' {
+            if offset > 0 {
+                _ = buf.split_off(buf.len() - offset);
+            }
+
+            break;
+        }
+    }
 }
 
 #[inline]
@@ -431,60 +443,27 @@ fn _skip_newline(buf: &[u8]) -> ParseResult<SkipNewLine> {
 #[inline]
 fn skip_newline(buf: &[u8]) -> ParseResult<SkipNewLine> {
     match _skip_newline(buf)? {
-        SkipNewLine::One => match _skip_newline(buf)? {
+        SkipNewLine::One => match _skip_newline(&buf[2..])? {
             SkipNewLine::One => Ok(SkipNewLine::Break),
-            status => Ok(status),
+            SkipNewLine::None | SkipNewLine::Incomplete => Ok(SkipNewLine::One),
+            SkipNewLine::Break => {
+                panic!("not here");
+            }
         },
         status => Ok(status),
     }
-}
-
-// ASCII codes to accept URI string.
-// i.e. A-Z a-z 0-9 !#$%&'*+-._();:@=,/?[]~^
-// TODO: Make a stricter checking for URI string?
-static URI_MAP: [bool; 256] = byte_map![
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, //  \0                            \n
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, //  commands
-    0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    //  \w !  "  #  $  %  &  '  (  )  *  +  ,  -  .  /
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 0, 1,
-    //  0  1  2  3  4  5  6  7  8  9  :  ;  <  =  >  ?
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    //  @  A  B  C  D  E  F  G  H  I  J  K  L  M  N  O
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    //  P  Q  R  S  T  U  V  W  X  Y  Z  [  \  ]  ^  _
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
-    //  `  a  b  c  d  e  f  g  h  i  j  k  l  m  n  o
-    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0,
-    //  p  q  r  s  t  u  v  w  x  y  z  {  |  }  ~  del
-    //   ====== Extended ASCII (aka. obs-text) ======
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-];
-
-#[inline]
-fn is_uri_token(b: u8) -> bool {
-    URI_MAP[b as usize]
 }
 
 #[inline]
 fn parse_uri(buf: &[u8]) -> ParseResult<Option<&[u8]>> {
     assert!(buf.len() > 0);
 
-    if !is_uri_token(buf[0]) {
-        // First char must be a URI char, it can't be a space which would indicate an empty path.
-        return Err(ParseError::ParseUriToken(0, buf[0]));
-    }
-
-    for (offset, b) in buf[1..].iter().cloned().enumerate() {
-        if b == b' ' {
-            return Ok(Some(&buf[0..(offset + 1)]));
-        }
-
-        if !is_uri_token(b) {
-            return Err(ParseError::ParseUriToken(offset + 1, buf[offset + 1]));
+    for (offset, b) in buf.iter().cloned().enumerate() {
+        if b == b' ' || b == b'\t' {
+            if offset == 0 {
+                return Err(ParseError::UriToken);
+            }
+            return Ok(Some(&buf[0..offset]));
         }
     }
 
@@ -509,4 +488,183 @@ fn parse_version(buf: &[u8]) -> ParseResult<Option<Version>> {
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+
+    use futures::io::Cursor;
+    use hala_io::test::io_test;
+    use http::{Method, Request, Version};
+
+    use super::*;
+
+    async fn parse_request(buf: &[u8]) -> ParseResult<Request<Cursor<Vec<u8>>>> {
+        RequestBuilder::new("test", Cursor::new(buf.to_vec()))
+            .parse()
+            .await
+    }
+
+    async fn parse_request_test<F>(buf: &[u8], f: F)
+    where
+        F: FnOnce(Request<Cursor<Vec<u8>>>),
+    {
+        let request = parse_request(buf).await.expect("parse request failed.");
+
+        f(request)
+    }
+
+    async fn expect_request_partial_parse(buf: &[u8]) {
+        let error = parse_request(buf).await.expect_err("");
+        if let ParseError::Eof = error {
+        } else {
+            panic!("Expect eof, but got {:?}", error);
+        }
+    }
+
+    async fn expect_request_empty_method(buf: &[u8]) {
+        let error = parse_request(buf).await.expect_err("");
+        if let ParseError::Token = error {
+        } else {
+            panic!("Expect token, but got {:?}", error);
+        }
+    }
+
+    #[hala_test::test(io_test)]
+    async fn request_tests() {
+        parse_request_test(b"GET / HTTP/1.1\r\n\r\n", |req| {
+            assert_eq!(req.method(), Method::GET);
+            assert_eq!(req.uri().to_string(), "/");
+            assert_eq!(req.version(), Version::HTTP_11);
+            assert_eq!(req.headers().len(), 0);
+        })
+        .await;
+
+        parse_request_test(b"GET /thing?data=a HTTP/1.1\r\n\r\n", |req| {
+            assert_eq!(req.method(), Method::GET);
+            assert_eq!(req.uri().to_string(), "/thing?data=a");
+            assert_eq!(req.version(), Version::HTTP_11);
+            assert_eq!(req.headers().len(), 0);
+        })
+        .await;
+
+        parse_request_test(b"GET /thing?data=a^ HTTP/1.1\r\n\r\n", |req| {
+            assert_eq!(req.method(), Method::GET);
+            assert_eq!(req.uri().to_string(), "/thing?data=a^");
+            assert_eq!(req.version(), Version::HTTP_11);
+            assert_eq!(req.headers().len(), 0);
+        })
+        .await;
+
+        parse_request_test(
+            b"GET / HTTP/1.1\r\nHost: foo.com\r\nCookie: \r\n\r\n",
+            |req| {
+                assert_eq!(req.method(), Method::GET);
+                assert_eq!(req.uri().to_string(), "/");
+                assert_eq!(req.version(), Version::HTTP_11);
+                assert_eq!(req.headers().len(), 2);
+                assert_eq!(
+                    req.headers().get("Host").unwrap().to_str().unwrap(),
+                    "foo.com"
+                );
+                assert_eq!(req.headers().get("Cookie").unwrap().to_str().unwrap(), "");
+            },
+        )
+        .await;
+
+        parse_request_test(
+            b"GET / HTTP/1.1\r\nHost: \tfoo.com\t \r\nCookie: \t \r\n\r\n",
+            |req| {
+                assert_eq!(req.method(), Method::GET);
+                assert_eq!(req.uri().to_string(), "/");
+                assert_eq!(req.version(), Version::HTTP_11);
+                assert_eq!(req.headers().len(), 2);
+                assert_eq!(
+                    req.headers().get("Host").unwrap().to_str().unwrap(),
+                    "foo.com"
+                );
+                assert_eq!(req.headers().get("Cookie").unwrap().to_str().unwrap(), "");
+            },
+        )
+        .await;
+
+        parse_request_test(
+            b"GET / HTTP/1.1\r\nUser-Agent: some\tagent\r\n\r\n",
+            |req| {
+                assert_eq!(req.method(), Method::GET);
+                assert_eq!(req.uri().to_string(), "/");
+                assert_eq!(req.version(), Version::HTTP_11);
+                assert_eq!(req.headers().len(), 1);
+                assert_eq!(
+                    req.headers().get("User-Agent").unwrap().to_str().unwrap(),
+                    "some\tagent"
+                );
+            },
+        )
+        .await;
+
+        parse_request_test(
+            b"GET / HTTP/1.1\r\nUser-Agent: 1234567890some\tagent\r\n\r\n",
+            |req| {
+                assert_eq!(req.method(), Method::GET);
+                assert_eq!(req.uri().to_string(), "/");
+                assert_eq!(req.version(), Version::HTTP_11);
+                assert_eq!(req.headers().len(), 1);
+                assert_eq!(
+                    req.headers().get("User-Agent").unwrap().to_str().unwrap(),
+                    "1234567890some\tagent"
+                );
+            },
+        )
+        .await;
+
+        parse_request_test(
+            b"GET / HTTP/1.1\r\nUser-Agent: 1234567890some\t1234567890agent1234567890\r\n\r\n",
+            |req| {
+                assert_eq!(req.method(), Method::GET);
+                assert_eq!(req.uri().to_string(), "/");
+                assert_eq!(req.version(), Version::HTTP_11);
+                assert_eq!(req.headers().len(), 1);
+                assert_eq!(
+                    req.headers().get("User-Agent").unwrap().to_str().unwrap(),
+                    "1234567890some\t1234567890agent1234567890"
+                );
+            },
+        )
+        .await;
+
+        parse_request_test(
+            b"GET / HTTP/1.1\r\nHost: foo.com\r\nUser-Agent: \xe3\x81\xb2\xe3/1.0\r\n\r\n",
+            |req| {
+                assert_eq!(req.method(), Method::GET);
+                assert_eq!(req.uri().to_string(), "/");
+                assert_eq!(req.version(), Version::HTTP_11);
+                assert_eq!(req.headers().len(), 2);
+                assert_eq!(
+                    req.headers().get("Host").unwrap().to_str().unwrap(),
+                    "foo.com"
+                );
+                assert_eq!(
+                    req.headers().get("User-Agent").unwrap().as_bytes(),
+                    b"\xe3\x81\xb2\xe3/1.0"
+                );
+            },
+        )
+        .await;
+
+        parse_request_test(b"GET /\\?wayne\\=5 HTTP/1.1\r\n\r\n", |req| {
+            assert_eq!(req.method(), Method::GET);
+            assert_eq!(req.uri().to_string(), "/\\?wayne\\=5");
+            assert_eq!(req.version(), Version::HTTP_11);
+            assert_eq!(req.headers().len(), 0);
+        })
+        .await;
+
+        expect_request_partial_parse(b"GET / HTTP/1.1\r\n\r").await;
+
+        expect_request_partial_parse(b"GET / HTTP/1.1\r\nHost: yolo\r\n").await;
+
+        expect_request_partial_parse(b"GET  HTTP/1.1\r\n\r\n").await;
+
+        expect_request_empty_method(b"  HTTP/1.1\r\n\r\n").await;
+
+        expect_request_empty_method(b" / HTTP/1.1\r\n\r\n").await;
+    }
+}

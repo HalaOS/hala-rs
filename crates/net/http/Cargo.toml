@@ -21,3 +21,8 @@ hala-future = { workspace = true }
 hala-io = { workspace = true }
 hala-tcp = { workspace = true }
 hala-tls = { workspace = true }
+
+[dev-dependencies]
+hala-test = { workspace = true }
+pretty_env_logger = { workspace = true }
+hala-io = { workspace = true, features = ["mio-driver"] }
