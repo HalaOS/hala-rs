@@ -16,6 +16,8 @@ httparse = { workspace = true }
 bytes = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 
 hala-future = { workspace = true }
 hala-io = { workspace = true }
@@ -26,3 +28,8 @@ hala-tls = { workspace = true }
 hala-test = { workspace = true }
 pretty_env_logger = { workspace = true }
 hala-io = { workspace = true, features = ["mio-driver"] }
+
+
+[features]
+default = ["json"]
+json = ["serde", "serde_json"]

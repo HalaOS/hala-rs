@@ -1,7 +1,7 @@
 use std::io;
 
 use bytes::{Bytes, BytesMut};
-use futures::{AsyncRead, AsyncReadExt, AsyncWrite};
+use futures::{AsyncRead, AsyncReadExt};
 use hala_io::ReadBuf;
 use http::{
     header::{InvalidHeaderName, InvalidHeaderValue},
@@ -10,6 +10,8 @@ use http::{
     uri::InvalidUri,
     HeaderName, HeaderValue, Method, Request, Response, StatusCode, Uri, Version,
 };
+
+use crate::body::BodyReader;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {
@@ -48,6 +50,10 @@ pub enum ParseError {
 
     #[error(transparent)]
     InvalidStatusCode(#[from] InvalidStatusCode),
+
+    #[cfg(feature = "json")]
+    #[error(transparent)]
+    SerdeJsonError(#[from] serde_json::Error),
 }
 
 impl From<ParseError> for io::Error {
@@ -114,10 +120,10 @@ impl<S> Requester<S> {
 
 impl<S> Requester<S>
 where
-    S: AsyncWrite + AsyncRead + Unpin,
+    S: AsyncRead + Unpin,
 {
     /// Try parse http request header parts and generate [`Request`] object.
-    pub async fn parse(mut self) -> ParseResult<Request<S>> {
+    pub async fn parse(mut self) -> ParseResult<Request<BodyReader<S>>> {
         // create header parts parse buffer with capacity to `config.parsing_headers_max_buf`
         let mut read_buf = ReadBuf::with_capacity(self.config.parsing_headers_max_buf);
 
@@ -171,8 +177,13 @@ where
             }
         }
 
+        let cached = read_buf.into_bytes(None);
+
         // construct [`Request`]
-        Ok(self.builder.unwrap().body(self.stream)?)
+        Ok(self
+            .builder
+            .unwrap()
+            .body(BodyReader::new(cached, self.stream))?)
     }
 
     #[inline]
@@ -286,9 +297,9 @@ where
 /// Helper function to help parsing stream into [`Request`] instance.
 ///
 /// See [`new_with`](Requester::new) for more information.
-pub async fn parse_request<S>(stream: S) -> io::Result<Request<S>>
+pub async fn parse_request<S>(stream: S) -> io::Result<Request<BodyReader<S>>>
 where
-    S: AsyncRead + AsyncWrite + Unpin,
+    S: AsyncRead + Unpin,
 {
     Ok(Requester::new(stream).parse().await?)
 }
@@ -296,9 +307,9 @@ where
 /// Helper function to help parsing stream into [`Request`] instance.
 ///
 /// See [`new_with`](Requester::new_with) for more information.
-pub async fn parse_request_with<S>(stream: S, config: Config) -> io::Result<Request<S>>
+pub async fn parse_request_with<S>(stream: S, config: Config) -> io::Result<Request<BodyReader<S>>>
 where
-    S: AsyncRead + AsyncWrite + Unpin,
+    S: AsyncRead + Unpin,
 {
     Ok(Requester::new_with(stream, config).parse().await?)
 }
@@ -344,10 +355,10 @@ impl<S> Responser<S> {
 
 impl<S> Responser<S>
 where
-    S: AsyncWrite + AsyncRead + Unpin,
+    S: AsyncRead + Unpin,
 {
     /// Try parse http request header parts and generate [`Request`] object.
-    pub async fn parse(mut self) -> ParseResult<Response<S>> {
+    pub async fn parse(mut self) -> ParseResult<Response<BodyReader<S>>> {
         // create header parts parse buffer with capacity to `config.parsing_headers_max_buf`
         let mut read_buf = ReadBuf::with_capacity(self.config.parsing_headers_max_buf);
 
@@ -401,8 +412,13 @@ where
             }
         }
 
+        let cached = read_buf.into_bytes(None);
+
         // construct [`Request`]
-        Ok(self.builder.unwrap().body(self.stream)?)
+        Ok(self
+            .builder
+            .unwrap()
+            .body(BodyReader::new(cached, self.stream))?)
     }
 
     #[inline]
@@ -508,9 +524,9 @@ where
 /// Helper function to help parsing stream into [`Response`] instance.
 ///
 /// See [`new_with`](Response::new) for more information.
-pub async fn parse_response<S>(stream: S) -> io::Result<Response<S>>
+pub async fn parse_response<S>(stream: S) -> io::Result<Response<BodyReader<S>>>
 where
-    S: AsyncRead + AsyncWrite + Unpin,
+    S: AsyncRead + Unpin,
 {
     Ok(Responser::new(stream).parse().await?)
 }
@@ -518,9 +534,12 @@ where
 /// Helper function to help parsing stream into [`Response`] instance.
 ///
 /// See [`new_with`](Response::new_with) for more information.
-pub async fn parse_response_with<S>(stream: S, config: Config) -> io::Result<Response<S>>
+pub async fn parse_response_with<S>(
+    stream: S,
+    config: Config,
+) -> io::Result<Response<BodyReader<S>>>
 where
-    S: AsyncRead + AsyncWrite + Unpin,
+    S: AsyncRead + Unpin,
 {
     Ok(Responser::new_with(stream, config).parse().await?)
 }
@@ -825,13 +844,13 @@ mod tests {
     use hala_io::test::io_test;
     use http::{Method, Request, Version};
 
-    async fn parse_request(buf: &[u8]) -> ParseResult<Request<Cursor<Vec<u8>>>> {
+    async fn parse_request(buf: &[u8]) -> ParseResult<Request<BodyReader<Cursor<Vec<u8>>>>> {
         Requester::new(Cursor::new(buf.to_vec())).parse().await
     }
 
     async fn parse_request_test<F>(buf: &[u8], f: F)
     where
-        F: FnOnce(Request<Cursor<Vec<u8>>>),
+        F: FnOnce(Request<BodyReader<Cursor<Vec<u8>>>>),
     {
         let request = parse_request(buf).await.expect("parse request failed.");
 
@@ -862,13 +881,13 @@ mod tests {
         }
     }
 
-    async fn parse_response(buf: &[u8]) -> ParseResult<Response<Cursor<Vec<u8>>>> {
+    async fn parse_response(buf: &[u8]) -> ParseResult<Response<BodyReader<Cursor<Vec<u8>>>>> {
         Responser::new(Cursor::new(buf.to_vec())).parse().await
     }
 
     async fn parse_response_test<F>(buf: &[u8], f: F)
     where
-        F: FnOnce(Response<Cursor<Vec<u8>>>),
+        F: FnOnce(Response<BodyReader<Cursor<Vec<u8>>>>),
     {
         let request = parse_response(buf).await.expect("parse request failed.");
 
