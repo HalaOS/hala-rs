@@ -1,13 +1,14 @@
 use std::io;
 
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use futures::{AsyncRead, AsyncReadExt, AsyncWrite};
 use hala_io::ReadBuf;
 use http::{
     header::{InvalidHeaderName, InvalidHeaderValue},
     method::InvalidMethod,
+    status::InvalidStatusCode,
     uri::InvalidUri,
-    HeaderName, HeaderValue, Method, Request, Uri, Version,
+    HeaderName, HeaderValue, Method, Request, Response, StatusCode, Uri, Version,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -44,6 +45,18 @@ pub enum ParseError {
 
     #[error(transparent)]
     InvalidHeaderValue(#[from] InvalidHeaderValue),
+
+    #[error(transparent)]
+    InvalidStatusCode(#[from] InvalidStatusCode),
+}
+
+impl From<ParseError> for io::Error {
+    fn from(value: ParseError) -> Self {
+        match value {
+            ParseError::IoError(err) => err,
+            _ => io::Error::new(io::ErrorKind::Other, value),
+        }
+    }
 }
 
 /// Type alias for parser result.
@@ -64,29 +77,10 @@ impl Default for Config {
     }
 }
 
-/// The statemachine of [`Requester`].
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[allow(unused)]
-enum RequestParseState {
-    Method = 1,
-    Uri = 2,
-    Version = 3,
-    Headers = 4,
-    Finished = 5,
-}
-
-impl RequestParseState {
-    fn next(&mut self) {
-        if let RequestParseState::Finished = self {
-            return;
-        }
-
-        unsafe { *(self as *mut Self as *mut u8) += 1 }
-    }
-}
-
 /// Http request packet parser.
+///
+/// In general, please do not create [`Requester`] directly but use
+/// [`parse_request`] or [`parse_request_with`] to parse the stream.
 pub struct Requester<S> {
     /// http parser config.
     config: Config,
@@ -259,46 +253,13 @@ where
             SkipNewLine::One(_) | SkipNewLine::None => {}
         }
 
-        let chunk = read_buf.chunk();
-
-        let mut offset = skip_spaces(chunk);
-
-        let name_offset = offset;
-
-        let name_len = match parse_header_name(&chunk[offset..]) {
-            Some(name_len) => name_len,
-            None => return Ok(false),
-        };
-
-        // advance: name + ':'
-        offset += name_len + 1;
-
-        let value_offset = skip_spaces(&chunk[offset..]);
-
-        offset += value_offset;
-
-        let value_len = match parse_header_value(&chunk[offset..]) {
-            Some(value_len) => value_len,
-            None => return Ok(false),
-        };
-
-        read_buf.split_to(name_offset);
-
-        let buf = read_buf.split_to(name_len + 1);
-
-        let header_name = HeaderName::from_bytes(&buf[0..(buf.len() - 1)])?;
-
-        read_buf.split_to(value_offset);
-
-        let mut buf = read_buf.split_to(value_len);
-
-        trim_suffix_spaces(&mut buf);
-
-        let header_value = HeaderValue::from_maybe_shared(buf)?;
-
-        self.set_header(header_name, header_value);
-
-        Ok(true)
+        match parse_header(read_buf)? {
+            Some((name, value)) => {
+                self.set_header(name, value);
+                Ok(true)
+            }
+            None => Ok(false),
+        }
     }
 
     #[inline]
@@ -319,6 +280,292 @@ where
     #[inline]
     fn set_header(&mut self, name: HeaderName, value: HeaderValue) {
         self.builder = Some(self.builder.take().unwrap().header(name, value))
+    }
+}
+
+/// Helper function to help parsing stream into [`Request`] instance.
+///
+/// See [`new_with`](Requester::new) for more information.
+pub async fn parse_request<S>(stream: S) -> io::Result<Request<S>>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    Ok(Requester::new(stream).parse().await?)
+}
+
+/// Helper function to help parsing stream into [`Request`] instance.
+///
+/// See [`new_with`](Requester::new_with) for more information.
+pub async fn parse_request_with<S>(stream: S, config: Config) -> io::Result<Request<S>>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    Ok(Requester::new_with(stream, config).parse().await?)
+}
+
+/// Http response packet parser.
+///
+/// In general, please do not create [`Requester`] directly but use
+/// [`parse_response`] or [`parse_response_with`] to parse the stream.
+pub struct Responser<S> {
+    /// http parser config.
+    config: Config,
+
+    /// parser statemachine.
+    state: ResponseParseState,
+
+    /// The stream from which the request parser read bytes.
+    stream: S,
+
+    /// the http `response` object builder.
+    builder: Option<http::response::Builder>,
+
+    /// the http reason
+    reason: Option<Bytes>,
+}
+
+impl<S> Responser<S> {
+    /// Create new `Requester` with provided [`config`](Config)
+    pub fn new_with(stream: S, config: Config) -> Self {
+        Self {
+            config,
+            state: ResponseParseState::Version,
+            stream,
+            builder: Some(http::response::Builder::new()),
+            reason: Some(Bytes::from_static(b"")),
+        }
+    }
+
+    /// Create new `Requester` with provided default config.
+    pub fn new(stream: S) -> Self {
+        Self::new_with(stream, Default::default())
+    }
+}
+
+impl<S> Responser<S>
+where
+    S: AsyncWrite + AsyncRead + Unpin,
+{
+    /// Try parse http request header parts and generate [`Request`] object.
+    pub async fn parse(mut self) -> ParseResult<Response<S>> {
+        // create header parts parse buffer with capacity to `config.parsing_headers_max_buf`
+        let mut read_buf = ReadBuf::with_capacity(self.config.parsing_headers_max_buf);
+
+        'out: while self.state != ResponseParseState::Finished {
+            let chunk_mut = read_buf.chunk_mut();
+
+            // Checks if the parsing buf is overflowing.
+            if chunk_mut.len() == 0 {
+                return Err(ParseError::ParseBufOverflow(
+                    self.config.parsing_headers_max_buf,
+                ));
+            }
+
+            let read_size = self.stream.read(chunk_mut).await?;
+
+            // EOF reached.
+            if read_size == 0 {
+                return Err(ParseError::Eof);
+            }
+
+            read_buf.filled(read_size);
+
+            'inner: while read_buf.chunk().len() > 0 {
+                match self.state {
+                    ResponseParseState::Version => {
+                        if !self.parse_version(&mut read_buf)? {
+                            break 'inner;
+                        }
+                    }
+                    ResponseParseState::StatusCode => {
+                        if !self.parse_status_code(&mut read_buf)? {
+                            break 'inner;
+                        }
+                    }
+                    ResponseParseState::Reason => {
+                        if !self.parse_reason(&mut read_buf)? {
+                            break 'inner;
+                        }
+                    }
+                    ResponseParseState::Headers => {
+                        if !self.parse_header(&mut read_buf)? {
+                            break 'inner;
+                        }
+                    }
+                    ResponseParseState::Finished => break 'out,
+                }
+            }
+
+            if let ResponseParseState::Finished = self.state {
+                break;
+            }
+        }
+
+        // construct [`Request`]
+        Ok(self.builder.unwrap().body(self.stream)?)
+    }
+
+    #[inline]
+    fn skip_spaces(&mut self, read_buf: &mut ReadBuf) {
+        read_buf.split_to(skip_spaces(read_buf.chunk()));
+    }
+
+    #[inline]
+    fn parse_status_code(&mut self, read_buf: &mut ReadBuf) -> ParseResult<bool> {
+        self.skip_spaces(read_buf);
+
+        match parse_code(read_buf.chunk())? {
+            Some(code) => {
+                self.set_code(code);
+
+                read_buf.split_to(3);
+
+                self.state.next();
+
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    #[inline]
+    fn parse_reason(&mut self, read_buf: &mut ReadBuf) -> ParseResult<bool> {
+        self.skip_spaces(read_buf);
+
+        match parse_reason(read_buf.chunk()) {
+            Some(len) => {
+                let buf = read_buf.split_to(len);
+
+                self.set_reason(buf.freeze());
+
+                self.state.next();
+
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    #[inline]
+    fn parse_version(&mut self, read_buf: &mut ReadBuf) -> ParseResult<bool> {
+        self.skip_spaces(read_buf);
+
+        if let Some(version) = parse_version(read_buf.chunk())? {
+            // advance read cursor.
+            read_buf.split_to(8);
+
+            self.set_version(version);
+
+            self.state.next();
+
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    #[inline]
+    fn parse_header(&mut self, read_buf: &mut ReadBuf) -> ParseResult<bool> {
+        match skip_newlines(read_buf) {
+            SkipNewLine::Break(_) => {
+                self.state.next();
+                return Ok(false);
+            }
+            SkipNewLine::Incomplete => return Ok(false),
+            SkipNewLine::One(_) | SkipNewLine::None => {}
+        }
+
+        match parse_header(read_buf)? {
+            Some((name, value)) => {
+                self.set_header(name, value);
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+
+    #[inline]
+    fn set_code(&mut self, code: StatusCode) {
+        self.builder = Some(self.builder.take().unwrap().status(code))
+    }
+
+    #[inline]
+    fn set_reason(&mut self, reason: Bytes) {
+        self.reason = Some(reason);
+    }
+
+    #[inline]
+    fn set_version(&mut self, version: Version) {
+        self.builder = Some(self.builder.take().unwrap().version(version))
+    }
+
+    #[inline]
+    fn set_header(&mut self, name: HeaderName, value: HeaderValue) {
+        self.builder = Some(self.builder.take().unwrap().header(name, value))
+    }
+}
+
+/// Helper function to help parsing stream into [`Response`] instance.
+///
+/// See [`new_with`](Response::new) for more information.
+pub async fn parse_response<S>(stream: S) -> io::Result<Response<S>>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    Ok(Responser::new(stream).parse().await?)
+}
+
+/// Helper function to help parsing stream into [`Response`] instance.
+///
+/// See [`new_with`](Response::new_with) for more information.
+pub async fn parse_response_with<S>(stream: S, config: Config) -> io::Result<Response<S>>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    Ok(Responser::new_with(stream, config).parse().await?)
+}
+
+/// The statemachine of [`Requester`].
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(unused)]
+enum ResponseParseState {
+    Version = 1,
+    StatusCode = 2,
+    Reason = 3,
+    Headers = 4,
+    Finished = 5,
+}
+
+impl ResponseParseState {
+    fn next(&mut self) {
+        if let ResponseParseState::Finished = self {
+            return;
+        }
+
+        unsafe { *(self as *mut Self as *mut u8) += 1 }
+    }
+}
+
+/// The statemachine of [`Requester`].
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[allow(unused)]
+enum RequestParseState {
+    Method = 1,
+    Uri = 2,
+    Version = 3,
+    Headers = 4,
+    Finished = 5,
+}
+
+impl RequestParseState {
+    fn next(&mut self) {
+        if let RequestParseState::Finished = self {
+            return;
+        }
+
+        unsafe { *(self as *mut Self as *mut u8) += 1 }
     }
 }
 
@@ -358,7 +605,7 @@ fn parse_header_name(buf: &[u8]) -> Option<usize> {
 #[inline]
 fn parse_header_value(buf: &[u8]) -> Option<usize> {
     for (offset, c) in buf.iter().cloned().enumerate() {
-        if c == b'\r' {
+        if c == b'\r' || c == b'\n' {
             return Some(offset);
         }
     }
@@ -482,6 +729,69 @@ fn trim_suffix_spaces(buf: &mut BytesMut) {
     }
 }
 
+#[inline]
+fn parse_reason<'a>(buf: &[u8]) -> Option<usize> {
+    for (offset, c) in buf.iter().cloned().enumerate() {
+        if c == b'\r' || c == b'\n' {
+            return Some(offset);
+        }
+    }
+
+    None
+}
+
+#[inline]
+fn parse_code(buf: &[u8]) -> ParseResult<Option<StatusCode>> {
+    if buf.len() >= 3 {
+        Ok(Some(StatusCode::from_bytes(&buf[..3])?))
+    } else {
+        Ok(None)
+    }
+}
+
+fn parse_header(read_buf: &mut ReadBuf) -> ParseResult<Option<(HeaderName, HeaderValue)>> {
+    let chunk = read_buf.chunk();
+
+    let mut offset = skip_spaces(chunk);
+
+    let name_offset = offset;
+
+    let name_len = match parse_header_name(&chunk[offset..]) {
+        Some(name_len) => name_len,
+        None => return Ok(None),
+    };
+
+    // advance: name + ':'
+    offset += name_len + 1;
+
+    let value_offset = skip_spaces(&chunk[offset..]);
+
+    offset += value_offset;
+
+    let value_len = match parse_header_value(&chunk[offset..]) {
+        Some(value_len) => value_len,
+        None => return Ok(None),
+    };
+
+    read_buf.split_to(name_offset);
+
+    let mut buf = read_buf.split_to(name_len);
+
+    trim_suffix_spaces(&mut buf);
+
+    let header_name = HeaderName::from_bytes(&buf)?;
+
+    read_buf.split_to(value_offset + 1);
+
+    let mut buf = read_buf.split_to(value_len);
+
+    trim_suffix_spaces(&mut buf);
+
+    let header_value = HeaderValue::from_maybe_shared(buf)?;
+
+    Ok(Some((header_name, header_value)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -550,6 +860,130 @@ mod tests {
         } else {
             panic!("Expect uri error, but got {:?}", error);
         }
+    }
+
+    async fn parse_response(buf: &[u8]) -> ParseResult<Response<Cursor<Vec<u8>>>> {
+        Responser::new(Cursor::new(buf.to_vec())).parse().await
+    }
+
+    async fn parse_response_test<F>(buf: &[u8], f: F)
+    where
+        F: FnOnce(Response<Cursor<Vec<u8>>>),
+    {
+        let request = parse_response(buf).await.expect("parse request failed.");
+
+        f(request)
+    }
+
+    async fn expect_response_partial_parse(buf: &[u8]) {
+        let error = parse_response(buf).await.expect_err("");
+        if let ParseError::Eof = error {
+        } else {
+            panic!("Expect eof, but got {:?}", error);
+        }
+    }
+
+    async fn expect_response_version(buf: &[u8]) {
+        let error = parse_response(buf).await.expect_err("");
+        if let ParseError::Version = error {
+        } else {
+            panic!("Expect version, but got {:?}", error);
+        }
+    }
+
+    #[hala_test::test(io_test)]
+    async fn response_tests() {
+        parse_response_test(b"HTTP/1.1 200 OK\r\n\r\n", |resp| {
+            assert_eq!(resp.version(), Version::HTTP_11);
+            assert_eq!(resp.status(), StatusCode::OK);
+        })
+        .await;
+
+        parse_response_test(b"HTTP/1.0 403 Forbidden\nServer: foo.bar\n\n", |resp| {
+            assert_eq!(resp.version(), Version::HTTP_10);
+            assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        })
+        .await;
+
+        parse_response_test(b"HTTP/1.1 200 \r\n\r\n", |resp| {
+            assert_eq!(resp.version(), Version::HTTP_11);
+            assert_eq!(resp.status(), StatusCode::OK);
+        })
+        .await;
+
+        parse_response_test(b"HTTP/1.1 200\r\n\r\n", |resp| {
+            assert_eq!(resp.version(), Version::HTTP_11);
+            assert_eq!(resp.status(), StatusCode::OK);
+        })
+        .await;
+
+        parse_response_test(b"HTTP/1.1 200\r\nFoo: bar\r\n\r\n", |resp| {
+            assert_eq!(resp.version(), Version::HTTP_11);
+            assert_eq!(resp.status(), StatusCode::OK);
+            assert_eq!(resp.headers().len(), 1);
+
+            assert_eq!(resp.headers().get("Foo").unwrap().to_str().unwrap(), "bar");
+        })
+        .await;
+
+        parse_response_test(b"HTTP/1.1 200 X\xFFZ\r\n\r\n", |resp| {
+            assert_eq!(resp.version(), Version::HTTP_11);
+            assert_eq!(resp.status(), StatusCode::OK);
+        })
+        .await;
+
+        parse_response_test(b"HTTP/1.1 200 \x00\r\n\r\n", |resp| {
+            assert_eq!(resp.version(), Version::HTTP_11);
+            assert_eq!(resp.status(), StatusCode::OK);
+        })
+        .await;
+
+        parse_response_test(b"HTTP/1.0 200\nContent-type: text/html\n\n", |resp| {
+            assert_eq!(resp.version(), Version::HTTP_10);
+            assert_eq!(resp.status(), StatusCode::OK);
+            assert_eq!(resp.headers().len(), 1);
+            assert_eq!(
+                resp.headers()
+                    .get("Content-type")
+                    .unwrap()
+                    .to_str()
+                    .unwrap(),
+                "text/html"
+            );
+        })
+        .await;
+
+        parse_response_test( b"HTTP/1.1 200 OK\r\nAccess-Control-Allow-Credentials : true\r\nBread: baguette\r\n\r\n", |resp| {
+            assert_eq!(resp.version(), Version::HTTP_11);
+            assert_eq!(resp.status(), StatusCode::OK);
+            assert_eq!(resp.headers().len(), 2);
+            assert_eq!(
+                resp.headers()
+                    .get("Access-Control-Allow-Credentials")
+                    .unwrap()
+                    .to_str()
+                    .unwrap(),
+                "true"
+            );
+
+            assert_eq!(
+                resp.headers()
+                    .get("Bread")
+                    .unwrap()
+                    .to_str()
+                    .unwrap(),
+                "baguette"
+            );
+        })
+        .await;
+
+        expect_response_partial_parse(b"HTTP/1.1").await;
+
+        expect_response_partial_parse(b"HTTP/1.1 200").await;
+
+        expect_response_partial_parse(b"HTTP/1.1 200 OK\r\nServer: yolo\r\n").await;
+
+        expect_response_version(b"\n\nHTTP/1.1 200 OK\n\n").await;
     }
 
     #[hala_test::test(io_test)]
