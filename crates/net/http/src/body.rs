@@ -83,3 +83,35 @@ where
         Ok(serde_json::from_slice(&buf)?)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hala_io::test::io_test;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Serialize, Deserialize, PartialEq, Debug)]
+    struct Mock {
+        a: i32,
+        b: String,
+    }
+
+    #[hala_test::test(io_test)]
+    async fn test_from_json() {
+        let mock = Mock {
+            a: 10,
+            b: "hello".to_string(),
+        };
+
+        let mut json_data = Bytes::from(serde_json::to_string_pretty(&mock).unwrap());
+
+        let body_reader = BodyReader::new(
+            json_data.split_to(json_data.len() / 2),
+            Cursor::new(json_data),
+        );
+
+        let mock2 = body_reader.from_json::<Mock>().await.unwrap();
+
+        assert_eq!(mock, mock2);
+    }
+}
